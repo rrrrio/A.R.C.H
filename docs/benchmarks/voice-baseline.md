@@ -35,6 +35,31 @@ LLM 使用固定中文提示：“用一句中文说明本机语音助手已启�
 | 生成速率 p50 | 130.1 字符/秒 |
 | 模型驻留显存 | 10812 MiB |
 
-## 尚未完成
+## TTS
 
-TTS 基线仍未锁定。Kokoro 中文 ONNX 是首选候选，但必须先固定模型 revision、许可证证据和 SHA-256，随后测量完整 WAV 可用时间与句子级首音延迟。端到端 speech-end 到浏览器首音时间只能在 Milestone 2 的真实媒体流水线中确认。
+运行时是 `kokoro-onnx` 0.6.1、Misaki 0.9.6 和 CPU ONNX Runtime 1.31.1。模型为 `onnx-community/Kokoro-82M-v1.1-zh-ONNX` revision `6cc0f0d2ebe369a68b0df87c2b65c1af8c0ac3e3`，`onnx/model_fp16.onnx` SHA-256 为 `d59cb626c885c91acb7ecf7250f26f9915ad0af99b770572000d90b598c3dfbc`。语音包为项目发布的 `voices-v1.1-zh.bin`，SHA-256 为 `14cb6186c99e4f6016871405f62046c5df863ae27465cbdc4ee08be7dd703acd`，使用 `zf_001` 声线。模型和语音包采用 Apache-2.0；Python 包本身采用 MIT。
+
+固定输入为“你好，这是本地语音基准测试。”，输出为 24 kHz PCM。模型与中文 G2P 常驻后先 warm-up 一次，再运行 20 次。计时分别记录 ONNX 合成，以及把结果编码为内存 PCM WAV 后的可用时间；不包含磁盘写入、网络传输、浏览器抖动缓冲或播放。
+
+复跑命令如下；原始机器相关 JSON 仍只写入受忽略的 `data/benchmarks/results/`：
+
+```bash
+uv run --directory backend python spikes/kokoro_benchmark.py \
+  --model ../data/models/kokoro-zh/6cc0f0d2ebe369a68b0df87c2b65c1af8c0ac3e3/onnx/model_fp16.onnx \
+  --voice-file ../data/models/kokoro-zh/6cc0f0d2ebe369a68b0df87c2b65c1af8c0ac3e3/voices-v1.1-zh.bin \
+  --runs 20 --output ../data/benchmarks/results/tts-kokoro-zh.json
+```
+
+| 指标 | 结果 |
+| --- | ---: |
+| 合成 p50 | 50.6 ms |
+| 合成 p95 | 54.0 ms |
+| 内存 WAV 可用 p50 | 50.8 ms |
+| 内存 WAV 可用 p95 | 54.3 ms |
+| 合成 RTF p50 | 0.168 |
+| 合成 RTF p95 | 0.180 |
+| 合成音频时长 | 300.7 ms |
+
+`kokoro-onnx` 0.6.1 需要包含全部中文声线的聚合 `voices-v1.1-zh.bin`；单独下载的 `zf_001.bin` 与该版本的 `numpy.load` 调用不兼容。ONNX Runtime 会报告若干 `Reciprocal` 常量折叠警告，但在 20 次运行中未导致失败。
+
+这是低延迟的句子级 CPU 基线，尚非 token/PCM 流式输出，也未证明浏览器首音或插话时间。端到端 speech-end 到浏览器首音只能在 Milestone 2 的真实媒体流水线中确认。
