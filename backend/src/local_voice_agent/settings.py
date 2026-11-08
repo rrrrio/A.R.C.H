@@ -72,6 +72,11 @@ class Settings(BaseSettings):
         """Return the bounded, local-only administrator credential location."""
         return self.data_dir / "auth" / "admin.json"
 
+    @property
+    def database_path(self) -> Path:
+        """Return the bounded SQLite database path for persistent local state."""
+        return self.data_dir / "db" / "local-voice-agent.sqlite3"
+
 
 @lru_cache
 def get_settings() -> Settings:

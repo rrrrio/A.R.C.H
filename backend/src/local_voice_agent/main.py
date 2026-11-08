@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI
 from local_voice_agent.api.auth import router as auth_router
 from local_voice_agent.api.voice import router as voice_router
 from local_voice_agent.auth.service import AuthService
+from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.settings import Settings, get_settings
 from local_voice_agent.voice.models import VoiceModelPaths
 from local_voice_agent.voice.session import LocalVoiceSession
@@ -28,6 +29,7 @@ def create_app(
         """Validate configuration and prepare only application-owned directories."""
         settings = get_settings()
         settings.ensure_runtime_directories()
+        MemoryStore(settings.database_path).migrate()
         if not hasattr(app.state, "auth_service"):
             app.state.auth_service = AuthService(settings.credential_path, settings.public_origin)
         if not hasattr(app.state, "signaling_service"):

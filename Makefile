@@ -5,10 +5,10 @@ BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 COMPOSE := docker compose -f deploy/compose.yaml
 
-.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare benchmark-tts
+.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare benchmark-tts
 
 help:
-	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare benchmark-tts'
+	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare benchmark-tts'
 
 bootstrap:
 	uv sync --directory $(BACKEND_DIR) --all-groups
@@ -36,6 +36,9 @@ compose-config:
 dev:
 	@printf '%s\n' 'Start the backend with: cd backend && uv run uvicorn local_voice_agent.main:app --host 127.0.0.1 --port 8000'
 	@printf '%s\n' 'Start the frontend with: cd frontend && npm run dev'
+
+migrate:
+	uv run --directory $(BACKEND_DIR) python scripts/migrate.py
 
 gateway-up: frontend-build
 	$(COMPOSE) --profile gateway up -d caddy
