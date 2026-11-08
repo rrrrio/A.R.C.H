@@ -25,11 +25,12 @@
   font-size: 14px;
 }
 
-.connection-state--ready {
+.connection-state--authenticated {
   color: #116149;
 }
 
-.connection-state--error {
+.connection-state--error,
+.connection-state--unconfigured {
   color: #9b2c2c;
 }
 
@@ -59,6 +60,26 @@ h1 {
   color: #4d5965;
 }
 
+.login-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.login-form label {
+  color: #4d5965;
+  font-size: 14px;
+}
+
+.login-form input {
+  min-height: 40px;
+  border: 1px solid #aeb8c1;
+  border-radius: 4px;
+  padding: 0 10px;
+  color: inherit;
+  font: inherit;
+}
+
 button {
   min-height: 38px;
   padding: 0 14px;
@@ -82,6 +103,16 @@ button:focus-visible {
 button:disabled {
   cursor: wait;
   opacity: 0.7;
+}
+
+.secondary-button {
+  border-color: #aeb8c1;
+  background: #ffffff;
+  color: #17212b;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: #edf1f3;
 }
 
 @media (max-width: 640px) {

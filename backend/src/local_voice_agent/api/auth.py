@@ -31,6 +31,12 @@ class LoginResponse(BaseModel):
     csrf_token: str
 
 
+class CsrfResponse(BaseModel):
+    """CSRF token for an already authenticated browser after a page refresh."""
+
+    csrf_token: str
+
+
 def get_auth_service(request: Request) -> AuthService:
     """Read the application-scoped local authentication service."""
     return cast(AuthService, request.app.state.auth_service)
@@ -65,6 +71,13 @@ def login(
         path="/",
     )
     return LoginResponse(csrf_token=session.csrf_token)
+
+
+@router.get("/csrf", response_model=CsrfResponse)
+def csrf(request: Request, auth: AuthServiceDependency) -> CsrfResponse:
+    """Return the per-session token without changing server-side state."""
+    _, session = auth.require_session(request)
+    return CsrfResponse(csrf_token=session.csrf_token)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

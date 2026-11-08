@@ -62,6 +62,7 @@ def test_login_logout_and_csrf_protection(tmp_path: Path) -> None:
             "/api/auth/login", headers=headers, json={"password": "correct-horse-battery-staple"}
         )
         csrf_token = accepted.json()["csrf_token"]
+        refreshed_csrf = client.get("/api/auth/csrf")
         cookie = accepted.headers["set-cookie"]
         no_csrf = client.post("/api/auth/logout", headers=headers)
         logged_out = client.post(
@@ -71,6 +72,7 @@ def test_login_logout_and_csrf_protection(tmp_path: Path) -> None:
 
     assert rejected.status_code == 401
     assert accepted.status_code == 200
+    assert refreshed_csrf.json() == {"csrf_token": csrf_token}
     assert SESSION_COOKIE_NAME in cookie
     assert "HttpOnly" in cookie
     assert "Secure" in cookie
