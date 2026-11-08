@@ -1,0 +1,28 @@
+"""Tests for the rebuildable SQLite knowledge vector index."""
+
+from pathlib import Path
+
+from local_voice_agent.rag.store import KnowledgeStore
+
+
+def test_knowledge_store_replaces_sources_searches_vectors_and_removes_missing_paths(
+    tmp_path: Path,
+) -> None:
+    """Source replacement and deletion keep the local index consistent with the inbox."""
+    store = KnowledgeStore(tmp_path / "voice.sqlite3")
+    assert store.migrate() == (1, 2, 3)
+    store.replace_source(
+        "notes.md",
+        "digest-1",
+        (("第一段", (1.0, 0.0)), ("第二段", (0.0, 1.0))),
+    )
+    store.replace_source("other.txt", "digest-2", (("第三段", (0.8, 0.2)),))
+
+    assert [hit.content for hit in store.search((1.0, 0.0), limit=2)] == ["第一段", "第三段"]
+    assert store.source_is_current("notes.md", "digest-1")
+
+    store.replace_source("notes.md", "digest-3", (("替换段", (0.0, 1.0)),))
+    store.remove_sources_except({"notes.md"})
+
+    assert [hit.content for hit in store.search((0.0, 1.0))] == ["替换段"]
+    assert not store.source_is_current("other.txt", "digest-2")

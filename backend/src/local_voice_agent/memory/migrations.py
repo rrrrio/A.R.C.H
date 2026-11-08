@@ -68,6 +68,29 @@ MIGRATIONS: tuple[Migration, ...] = (
         );
         """,
     ),
+    Migration(
+        3,
+        "create local knowledge index tables",
+        """
+        CREATE TABLE knowledge_sources (
+            path TEXT PRIMARY KEY,
+            content_sha256 TEXT NOT NULL,
+            parser_version TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE knowledge_chunks (
+            id INTEGER PRIMARY KEY,
+            source_path TEXT NOT NULL REFERENCES knowledge_sources(path) ON DELETE CASCADE,
+            ordinal INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            embedding BLOB NOT NULL,
+            dimensions INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(source_path, ordinal)
+        );
+        CREATE INDEX knowledge_chunks_by_source ON knowledge_chunks(source_path, ordinal);
+        """,
+    ),
 )
 
 
