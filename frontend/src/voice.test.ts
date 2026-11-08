@@ -87,4 +87,64 @@ describe('VoiceClient', () => {
       headers: { 'X-CSRF-Token': 'csrf-token' },
     })
   })
+
+  it('mutes interrupted playback and restores it for the next assistant turn', async () => {
+    const track = { stop: vi.fn() } as unknown as MediaStreamTrack
+    const stream = { getAudioTracks: () => [track], getTracks: () => [track] } as unknown as MediaStream
+    const receivedEvents: unknown[] = []
+    const dataChannel = { close() {}, onmessage: null as ((event: MessageEvent) => void) | null }
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ sdp: 'answer', type: 'answer', pc_id: 'pc-1' }))))
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) } })
+    vi.stubGlobal(
+      'Audio',
+      class {
+        autoplay = false
+        muted = false
+        srcObject: MediaProvider | null = null
+
+        pause() {}
+
+        play() {
+          return Promise.resolve()
+        }
+      },
+    )
+    vi.stubGlobal(
+      'RTCPeerConnection',
+      class {
+        ontrack: ((event: RTCTrackEvent) => void) | null = null
+        onicecandidate: ((event: RTCPeerConnectionIceEvent) => void) | null = null
+
+        addTrack() {}
+
+        async createOffer() {
+          return { type: 'offer' as const, sdp: 'v=0' }
+        }
+
+        async setLocalDescription() {}
+
+        async setRemoteDescription() {}
+
+        close() {}
+
+        createDataChannel() {
+          return dataChannel as unknown as RTCDataChannel
+        }
+      },
+    )
+
+    const client = new VoiceClient('csrf-token', (event) => receivedEvents.push(event))
+    await client.connect()
+    dataChannel.onmessage?.({ data: JSON.stringify({ type: 'voice_state', state: 'user-speaking' }) } as MessageEvent)
+
+    expect((client as unknown as { audio: HTMLAudioElement }).audio.muted).toBe(true)
+    dataChannel.onmessage?.({ data: JSON.stringify({ type: 'voice_state', state: 'speaking' }) } as MessageEvent)
+
+    expect((client as unknown as { audio: HTMLAudioElement }).audio.muted).toBe(false)
+    expect(receivedEvents).toEqual([
+      { type: 'voice_state', state: 'user-speaking' },
+      { type: 'voice_state', state: 'speaking' },
+    ])
+  })
 })

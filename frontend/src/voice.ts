@@ -47,7 +47,15 @@ export class VoiceClient {
       if (typeof message.data !== 'string') return
       try {
         const event: unknown = JSON.parse(message.data)
-        if (isVoiceEvent(event)) this.onEvent(event)
+        if (isVoiceEvent(event)) {
+          if (event.type === 'voice_state' && event.state === 'user-speaking') {
+            this.audio.muted = true
+          }
+          if (event.type === 'voice_state' && event.state === 'speaking') {
+            this.audio.muted = false
+          }
+          this.onEvent(event)
+        }
       } catch {
         // The data channel may also carry internal signaling messages.
       }
