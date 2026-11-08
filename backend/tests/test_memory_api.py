@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from local_voice_agent.auth.credentials import provision_credentials
 from local_voice_agent.auth.service import AuthService
 from local_voice_agent.main import create_app
+from local_voice_agent.memory.context import MAX_MEMORY_CANDIDATE_CHARS
 from local_voice_agent.memory.store import MemoryStore
 
 PUBLIC_ORIGIN = "https://voice.test:8443"
@@ -37,6 +38,11 @@ def test_memory_candidates_require_login_and_csrf_for_edits(tmp_path: Path) -> N
             headers={"Origin": PUBLIC_ORIGIN},
             json={"content": "用户偏好短回答"},
         )
+        oversized = client.patch(
+            f"/api/memory/candidates/{candidate.id}",
+            headers={"Origin": PUBLIC_ORIGIN, "X-CSRF-Token": csrf_token},
+            json={"content": "x" * (MAX_MEMORY_CANDIDATE_CHARS + 1)},
+        )
         edited = client.patch(
             f"/api/memory/candidates/{candidate.id}",
             headers={"Origin": PUBLIC_ORIGIN, "X-CSRF-Token": csrf_token},
@@ -61,6 +67,7 @@ def test_memory_candidates_require_login_and_csrf_for_edits(tmp_path: Path) -> N
         }
     ]
     assert missing_csrf.status_code == 403
+    assert oversized.status_code == 422
     assert edited.json()["content"] == "用户偏好短回答"
     assert approved.json()["status"] == "approved"
     assert pending_after_approval.json() == []

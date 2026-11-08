@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from local_voice_agent.memory.context import MAX_MEMORY_CANDIDATE_CHARS
 from local_voice_agent.memory.migrations import MIGRATIONS, Migration, MigrationRunner
 from local_voice_agent.memory.store import MemoryStore
 
@@ -73,3 +74,8 @@ def test_store_keeps_candidates_out_of_context_until_an_audited_approval(tmp_pat
     assert deleted.status == "deleted"
     with pytest.raises(ValueError, match="Illegal memory state transition"):
         store.decide_candidate(candidate.id, "approved", "administrator")
+    oversized_candidate = store.create_candidate(user.id, "待编辑候选")
+    with pytest.raises(ValueError, match="cannot exceed"):
+        store.edit_candidate(
+            oversized_candidate.id, "x" * (MAX_MEMORY_CANDIDATE_CHARS + 1), "administrator"
+        )

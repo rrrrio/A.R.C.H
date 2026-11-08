@@ -177,3 +177,35 @@ def test_agent_processor_cancels_background_extraction_when_realtime_work_resume
     asyncio.run(exercise())
 
     assert store.list_candidates("pending") == ()
+
+
+def test_agent_processor_sends_only_approved_memories_to_agent_core(tmp_path: Path) -> None:
+    """Pending, rejected, and deleted candidates never cross the Agent Core boundary."""
+    store = MemoryStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    agent = FakeAgent()
+    processor = InspectingAgentProcessor(agent, memory_store=store)
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("第一轮", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+        conversation_id = processor.conversation_id
+        assert conversation_id is not None
+        source_message = store.list_messages(conversation_id)[0]
+        pending = store.create_candidate(source_message.id, "待确认偏好")
+        approved = store.create_candidate(source_message.id, "用户偏好简洁回答")
+        rejected = store.create_candidate(source_message.id, "错误事实")
+        deleted = store.create_candidate(source_message.id, "已删除事实")
+        store.decide_candidate(approved.id, "approved", "administrator")
+        store.decide_candidate(rejected.id, "rejected", "administrator")
+        store.decide_candidate(deleted.id, "approved", "administrator")
+        store.decide_candidate(deleted.id, "deleted", "administrator")
+        assert pending.status == "pending"
+        await processor.process_frame(
+            TranscriptionFrame("第二轮", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+
+    asyncio.run(exercise())
+
+    assert agent.requests[1].approved_memories == ("用户偏好简洁回答",)

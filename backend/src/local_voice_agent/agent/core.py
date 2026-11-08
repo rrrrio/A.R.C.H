@@ -33,6 +33,7 @@ class AgentRequest:
     transcript: str
     language: str
     history: tuple[ConversationTurn, ...] = field(default_factory=tuple)
+    approved_memories: tuple[str, ...] = field(default_factory=tuple)
 
 
 class AgentResponseKind(StrEnum):

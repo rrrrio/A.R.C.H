@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from local_voice_agent.api.auth import AuthServiceDependency
+from local_voice_agent.memory.context import MAX_MEMORY_CANDIDATE_CHARS
 from local_voice_agent.memory.store import MemoryCandidate, MemoryStore
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
@@ -27,7 +28,7 @@ class CandidateResponse(BaseModel):
 class CandidateUpdateRequest(BaseModel):
     """One browser-requested content edit or allowed approval state transition."""
 
-    content: str | None = Field(default=None, min_length=1)
+    content: str | None = Field(default=None, min_length=1, max_length=MAX_MEMORY_CANDIDATE_CHARS)
     action: Literal["approved", "rejected", "deleted"] | None = None
 
 

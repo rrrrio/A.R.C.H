@@ -20,6 +20,7 @@ from local_voice_agent.agent.core import (
     AgentResponseKind,
     ConversationTurn,
 )
+from local_voice_agent.memory.context import bounded_approved_memories
 from local_voice_agent.memory.extractor import MemoryCandidateExtractor
 from local_voice_agent.memory.store import MemoryStore, StoredMessage
 
@@ -77,6 +78,7 @@ class PipecatAgentProcessor(FrameProcessor):
             transcript=frame.text,
             language=language,
             history=await self._history_for_request(),
+            approved_memories=await self._approved_memories_for_request(),
         )
         stored_user = await self._record_turn(ConversationTurn("user", frame.text, utterance_id))
         assistant_parts: list[str] = []
@@ -111,6 +113,12 @@ class PipecatAgentProcessor(FrameProcessor):
             ConversationTurn(message.role, message.content, message.utterance_id)
             for message in messages
         )
+
+    async def _approved_memories_for_request(self) -> tuple[str, ...]:
+        if self._memory_store is None:
+            return ()
+        candidates = await asyncio.to_thread(self._memory_store.list_candidates, "approved", 12)
+        return bounded_approved_memories(candidate.content for candidate in candidates)
 
     async def _record_turn(self, turn: ConversationTurn) -> StoredMessage | None:
         if self._memory_store is not None and self._conversation_id is not None:

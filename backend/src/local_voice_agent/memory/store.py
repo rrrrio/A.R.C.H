@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from local_voice_agent.memory.context import MAX_MEMORY_CANDIDATE_CHARS
 from local_voice_agent.memory.migrations import MigrationRunner
 
 MessageRole = Literal["user", "assistant", "system"]
@@ -102,6 +103,7 @@ class MemoryStore:
 
     def create_candidate(self, source_message_id: int, content: str) -> MemoryCandidate:
         """Create a pending candidate that cannot affect future agent context yet."""
+        normalized = _candidate_content(content)
         candidate_id = str(uuid.uuid4())
         now = _now()
         with self._connect() as connection:
@@ -112,30 +114,35 @@ class MemoryStore:
                 )
                 VALUES (?, ?, ?, 'pending', ?, ?)
                 """,
-                (candidate_id, source_message_id, content, now, now),
+                (candidate_id, source_message_id, normalized, now, now),
             )
-        return MemoryCandidate(candidate_id, source_message_id, content, "pending", now, now)
+        return MemoryCandidate(candidate_id, source_message_id, normalized, "pending", now, now)
 
-    def list_candidates(self, status: MemoryStatus | None = None) -> tuple[MemoryCandidate, ...]:
+    def list_candidates(
+        self, status: MemoryStatus | None = None, limit: int | None = None
+    ) -> tuple[MemoryCandidate, ...]:
         """Return candidates without treating their existence as prompt eligibility."""
+        if limit is not None and limit < 1:
+            raise ValueError("Candidate limit must be positive.")
         query = (
             "SELECT id, source_message_id, content, status, created_at, updated_at "
             "FROM memory_candidates"
         )
-        parameters: tuple[MemoryStatus, ...] = ()
+        parameters: tuple[MemoryStatus | int, ...] = ()
         if status is not None:
             query += " WHERE status = ?"
             parameters = (status,)
         query += " ORDER BY created_at DESC, id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters += (limit,)
         with self._connect(readonly=True) as connection:
             rows = connection.execute(query, parameters).fetchall()
         return tuple(_memory_candidate(row) for row in rows)
 
     def edit_candidate(self, candidate_id: str, content: str, actor: str) -> MemoryCandidate:
         """Edit a pending candidate and retain its original wording in the audit trail."""
-        replacement = content.strip()
-        if not replacement:
-            raise ValueError("Memory candidate content cannot be empty.")
+        replacement = _candidate_content(content)
         with self._connect() as connection:
             candidate = self._candidate_for_update(connection, candidate_id)
             if candidate.status != "pending":
@@ -247,6 +254,16 @@ def _memory_candidate(row: tuple[object, ...] | None) -> MemoryCandidate:
     ):
         raise RuntimeError("SQLite returned an invalid memory candidate row.")
     return MemoryCandidate(candidate_id, source_message_id, content, status, created_at, updated_at)
+
+
+def _candidate_content(content: str) -> str:
+    normalized = content.strip()
+    if not normalized:
+        raise ValueError("Memory candidate content cannot be empty.")
+    if len(normalized) > MAX_MEMORY_CANDIDATE_CHARS:
+        message = f"Memory candidate content cannot exceed {MAX_MEMORY_CANDIDATE_CHARS} characters."
+        raise ValueError(message)
+    return normalized
 
 
 def _validate_transition(current: object, target: MemoryStatus) -> None:
