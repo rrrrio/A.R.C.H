@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { isOfferResponse, isVoiceEvent, VoiceClient } from './voice'
+import { isOfferResponse, isVoiceEvent, listAudioInputs, VoiceClient } from './voice'
 
 describe('isOfferResponse', () => {
   it('accepts a complete server answer', () => {
@@ -22,6 +22,29 @@ describe('isVoiceEvent', () => {
   it('rejects unknown activity and transcript phases', () => {
     expect(isVoiceEvent({ type: 'voice_state', state: 'running' })).toBe(false)
     expect(isVoiceEvent({ type: 'transcript', state: 'thinking', role: 'assistant', phase: 'chunk', text: '你好' })).toBe(false)
+  })
+})
+
+describe('listAudioInputs', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('returns only audio inputs and supplies labels before permission is granted', async () => {
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        enumerateDevices: vi.fn().mockResolvedValue([
+          { kind: 'videoinput', deviceId: 'camera', label: 'Camera' },
+          { kind: 'audioinput', deviceId: 'default', label: '' },
+          { kind: 'audioinput', deviceId: 'usb-mic', label: 'USB Mic' },
+        ]),
+      },
+    })
+
+    await expect(listAudioInputs()).resolves.toEqual([
+      { deviceId: 'default', label: '麦克风 1' },
+      { deviceId: 'usb-mic', label: 'USB Mic' },
+    ])
   })
 })
 
@@ -93,9 +116,10 @@ describe('VoiceClient', () => {
     const stream = { getAudioTracks: () => [track], getTracks: () => [track] } as unknown as MediaStream
     const receivedEvents: unknown[] = []
     const dataChannel = { close() {}, onmessage: null as ((event: MessageEvent) => void) | null }
+    const getUserMedia = vi.fn().mockResolvedValue(stream)
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ sdp: 'answer', type: 'answer', pc_id: 'pc-1' }))))
-    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) } })
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } })
     vi.stubGlobal(
       'Audio',
       class {
@@ -134,8 +158,10 @@ describe('VoiceClient', () => {
       },
     )
 
-    const client = new VoiceClient('csrf-token', (event) => receivedEvents.push(event))
+    const client = new VoiceClient('csrf-token', (event) => receivedEvents.push(event), 'usb-mic')
     await client.connect()
+
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: { deviceId: { exact: 'usb-mic' } }, video: false })
     dataChannel.onmessage?.({ data: JSON.stringify({ type: 'voice_state', state: 'user-speaking' }) } as MessageEvent)
 
     expect((client as unknown as { audio: HTMLAudioElement }).audio.muted).toBe(true)

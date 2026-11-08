@@ -8,20 +8,24 @@ export type VoiceEvent =
   | { type: 'voice_state'; state: VoiceActivity }
   | { type: 'transcript'; state: VoiceActivity; role: 'user' | 'assistant'; phase: 'final' | 'start' | 'delta' | 'end'; text: string }
 
+export type AudioInput = { deviceId: string; label: string }
+
 export class VoiceClient {
   private readonly connection = new RTCPeerConnection()
   private readonly audio = new Audio()
   private readonly csrfToken: string
   private readonly onEvent: (event: VoiceEvent) => void
+  private readonly audioDeviceId: string | undefined
   private dataChannel: RTCDataChannel | null = null
   private pcId: string | null = null
   private pendingCandidates: Candidate[] = []
   private stream: MediaStream | null = null
   private serverSessionMayExist = false
 
-  constructor(csrfToken: string, onEvent: (event: VoiceEvent) => void) {
+  constructor(csrfToken: string, onEvent: (event: VoiceEvent) => void, audioDeviceId?: string) {
     this.csrfToken = csrfToken
     this.onEvent = onEvent
+    this.audioDeviceId = audioDeviceId
     this.audio.autoplay = true
     this.connection.ontrack = (event) => {
       this.audio.srcObject = event.streams[0] ?? new MediaStream([event.track])
@@ -41,7 +45,10 @@ export class VoiceClient {
   }
 
   async connect(): Promise<void> {
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    const audio: MediaTrackConstraints | boolean = this.audioDeviceId
+      ? { deviceId: { exact: this.audioDeviceId } }
+      : true
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
     this.dataChannel = this.connection.createDataChannel('messages')
     this.dataChannel.onmessage = (message) => {
       if (typeof message.data !== 'string') return
@@ -112,6 +119,16 @@ export class VoiceClient {
     })
     if (!response.ok) throw new Error('Voice ICE negotiation failed.')
   }
+}
+
+export async function listAudioInputs(): Promise<AudioInput[]> {
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  return devices
+    .filter((device) => device.kind === 'audioinput')
+    .map((device, index) => ({
+      deviceId: device.deviceId,
+      label: device.label || `麦克风 ${index + 1}`,
+    }))
 }
 
 export function isOfferResponse(value: unknown): value is OfferResponse {

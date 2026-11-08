@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
-import { type VoiceActivity, type VoiceEvent, VoiceClient } from './voice'
+import { listAudioInputs, type AudioInput, type VoiceActivity, type VoiceEvent, VoiceClient } from './voice'
 import './App.css'
 
 type SessionState =
@@ -33,6 +33,8 @@ function App() {
   const [password, setPassword] = useState('')
   const [voiceState, setVoiceState] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle')
   const [conversation, setConversation] = useState<ConversationState>(initialConversation)
+  const [audioInputs, setAudioInputs] = useState<AudioInput[]>([])
+  const [audioDeviceId, setAudioDeviceId] = useState('')
   const voiceClient = useRef<VoiceClient | null>(null)
 
   async function refreshSession() {
@@ -50,8 +52,17 @@ function App() {
     }
   }
 
+  async function refreshAudioInputs() {
+    try {
+      setAudioInputs(await listAudioInputs())
+    } catch {
+      setAudioInputs([])
+    }
+  }
+
   useEffect(() => {
     void refreshSession()
+    void refreshAudioInputs()
   }, [])
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
@@ -77,10 +88,11 @@ function App() {
     setVoiceState('connecting')
     setConversation(initialConversation)
     try {
-      const client = new VoiceClient(session.csrfToken, handleVoiceEvent)
+      const client = new VoiceClient(session.csrfToken, handleVoiceEvent, audioDeviceId || undefined)
       voiceClient.current = client
       await client.connect()
       setVoiceState('connected')
+      void refreshAudioInputs()
     } catch {
       await voiceClient.current?.close().catch(() => undefined)
       voiceClient.current = null
@@ -128,6 +140,26 @@ function App() {
               <p><span>助手</span>{conversation.assistantText || '...'}</p>
             </div>
           ) : null}
+          <div className="audio-input-row">
+            <label htmlFor="audio-input">麦克风</label>
+            <select
+              id="audio-input"
+              value={audioDeviceId}
+              onChange={(event) => setAudioDeviceId(event.target.value)}
+              disabled={voiceState === 'connecting' || voiceState === 'connected'}
+            >
+              <option value="">系统默认</option>
+              {audioInputs.map((input) => <option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}
+            </select>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void refreshAudioInputs()}
+              disabled={voiceState === 'connecting' || voiceState === 'connected'}
+            >
+              刷新
+            </button>
+          </div>
           <div className="action-row">
             {voiceState === 'connected' ? (
               <button type="button" className="secondary-button" onClick={() => void disconnectVoice()}>
