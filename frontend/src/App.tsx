@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
+import { VoiceClient } from './voice'
 import './App.css'
 
 type SessionState =
@@ -14,6 +15,8 @@ type SessionState =
 function App() {
   const [session, setSession] = useState<SessionState>({ kind: 'loading' })
   const [password, setPassword] = useState('')
+  const [voiceState, setVoiceState] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle')
+  const voiceClient = useRef<VoiceClient | null>(null)
 
   async function refreshSession() {
     try {
@@ -47,8 +50,30 @@ function App() {
 
   async function signOut() {
     if (session.kind !== 'authenticated') return
+    await disconnectVoice()
     await logout(session.csrfToken)
     setSession({ kind: 'anonymous' })
+  }
+
+  async function connectVoice() {
+    if (session.kind !== 'authenticated') return
+    setVoiceState('connecting')
+    try {
+      const client = new VoiceClient(session.csrfToken)
+      voiceClient.current = client
+      await client.connect()
+      setVoiceState('connected')
+    } catch {
+      await voiceClient.current?.close().catch(() => undefined)
+      voiceClient.current = null
+      setVoiceState('error')
+    }
+  }
+
+  async function disconnectVoice() {
+    await voiceClient.current?.close().catch(() => undefined)
+    voiceClient.current = null
+    setVoiceState('idle')
   }
 
   return (
@@ -62,10 +87,22 @@ function App() {
       {session.kind === 'authenticated' ? (
         <section className="setup-panel" aria-labelledby="voice-title">
           <p className="eyebrow">语音会话</p>
-          <h1 id="voice-title">等待连接</h1>
-          <button type="button" className="secondary-button" onClick={() => void signOut()}>
-            退出登录
-          </button>
+          <h1 id="voice-title">{voiceState === 'connected' ? '已连接' : '等待连接'}</h1>
+          {voiceState === 'error' ? <p>无法建立语音连接。</p> : null}
+          <div className="action-row">
+            {voiceState === 'connected' ? (
+              <button type="button" className="secondary-button" onClick={() => void disconnectVoice()}>
+                断开
+              </button>
+            ) : (
+              <button type="button" onClick={() => void connectVoice()} disabled={voiceState === 'connecting'}>
+                {voiceState === 'connecting' ? '正在连接' : '连接语音'}
+              </button>
+            )}
+            <button type="button" className="secondary-button" onClick={() => void signOut()}>
+              退出登录
+            </button>
+          </div>
         </section>
       ) : (
         <section className="setup-panel" aria-labelledby="login-title">

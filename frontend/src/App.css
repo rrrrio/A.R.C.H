@@ -115,6 +115,13 @@ button:disabled {
   background: #edf1f3;
 }
 
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
 @media (max-width: 640px) {
   .topbar {
     padding: 0 16px;
