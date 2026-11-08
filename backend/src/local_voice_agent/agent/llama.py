@@ -42,7 +42,7 @@ class LlamaCppAgentCore:
             "temperature": 0.6,
             "top_p": 0.95,
             "max_tokens": 256,
-            "tools": [_terminal_tool_definition()],
+            "tools": [_terminal_tool_definition(), _web_search_tool_definition()],
             "tool_choice": "auto",
         }
         try:
@@ -256,6 +256,23 @@ def _terminal_tool_definition() -> dict[str, object]:
                     },
                 },
                 "required": ["argv"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _web_search_tool_definition() -> dict[str, object]:
+    """Describe bounded web search while the gateway retains the enablement and HTTP boundary."""
+    return {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "通过本机受限搜索服务查询互联网公开网页。",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "maxLength": 512}},
+                "required": ["query"],
                 "additionalProperties": False,
             },
         },

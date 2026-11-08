@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     data_dir: Path = PROJECT_ROOT / "data"
     public_origin: str = "https://local-voice-agent.local:8443"
+    search_enabled: bool = False
+    searxng_endpoint: str = "http://127.0.0.1:8080"
 
     @field_validator("data_dir")
     @classmethod
@@ -52,6 +54,23 @@ class Settings(BaseSettings):
             or parsed.fragment
         ):
             raise ValueError("LVA_PUBLIC_ORIGIN must be a bare HTTPS origin.")
+        return value.rstrip("/")
+
+    @field_validator("searxng_endpoint")
+    @classmethod
+    def searxng_endpoint_must_be_loopback_origin(cls, value: str) -> str:
+        """Keep the application's search client behind its local SearXNG boundary."""
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("LVA_SEARXNG_ENDPOINT must be a bare HTTP loopback origin.")
         return value.rstrip("/")
 
     def ensure_runtime_directories(self) -> None:

@@ -28,7 +28,7 @@ class ToolApprovalResponse(BaseModel):
     expires_at: str
     decided_at: str | None
     decided_by: str | None
-    outcome: Literal["completed", "approval_required", "denied"] | None = None
+    outcome: Literal["completed", "approval_required", "denied", "unavailable"] | None = None
     output: str | None = None
 
 

@@ -28,3 +28,13 @@ def test_settings_reject_non_https_or_path_public_origins() -> None:
         Settings(public_origin="http://voice.test:8443")
     with pytest.raises(ValidationError, match="LVA_PUBLIC_ORIGIN must be a bare HTTPS origin"):
         Settings(public_origin="https://voice.test:8443/application")
+
+
+def test_settings_default_to_disabled_loopback_search_and_reject_remote_endpoints() -> None:
+    """Internet access remains opt-in and cannot route through a LAN or remote URL."""
+    settings = Settings()
+
+    assert not settings.search_enabled
+    assert settings.searxng_endpoint == "http://127.0.0.1:8080"
+    with pytest.raises(ValidationError, match="LVA_SEARXNG_ENDPOINT must be a bare HTTP loopback"):
+        Settings(searxng_endpoint="http://192.168.10.20:8080")

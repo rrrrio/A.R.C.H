@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Protocol
 
 from pipecat.frames.frames import (
@@ -271,8 +272,11 @@ def _tool_outcome_text(outcome: ToolOutcome) -> str:
     """Render bounded tool feedback without placing untrusted output in model history."""
     if outcome.status == "approval_required":
         return "此本地操作已提交，请在浏览器中批准。"
-    if outcome.status == "denied":
+    if outcome.status in {"denied", "unavailable"}:
         return f"本地操作未执行：{outcome.message}"
+    if outcome.search_results:
+        references = "\n".join(f"{item.title}：{item.url}" for item in outcome.search_results)
+        return f"联网搜索结果：\n{references}"
     if outcome.result is None:
         return "本地操作已完成。"
     output = outcome.result.stdout or outcome.result.stderr
@@ -289,6 +293,15 @@ def _tool_outcome_text(outcome: ToolOutcome) -> str:
 
 def _tool_result_for_agent(outcome: ToolOutcome) -> str:
     """Describe a completed command in bounded data for the continuation-only Agent Core call."""
+    if outcome.search_results:
+        return json.dumps(
+            [
+                {"title": item.title, "url": item.url, "snippet": item.snippet}
+                for item in outcome.search_results
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     if outcome.result is None:
         return outcome.message
     output = outcome.result.stdout or outcome.result.stderr

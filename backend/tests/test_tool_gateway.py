@@ -8,11 +8,14 @@ import sqlite3
 import threading
 from pathlib import Path
 
+import httpx
+
 from local_voice_agent.agent.core import ToolRequest
 from local_voice_agent.memory.migrations import MigrationRunner
 from local_voice_agent.tools.approvals import ApprovalStore, ToolApproval
 from local_voice_agent.tools.gateway import ToolGateway
 from local_voice_agent.tools.policy import TerminalToolPolicy, ToolPolicy
+from local_voice_agent.tools.search import SearxngSearchClient
 from local_voice_agent.tools.terminal import TerminalExecutor
 
 
@@ -69,6 +72,47 @@ def test_gateway_never_persists_or_executes_hard_denied_requests(tmp_path: Path)
     outcome = asyncio.run(gateway.dispatch(_request(["rm", "-rf", "."])))
 
     assert outcome.status == "denied"
+
+
+def test_gateway_requires_explicit_search_enablement_and_returns_bounded_results(
+    tmp_path: Path,
+) -> None:
+    """Search stays off unless a loopback client is injected into the application gateway."""
+    request = ToolRequest("web_search", '{"query":"local voice agent"}')
+    disabled = _gateway(tmp_path)
+    assert asyncio.run(disabled.dispatch(request)).message == "Local web search is disabled."
+
+    database_path = tmp_path / "enabled.sqlite3"
+    MigrationRunner(database_path).migrate()
+    workspace = tmp_path / "enabled-workspace"
+    workspace.mkdir()
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"title": "本机", "url": "https://example.test", "content": "摘要"}
+                ]
+            },
+        )
+
+    client = SearxngSearchClient(
+        "http://127.0.0.1:8080", transport=httpx.MockTransport(handler)
+    )
+    enabled = ToolGateway(
+        TerminalToolPolicy(workspace),
+        ApprovalStore(database_path),
+        TerminalExecutor(workspace),
+        search_client=client,
+    )
+
+    outcome = asyncio.run(enabled.dispatch(request))
+
+    assert outcome.status == "completed"
+    assert [(item.title, item.url) for item in outcome.search_results] == [
+        ("本机", "https://example.test")
+    ]
 
 
 class BlockingApprovalStore(ApprovalStore):

@@ -10,9 +10,10 @@ from typing import Literal
 from local_voice_agent.agent.core import ToolRequest
 from local_voice_agent.tools.approvals import ApprovalStore
 from local_voice_agent.tools.policy import PolicyDecision, TerminalToolPolicy
+from local_voice_agent.tools.search import SearchResult, SearxngSearchClient
 from local_voice_agent.tools.terminal import TerminalExecutor, TerminalResult
 
-ToolOutcomeStatus = Literal["completed", "approval_required", "denied"]
+ToolOutcomeStatus = Literal["completed", "approval_required", "denied", "unavailable"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,7 @@ class ToolOutcome:
     status: ToolOutcomeStatus
     message: str
     result: TerminalResult | None = None
+    search_results: tuple[SearchResult, ...] = ()
     approval_id: str | None = None
 
 
@@ -33,6 +35,7 @@ class ToolGateway:
         policy: TerminalToolPolicy,
         approvals: ApprovalStore,
         executor: TerminalExecutor,
+        search_client: SearxngSearchClient | None = None,
         max_concurrency: int = 1,
     ) -> None:
         if max_concurrency < 1:
@@ -40,10 +43,13 @@ class ToolGateway:
         self._policy = policy
         self._approvals = approvals
         self._executor = executor
+        self._search_client = search_client
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
     async def dispatch(self, request: ToolRequest) -> ToolOutcome:
         """Execute auto-safe work or persist a reviewable request with no side effect."""
+        if request.name == "web_search":
+            return await self._dispatch_search(request)
         policy_result = self._policy.evaluate(request)
         if policy_result.decision is PolicyDecision.DENIED:
             return ToolOutcome("denied", policy_result.reason)
@@ -75,6 +81,25 @@ class ToolGateway:
         async with self._semaphore:
             result = await self._executor.execute(policy_result.command)
         return ToolOutcome("completed", "Local tool action completed.", result=result)
+
+    async def _dispatch_search(self, request: ToolRequest) -> ToolOutcome:
+        """Run only a bounded query through an explicitly enabled loopback SearXNG client."""
+        if self._search_client is None:
+            return ToolOutcome("denied", "Local web search is disabled.")
+        try:
+            arguments = json.loads(request.arguments_json)
+            if not isinstance(arguments, dict) or set(arguments) != {"query"}:
+                raise ValueError
+            query = arguments["query"]
+            if not isinstance(query, str):
+                raise ValueError
+            async with self._semaphore:
+                results = await self._search_client.search(query)
+        except (ValueError, json.JSONDecodeError):
+            return ToolOutcome("denied", "Search arguments must contain one query string.")
+        except Exception:
+            return ToolOutcome("unavailable", "Local web search is temporarily unavailable.")
+        return ToolOutcome("completed", "Local web search completed.", search_results=results)
 
     async def execute_approved(
         self, approval_id: str, request: ToolRequest, actor: str

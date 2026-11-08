@@ -80,7 +80,20 @@ def test_llama_agent_streams_only_text_and_uses_prior_history() -> None:
                     "additionalProperties": False,
                 },
             },
-        }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "通过本机受限搜索服务查询互联网公开网页。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string", "maxLength": 512}},
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+            },
+        },
     ]
     assert received["messages"] == [
         {"role": "system", "content": "你是本机语音助手。用简洁的中文回答，避免展示推理过程。"},

@@ -20,6 +20,7 @@ from local_voice_agent.settings import Settings, get_settings
 from local_voice_agent.tools.approvals import ApprovalStore
 from local_voice_agent.tools.gateway import ToolGateway
 from local_voice_agent.tools.policy import TerminalToolPolicy
+from local_voice_agent.tools.search import SearxngSearchClient
 from local_voice_agent.tools.terminal import TerminalExecutor
 from local_voice_agent.voice.models import VoiceModelPaths
 from local_voice_agent.voice.session import LocalVoiceSession
@@ -54,6 +55,11 @@ def create_app(
                 TerminalToolPolicy(settings.terminal_workspace_path),
                 app.state.approval_store,
                 TerminalExecutor(settings.terminal_workspace_path),
+                search_client=(
+                    SearxngSearchClient(settings.searxng_endpoint)
+                    if settings.search_enabled
+                    else None
+                ),
             )
         if not hasattr(app.state, "auth_service"):
             app.state.auth_service = AuthService(settings.credential_path, settings.public_origin)

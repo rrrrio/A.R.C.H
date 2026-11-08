@@ -31,7 +31,7 @@ class ToolResult:
     """A bounded, untrusted result returned by the application-owned tool boundary."""
 
     request: ToolRequest
-    status: Literal["completed", "approval_required", "denied"]
+    status: Literal["completed", "approval_required", "denied", "unavailable"]
     content: str
 
 
