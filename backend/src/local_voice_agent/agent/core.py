@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +23,16 @@ class ToolRequest:
 
     name: str
     arguments_json: str
+    call_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResult:
+    """A bounded, untrusted result returned by the application-owned tool boundary."""
+
+    request: ToolRequest
+    status: Literal["completed", "approval_required", "denied"]
+    content: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,3 +72,13 @@ class AgentCore(Protocol):
 
     def respond(self, request: AgentRequest) -> AsyncIterator[AgentResponseEvent]:
         """Yield response events for one utterance until completion or cancellation."""
+
+
+@runtime_checkable
+class ToolResultAgentCore(Protocol):
+    """Optionally continue an existing agent turn after one tool has completed."""
+
+    def respond_to_tool_result(
+        self, request: AgentRequest, result: ToolResult
+    ) -> AsyncIterator[AgentResponseEvent]:
+        """Yield a final answer using a result that remains untrusted reference data."""

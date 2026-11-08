@@ -19,6 +19,7 @@ from local_voice_agent.agent.core import (
     AgentResponseEvent,
     AgentResponseKind,
     ToolRequest,
+    ToolResult,
 )
 from local_voice_agent.memory.extractor import MemoryCandidateExtractor
 from local_voice_agent.memory.store import MemoryStore
@@ -281,6 +282,30 @@ class FakeToolGateway:
         return self.outcome
 
 
+class ContinuingToolAgent:
+    """Request one tool and produce a final answer only after receiving its result."""
+
+    def __init__(self) -> None:
+        self.results: list[ToolResult] = []
+
+    async def respond(self, request: AgentRequest) -> AsyncIterator[AgentResponseEvent]:
+        yield AgentResponseEvent(
+            request.utterance_id,
+            AgentResponseKind.TOOL_REQUEST,
+            tool_request=ToolRequest(
+                "terminal", '{"argv":["pwd"],"cwd":"."}', call_id="call-1"
+            ),
+        )
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+    async def respond_to_tool_result(
+        self, request: AgentRequest, result: ToolResult
+    ) -> AsyncIterator[AgentResponseEvent]:
+        self.results.append(result)
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.TEXT, "当前目录已确认。")
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+
 def test_agent_processor_routes_tool_requests_through_gateway_and_renders_bounded_result(
     tmp_path: Path,
 ) -> None:
@@ -324,6 +349,36 @@ def test_agent_processor_leaves_approval_required_tool_without_side_effect() -> 
 
     text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
     assert text_frames == ["此本地操作已提交，请在浏览器中批准。"]
+
+
+def test_agent_processor_continues_a_completed_tool_with_untrusted_result_data(
+    tmp_path: Path,
+) -> None:
+    """Only the model's follow-up answer becomes assistant history, never raw terminal output."""
+    result = TerminalResult(0, "workspace\n", "", False, False)
+    gateway = FakeToolGateway(ToolOutcome("completed", "done", result=result))
+    agent = ContinuingToolAgent()
+    store = MemoryStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    processor = InspectingAgentProcessor(agent, memory_store=store, tool_gateway=gateway)
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("当前目录", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+
+    asyncio.run(exercise())
+
+    assert [result.request.call_id for result in agent.results] == ["call-1"]
+    assert "exit_code=0" in agent.results[0].content
+    assert "workspace" in agent.results[0].content
+    text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
+    assert text_frames == ["当前目录已确认。"]
+    conversation_id = processor.conversation_id
+    assert conversation_id is not None
+    messages = store.list_messages(conversation_id)
+    persisted = [(message.role, message.content) for message in messages]
+    assert persisted == [("user", "当前目录"), ("assistant", "当前目录已确认。")]
 
 
 class BlockingToolGateway:

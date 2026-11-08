@@ -21,6 +21,8 @@ from local_voice_agent.agent.core import (
     AgentResponseKind,
     ConversationTurn,
     ToolRequest,
+    ToolResult,
+    ToolResultAgentCore,
 )
 from local_voice_agent.memory.context import bounded_approved_memories
 from local_voice_agent.memory.extractor import MemoryCandidateExtractor
@@ -114,9 +116,16 @@ class PipecatAgentProcessor(FrameProcessor):
                     assistant_history_parts.append(event.text)
                     await self.push_frame(LLMTextFrame(event.text))
                 elif event.kind == AgentResponseKind.TOOL_REQUEST:
-                    tool_text = await self._dispatch_tool_request(event.tool_request)
-                    if tool_text:
-                        await self.push_frame(LLMTextFrame(tool_text))
+                    outcome = await self._dispatch_tool_request(event.tool_request)
+                    if outcome is None:
+                        continue
+                    continued = await self._continue_after_completed_tool(
+                        request, event.tool_request, outcome, assistant_history_parts
+                    )
+                    if not continued:
+                        tool_text = _tool_outcome_text(outcome)
+                        if tool_text:
+                            await self.push_frame(LLMTextFrame(tool_text))
                 elif event.kind == AgentResponseKind.END:
                     break
             if self._active_utterance_id != utterance_id:
@@ -131,14 +140,43 @@ class PipecatAgentProcessor(FrameProcessor):
             if self._response_task is current_task:
                 self._response_task = None
 
-    async def _dispatch_tool_request(self, request: ToolRequest | None) -> str:
+    async def _dispatch_tool_request(self, request: ToolRequest | None) -> ToolOutcome | None:
         """Send only typed requests through the application policy boundary."""
         if self._tool_gateway is None:
-            return "本地工具暂不可用。"
+            await self.push_frame(LLMTextFrame("本地工具暂不可用。"))
+            return None
         if request is None:
-            return "工具请求无效，未执行任何操作。"
-        outcome = await self._tool_gateway.dispatch(request)
-        return _tool_outcome_text(outcome)
+            await self.push_frame(LLMTextFrame("工具请求无效，未执行任何操作。"))
+            return None
+        return await self._tool_gateway.dispatch(request)
+
+    async def _continue_after_completed_tool(
+        self,
+        request: AgentRequest,
+        tool_request: ToolRequest | None,
+        outcome: ToolOutcome,
+        assistant_history_parts: list[str],
+    ) -> bool:
+        """Let capable Agent Cores summarize one automatic result without exposing it as history."""
+        if (
+            outcome.status != "completed"
+            or tool_request is None
+            or tool_request.call_id is None
+            or not isinstance(self._agent, ToolResultAgentCore)
+        ):
+            return False
+        result = ToolResult(tool_request, outcome.status, _tool_result_for_agent(outcome))
+        emitted = False
+        async for event in self._agent.respond_to_tool_result(request, result):
+            if event.utterance_id != request.utterance_id:
+                continue
+            if event.kind in {AgentResponseKind.TEXT, AgentResponseKind.ERROR} and event.text:
+                emitted = True
+                assistant_history_parts.append(event.text)
+                await self.push_frame(LLMTextFrame(event.text))
+            elif event.kind == AgentResponseKind.END:
+                break
+        return emitted
 
     async def _history_for_request(self) -> tuple[ConversationTurn, ...]:
         if self._memory_store is None or self._conversation_id is None:
@@ -247,3 +285,14 @@ def _tool_outcome_text(outcome: ToolOutcome) -> str:
         else ""
     )
     return f"本地操作结果：{bounded_output}{suffix}"
+
+
+def _tool_result_for_agent(outcome: ToolOutcome) -> str:
+    """Describe a completed command in bounded data for the continuation-only Agent Core call."""
+    if outcome.result is None:
+        return outcome.message
+    output = outcome.result.stdout or outcome.result.stderr
+    return (
+        f"exit_code={outcome.result.exit_code}; timed_out={outcome.result.timed_out}; "
+        f"output_truncated={outcome.result.output_truncated}\n{output}"
+    )

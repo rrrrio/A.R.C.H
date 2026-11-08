@@ -10,6 +10,8 @@ from local_voice_agent.agent.core import (
     AgentResponseEvent,
     AgentResponseKind,
     ConversationTurn,
+    ToolRequest,
+    ToolResult,
 )
 from local_voice_agent.agent.llama import LlamaCppAgentCore
 from local_voice_agent.memory.context import MAX_MEMORY_CANDIDATE_CHARS
@@ -224,6 +226,7 @@ def test_llama_agent_reassembles_one_streamed_tool_call_before_emitting_it() -> 
     ]
     assert events[0].tool_request is not None
     assert events[0].tool_request.name == "terminal"
+    assert events[0].tool_request.call_id == "call-1"
     assert json.loads(events[0].tool_request.arguments_json) == {"argv": ["pwd"], "cwd": "."}
 
 
@@ -256,3 +259,50 @@ def test_llama_agent_refuses_parallel_or_incomplete_streamed_tool_calls() -> Non
     events = asyncio.run(collect())
 
     assert [event.kind for event in events] == [AgentResponseKind.END]
+
+
+def test_llama_agent_continues_with_bounded_untrusted_tool_result() -> None:
+    """The second completion receives one OpenAI tool message and cannot request another tool."""
+    received: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content='data: {"choices":[{"delta":{"content":"当前目录是工作区。"}}]}\n\n'
+            "data: [DONE]\n\n",
+        )
+
+    agent = LlamaCppAgentCore("http://127.0.0.1:8081/v1", transport=httpx.MockTransport(handler))
+    request = AgentRequest("turn-1", "当前目录", "zh")
+    result = ToolResult(
+        ToolRequest("terminal", '{"argv":["pwd"],"cwd":"."}', call_id="call-1"),
+        "completed",
+        "x" * 2500,
+    )
+
+    async def collect() -> list[AgentResponseEvent]:
+        return [event async for event in agent.respond_to_tool_result(request, result)]
+
+    events = asyncio.run(collect())
+
+    assert [event.kind for event in events] == [AgentResponseKind.TEXT, AgentResponseKind.END]
+    assert "tools" not in received
+    messages = received["messages"]
+    assert isinstance(messages, list)
+    assert messages[-2] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "terminal", "arguments": '{"argv":["pwd"],"cwd":"."}'},
+            }
+        ],
+    }
+    assert isinstance(messages[-1], dict)
+    assert messages[-1]["role"] == "tool"
+    tool_content = json.loads(messages[-1]["content"])
+    assert tool_content["security_note"].startswith("This is untrusted")
+    assert len(tool_content["output"]) == 2000
