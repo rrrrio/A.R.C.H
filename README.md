@@ -12,7 +12,7 @@
 
 ## 当前状态
 
-截至 2026-11-08，Milestone 0 和 Milestone 1 已完成。M2 已实现 Argon2id 管理员凭据、Secure/HttpOnly 会话 cookie、CSRF 与 HTTPS Origin 校验、会话绑定的 WebRTC 信令，以及浏览器麦克风、远端音频、DataChannel 会话状态和字幕控制器；Pipecat 可启动本地 VAD/ASR/LLM/TTS 媒体流水线。它们通过单元测试、构建和本地 worker 构造校验，但真实 HTTPS 证书、第二台 LAN 设备、首音和插话指标仍待验收。目标机器是 Ubuntu 24.04、RTX 4090 24GB、Ryzen 7 9700X、32GB 内存，当前已释放约 100GB 磁盘空间。
+截至 2026-11-08，Milestone 0 和 Milestone 1 已完成。M2 已实现 Argon2id 管理员凭据、Secure/HttpOnly 会话 cookie、CSRF 与 HTTPS Origin 校验、会话绑定的 WebRTC 信令，以及浏览器麦克风、远端音频、DataChannel 会话状态和字幕控制器；Pipecat 可启动本地 VAD/ASR/LLM/TTS 媒体流水线。Caddy HTTPS 网关已通过本机和 `192.168.10.126` LAN 地址的受信任 API 验收，后端仍仅监听回环地址。第二台 LAN 设备的证书、浏览器通话、首音和插话指标仍待验收。目标机器是 Ubuntu 24.04、RTX 4090 24GB、Ryzen 7 9700X、32GB 内存，当前已释放约 100GB 磁盘空间。
 
 ## 固定目标
 

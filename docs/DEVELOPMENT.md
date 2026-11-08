@@ -15,6 +15,33 @@
 
 `make bootstrap` 创建后端虚拟环境，并按 `frontend/package-lock.json` 安装前端依赖。它不会覆盖 `.env`，也不会删除 `data/` 内的用户数据。
 
+## HTTPS 网关
+
+先在 `.env` 设定局域网设备会访问的无路径 HTTPS origin。默认主机名是 `local-voice-agent.local`，端口是 `8443`；`LVA_PUBLIC_ORIGIN`、`LVA_LAN_HOST` 和 `LVA_HTTPS_PORT` 必须组成同一个 origin。
+
+在一个终端启动只绑定回环地址的后端：
+
+    cd backend
+    uv run uvicorn local_voice_agent.main:app --host 127.0.0.1 --port 8000
+
+在仓库根目录构建前端并启动唯一的 LAN 入口：
+
+    make gateway-up
+
+该网关使用 Docker host network，因而能够代理回环后端；它只监听配置的 HTTPS 端口，后端不会暴露到 LAN。停止网关使用 `make gateway-down`，查看日志使用 `make gateway-logs`。
+
+Caddy 首次启动会创建本地 CA。将其公有根证书复制到客户端并在客户端信任；不要复制私钥或 Caddy 的整个数据目录：
+
+    docker cp local-voice-agent-caddy-1:/data/caddy/pki/authorities/local/root.crt /tmp/local-voice-agent-root.crt
+
+让每个 LAN 客户端将 `LVA_LAN_HOST` 解析到这台机器的 LAN IP。例如当前主机的 `192.168.10.126` 网络可使用本地 DNS，或为测试临时添加 `192.168.10.126 local-voice-agent.local`。之后从客户端访问 `https://local-voice-agent.local:8443`。
+
+在本机可使用 CA 文件进行不安装系统证书库的验收：
+
+    curl --cacert /tmp/local-voice-agent-root.crt \
+      --resolve local-voice-agent.local:8443:192.168.10.126 \
+      https://local-voice-agent.local:8443/api/health
+
 ## 健康检查
 
 启动后端：

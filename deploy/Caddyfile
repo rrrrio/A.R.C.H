@@ -1,14 +1,19 @@
 {
 	admin off
+	auto_https disable_redirects
 }
 
-https://{$LVA_LAN_HOST:local-voice-agent.local}:8443 {
+https://{$LVA_LAN_HOST:local-voice-agent.local}:{$LVA_HTTPS_PORT:8443} {
 	tls internal
 
 	@api path /api/*
-	reverse_proxy @api host.docker.internal:8000
+	handle @api {
+		reverse_proxy 127.0.0.1:8000
+	}
 
-	root * /srv
-	try_files {path} /index.html
-	file_server
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
 }
