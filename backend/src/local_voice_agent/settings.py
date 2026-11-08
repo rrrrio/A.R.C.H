@@ -77,6 +77,16 @@ class Settings(BaseSettings):
         """Return the bounded SQLite database path for persistent local state."""
         return self.data_dir / "db" / "local-voice-agent.sqlite3"
 
+    @property
+    def rag_model_path(self) -> Path:
+        """Return the fixed local BGE-M3 snapshot used for offline knowledge retrieval."""
+        return self.data_dir / "models/bge-m3/5617a9f61b028005a4858fdac845db406aefb181"
+
+    @property
+    def knowledge_inbox_path(self) -> Path:
+        """Return the only user-managed source directory eligible for RAG indexing."""
+        return self.data_dir / "knowledge/inbox"
+
 
 @lru_cache
 def get_settings() -> Settings:

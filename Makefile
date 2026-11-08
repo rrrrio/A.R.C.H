@@ -5,10 +5,10 @@ BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 COMPOSE := docker compose -f deploy/compose.yaml
 
-.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare benchmark-tts
+.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts
 
 help:
-	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare benchmark-tts'
+	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts'
 
 bootstrap:
 	uv sync --directory $(BACKEND_DIR) --all-groups
@@ -70,6 +70,12 @@ llamacpp-prepare:
 
 tts-prepare:
 	uv run --directory $(BACKEND_DIR) python spikes/prepare_tts_model.py
+
+rag-prepare:
+	uv run --directory $(BACKEND_DIR) python scripts/prepare_rag_model.py
+
+rag-index:
+	HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --directory $(BACKEND_DIR) python scripts/index_knowledge.py
 
 benchmark-tts:
 	@printf '%s\n' 'Run tts_benchmark.py with run_kokoro_tts.py and the pinned files under data/models/kokoro-zh/.'
