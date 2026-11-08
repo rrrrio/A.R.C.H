@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal, Protocol, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -11,6 +11,13 @@ from local_voice_agent.agent.core import ToolRequest
 from local_voice_agent.api.auth import AuthServiceDependency
 from local_voice_agent.tools.approvals import ApprovalStore, ToolApproval
 from local_voice_agent.tools.gateway import ToolGateway, ToolOutcome
+
+
+class ApprovalContinuation(Protocol):
+    """Minimal session boundary for one browser-approved tool result."""
+
+    async def continue_after_approved_tool(self, approval_id: str, outcome: ToolOutcome) -> bool:
+        """Deliver one already-executed result only to its live originating voice session."""
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 
@@ -48,8 +55,17 @@ def get_tool_gateway(request: Request) -> ToolGateway:
     return cast(ToolGateway, request.app.state.tool_gateway)
 
 
+def get_approval_continuation(request: Request) -> ApprovalContinuation | None:
+    """Return the active voice-session continuation boundary when media is running."""
+    continuation = getattr(request.app.state, "voice_session", None)
+    return cast(ApprovalContinuation | None, continuation)
+
+
 ApprovalStoreDependency = Annotated[ApprovalStore, Depends(get_approval_store)]
 ToolGatewayDependency = Annotated[ToolGateway, Depends(get_tool_gateway)]
+ApprovalContinuationDependency = Annotated[
+    ApprovalContinuation | None, Depends(get_approval_continuation)
+]
 
 
 @router.get("/approvals", response_model=list[ToolApprovalResponse])
@@ -69,6 +85,7 @@ async def decide_approval(
     auth: AuthServiceDependency,
     store: ApprovalStoreDependency,
     gateway: ToolGatewayDependency,
+    continuation: ApprovalContinuationDependency,
 ) -> ToolApprovalResponse:
     """Reject or atomically consume one approved request through the constrained gateway."""
     session_id, _ = auth.require_csrf(request)
@@ -93,6 +110,8 @@ async def decide_approval(
         ToolRequest(approval.tool_name, approval.request_arguments_json),
         session_id,
     )
+    if continuation is not None:
+        await continuation.continue_after_approved_tool(approval.id, outcome)
     consumed = store.get(approval.id)
     if consumed is None:
         raise RuntimeError("Consumed tool approval was not found.")

@@ -13,7 +13,7 @@ import httpx
 from local_voice_agent.agent.core import ToolRequest
 from local_voice_agent.memory.migrations import MigrationRunner
 from local_voice_agent.tools.approvals import ApprovalStore, ToolApproval
-from local_voice_agent.tools.gateway import ToolGateway
+from local_voice_agent.tools.gateway import ToolGateway, ToolOutcome
 from local_voice_agent.tools.policy import TerminalToolPolicy, ToolPolicy
 from local_voice_agent.tools.search import SearxngSearchClient
 from local_voice_agent.tools.terminal import TerminalExecutor
@@ -64,6 +64,29 @@ def test_gateway_approval_executes_one_confined_write_exactly_once(tmp_path: Pat
         asyncio.run(gateway.execute_approved(pending.approval_id, request, "executor")).status
         == "denied"
     )
+
+
+def test_gateway_rejects_an_approved_request_retracted_before_consumption(tmp_path: Path) -> None:
+    """Session cleanup wins when it locks and retracts an approved request before execution."""
+    gateway = _gateway(tmp_path)
+    request = _request(["touch", "report.txt"])
+    pending = asyncio.run(gateway.dispatch(request))
+    approval_id = pending.approval_id
+    assert approval_id is not None
+    approved = gateway._approvals.decide(approval_id, "approved", "administrator")
+    assert approved.status == "approved"
+
+    async def exercise() -> ToolOutcome:
+        cancellation = asyncio.create_task(gateway.cancel_pending(approval_id))
+        await asyncio.sleep(0)
+        outcome = await gateway.execute_approved(approval_id, request, "executor")
+        await cancellation
+        return outcome
+
+    outcome = asyncio.run(exercise())
+
+    assert outcome.status == "denied"
+    assert not (tmp_path / "workspace" / "report.txt").exists()
 
 
 def test_gateway_never_persists_or_executes_hard_denied_requests(tmp_path: Path) -> None:

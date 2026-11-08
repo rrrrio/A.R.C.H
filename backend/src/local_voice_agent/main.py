@@ -71,6 +71,7 @@ def create_app(
                 rag_model_path=settings.rag_model_path,
                 tool_gateway=app.state.tool_gateway,
             )
+            app.state.voice_session = voice_session
             app.state.signaling_service = WebRTCSignalingService(
                 on_connection=voice_session.start,
                 on_disconnection=voice_session.stop,

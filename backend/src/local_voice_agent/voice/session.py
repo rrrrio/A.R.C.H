@@ -12,7 +12,8 @@ from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.rag.embeddings import SentenceTransformerEmbedder
 from local_voice_agent.rag.retriever import LocalKnowledgeRetriever, Retriever
 from local_voice_agent.rag.store import KnowledgeStore
-from local_voice_agent.tools.gateway import ToolGateway
+from local_voice_agent.tools.gateway import ToolGateway, ToolOutcome
+from local_voice_agent.voice.agent_processor import PipecatAgentProcessor
 from local_voice_agent.voice.llama import LlamaCppServer
 from local_voice_agent.voice.models import VoiceModelPaths
 from local_voice_agent.voice.pipeline import create_pipeline_worker
@@ -39,6 +40,7 @@ class LocalVoiceSession:
         self._llama = LlamaCppServer(paths)
         self._runner: WorkerRunner | None = None
         self._runner_task: asyncio.Task[None] | None = None
+        self._agent_processor: PipecatAgentProcessor | None = None
 
     async def start(self, connection: SmallWebRTCConnection) -> None:
         """Start model serving and the media worker exactly once for the active peer."""
@@ -56,6 +58,7 @@ class LocalVoiceSession:
                 self._memory_store,
                 self._retriever,
                 self._tool_gateway,
+                self._set_agent_processor,
             )
             runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
             ready = asyncio.Event()
@@ -70,12 +73,24 @@ class LocalVoiceSession:
             self._runner = runner
             self._runner_task = runner_task
         except BaseException:
+            self._agent_processor = None
             if runner is not None:
                 await runner.cancel(reason="voice session startup failed")
             if runner_task is not None:
                 await runner_task
             await self._llama.stop()
             raise
+
+    async def continue_after_approved_tool(self, approval_id: str, outcome: ToolOutcome) -> bool:
+        """Resume only the active media session that originated a consumed browser approval."""
+        processor = self._agent_processor
+        if processor is None:
+            return False
+        return await processor.continue_after_approved_tool(approval_id, outcome)
+
+    def _set_agent_processor(self, processor: PipecatAgentProcessor) -> None:
+        """Expose only the continuation boundary, not the full media pipeline, to this session."""
+        self._agent_processor = processor
 
     def _create_retriever(self) -> Retriever | None:
         """Load the configured offline embedding model only when a voice session starts."""
@@ -93,9 +108,13 @@ class LocalVoiceSession:
     async def stop(self) -> None:
         """Cancel media work before stopping the local language-model subprocess."""
         runner, task = self._runner, self._runner_task
+        processor = self._agent_processor
         self._runner = None
         self._runner_task = None
         self._retriever = None
+        if processor is not None:
+            await processor.abandon_pending_tool_continuation()
+        self._agent_processor = None
         if runner is not None:
             await runner.cancel(reason="voice session closed")
         if task is not None:

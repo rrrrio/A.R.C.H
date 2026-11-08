@@ -269,17 +269,20 @@ class ToolRequestAgent:
         )
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
 
-
 class FakeToolGateway:
     """Return one controlled gateway result without invoking the real terminal adapter."""
 
     def __init__(self, outcome: ToolOutcome) -> None:
         self.outcome = outcome
         self.requests: list[ToolRequest] = []
+        self.cancelled_approval_ids: list[str] = []
 
     async def dispatch(self, request: ToolRequest) -> ToolOutcome:
         self.requests.append(request)
         return self.outcome
+
+    async def cancel_pending(self, approval_id: str) -> None:
+        self.cancelled_approval_ids.append(approval_id)
 
 
 class ContinuingToolAgent:
@@ -305,6 +308,46 @@ class ContinuingToolAgent:
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.TEXT, "当前目录已确认。")
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
 
+
+class SilentContinuationAgent(ContinuingToolAgent):
+    """Finish a tool continuation without text to exercise the browser-only fallback."""
+
+    async def respond_to_tool_result(
+        self, request: AgentRequest, result: ToolResult
+    ) -> AsyncIterator[AgentResponseEvent]:
+        self.results.append(result)
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+
+class BlockingContinuationAgent(ContinuingToolAgent):
+    """Hold a post-approval result open until a newer transcription supersedes it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.continuation_started = asyncio.Event()
+        self.continuation_cancelled = asyncio.Event()
+        self.requests = 0
+
+    async def respond(self, request: AgentRequest) -> AsyncIterator[AgentResponseEvent]:
+        self.requests += 1
+        if self.requests == 1:
+            async for event in super().respond(request):
+                yield event
+            return
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.TEXT, "新回答")
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+    async def respond_to_tool_result(
+        self, request: AgentRequest, result: ToolResult
+    ) -> AsyncIterator[AgentResponseEvent]:
+        self.results.append(result)
+        self.continuation_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.continuation_cancelled.set()
+            raise
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.TEXT, "过期回答")
 
 def test_agent_processor_routes_tool_requests_through_gateway_and_renders_bounded_result(
     tmp_path: Path,
@@ -349,6 +392,122 @@ def test_agent_processor_leaves_approval_required_tool_without_side_effect() -> 
 
     text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
     assert text_frames == ["此本地操作已提交，请在浏览器中批准。"]
+
+
+def test_agent_processor_continues_once_after_browser_approval(tmp_path: Path) -> None:
+    """A consumed active-session approval resumes through one untrusted-result model turn."""
+    gateway = FakeToolGateway(ToolOutcome("approval_required", "review", approval_id="approval-1"))
+    agent = ContinuingToolAgent()
+    store = MemoryStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    processor = InspectingAgentProcessor(agent, memory_store=store, tool_gateway=gateway)
+    result = TerminalResult(0, "created\n", "", False, False)
+
+    async def exercise() -> bool:
+        await processor.process_frame(
+            TranscriptionFrame("创建文件", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+        continued = await processor.continue_after_approved_tool(
+            "approval-1", ToolOutcome("completed", "done", result=result)
+        )
+        response_task = processor._response_task
+        assert response_task is not None
+        await response_task
+        return continued
+
+    assert asyncio.run(exercise())
+    assert [tool_result.request.call_id for tool_result in agent.results] == ["call-1"]
+    assert "created" in agent.results[0].content
+    text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
+    assert text_frames == ["此本地操作已提交，请在浏览器中批准。", "当前目录已确认。"]
+    conversation_id = processor.conversation_id
+    assert conversation_id is not None
+    messages = store.list_messages(conversation_id)
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", "创建文件"),
+        ("assistant", "当前目录已确认。"),
+    ]
+
+
+def test_agent_processor_never_persists_tool_output_when_continuation_has_no_text(
+    tmp_path: Path,
+) -> None:
+    """A browser-visible fallback remains outside assistant history when the model emits no text."""
+    gateway = FakeToolGateway(ToolOutcome("approval_required", "review", approval_id="approval-1"))
+    store = MemoryStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    processor = InspectingAgentProcessor(
+        SilentContinuationAgent(), memory_store=store, tool_gateway=gateway
+    )
+    result = TerminalResult(0, "untrusted-output\n", "", False, False)
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("创建文件", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+        assert await processor.continue_after_approved_tool(
+            "approval-1", ToolOutcome("completed", "done", result=result)
+        )
+        response_task = processor._response_task
+        assert response_task is not None
+        await response_task
+
+    asyncio.run(exercise())
+    text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
+    assert text_frames[-1] == "本地操作结果：untrusted-output\n"
+    conversation_id = processor.conversation_id
+    assert conversation_id is not None
+    messages = store.list_messages(conversation_id)
+    assert [(message.role, message.content) for message in messages] == [("user", "创建文件")]
+
+
+def test_new_transcription_cancels_an_inflight_browser_approval_continuation() -> None:
+    """A later utterance owns output after it invalidates the old approval generation."""
+    gateway = FakeToolGateway(ToolOutcome("approval_required", "review", approval_id="approval-1"))
+    agent = BlockingContinuationAgent()
+    processor = InspectingAgentProcessor(agent, tool_gateway=gateway)
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("创建文件", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+        assert await processor.continue_after_approved_tool(
+            "approval-1", ToolOutcome("completed", "done")
+        )
+        old_task = processor._response_task
+        assert old_task is not None
+        await agent.continuation_started.wait()
+        await processor._respond_to_transcription(
+            TranscriptionFrame("下一件事", "user", "later")
+        )
+        try:
+            await old_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(exercise())
+    assert agent.continuation_cancelled.is_set()
+    text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
+    assert "过期回答" not in text_frames
+    assert text_frames[-1] == "新回答"
+
+
+def test_agent_processor_revokes_pending_approval_on_interruption() -> None:
+    """An interrupted browser approval cannot later resume its superseded answer."""
+    gateway = FakeToolGateway(ToolOutcome("approval_required", "review", approval_id="approval-1"))
+    processor = InspectingAgentProcessor(ContinuingToolAgent(), tool_gateway=gateway)
+
+    async def exercise() -> bool:
+        await processor.process_frame(
+            TranscriptionFrame("创建文件", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+        await processor._cancel_pending_tool_continuation()
+        return await processor.continue_after_approved_tool(
+            "approval-1", ToolOutcome("completed", "done")
+        )
+
+    assert not asyncio.run(exercise())
+    assert gateway.cancelled_approval_ids == ["approval-1"]
 
 
 def test_agent_processor_continues_a_completed_tool_with_untrusted_result_data(
@@ -397,6 +556,33 @@ class BlockingToolGateway:
             raise
         raise AssertionError("blocking dispatch should have been cancelled")
 
+    async def cancel_pending(self, approval_id: str) -> None:
+        """Satisfy the complete gateway contract; this fake never creates an approval."""
+        raise AssertionError(f"unexpected pending approval cancellation: {approval_id}")
+
+
+class DelayedCancellationGateway:
+    """Model a gateway that must finish approval creation cleanup after response cancellation."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cleanup_started = asyncio.Event()
+        self.release_cleanup = asyncio.Event()
+
+    async def dispatch(self, request: ToolRequest) -> ToolOutcome:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cleanup_started.set()
+            await self.release_cleanup.wait()
+            raise
+        raise AssertionError(f"unexpected completed dispatch: {request}")
+
+    async def cancel_pending(self, approval_id: str) -> None:
+        """Satisfy the complete gateway contract; no approval record has been exposed yet."""
+        raise AssertionError(f"unexpected pending approval cancellation: {approval_id}")
+
 
 def test_agent_processor_cancels_an_active_tool_dispatch_on_interruption() -> None:
     """A barge-in cannot leave a pending media response executing its tool request."""
@@ -420,3 +606,28 @@ def test_agent_processor_cancels_an_active_tool_dispatch_on_interruption() -> No
     asyncio.run(exercise())
 
     assert not any(isinstance(frame, LLMFullResponseEndFrame) for frame in processor.forwarded)
+
+
+def test_abandon_waits_for_cancelled_approval_creation_cleanup() -> None:
+    """Session shutdown waits for cancelled dispatch cleanup before releasing ownership."""
+    gateway = DelayedCancellationGateway()
+    processor = InspectingAgentProcessor(ToolRequestAgent(), tool_gateway=gateway)
+
+    async def exercise() -> None:
+        response_task = asyncio.create_task(
+            processor._respond_to_transcription(
+                TranscriptionFrame("创建文件", "user", "timestamp")
+            )
+        )
+        await gateway.started.wait()
+        abandon_task = asyncio.create_task(processor.abandon_pending_tool_continuation())
+        await gateway.cleanup_started.wait()
+        assert not abandon_task.done()
+        gateway.release_cleanup.set()
+        await abandon_task
+        try:
+            await response_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(exercise())

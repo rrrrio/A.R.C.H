@@ -15,9 +15,10 @@ from local_voice_agent.auth.service import AuthService
 from local_voice_agent.main import create_app
 from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.tools.approvals import ApprovalStore
-from local_voice_agent.tools.gateway import ToolGateway
+from local_voice_agent.tools.gateway import ToolGateway, ToolOutcome
 from local_voice_agent.tools.policy import TerminalToolPolicy
 from local_voice_agent.tools.terminal import TerminalExecutor
+from local_voice_agent.voice.webrtc import WebRTCSignalingService
 
 PUBLIC_ORIGIN = "https://voice.test:8443"
 
@@ -46,6 +47,17 @@ def _application(tmp_path: Path) -> tuple[FastAPI, ToolGateway, Path]:
         gateway,
         workspace,
     )
+
+
+class FakeApprovalContinuation:
+    """Record the already-executed outcome passed from the browser approval endpoint."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ToolOutcome]] = []
+
+    async def continue_after_approved_tool(self, approval_id: str, outcome: ToolOutcome) -> bool:
+        self.calls.append((approval_id, outcome))
+        return True
 
 
 def test_tool_approval_api_requires_login_and_csrf_then_executes_exactly_once(
@@ -110,3 +122,32 @@ def test_tool_approval_api_rejection_has_no_side_effect(tmp_path: Path) -> None:
 
     assert rejected.json()["status"] == "rejected"
     assert not (workspace / "reports").exists()
+
+
+def test_tool_approval_api_forwards_only_consumed_execution_to_active_voice_session(
+    tmp_path: Path,
+) -> None:
+    """The authenticated approval endpoint forwards its result through the session boundary."""
+    app, gateway, _ = _application(tmp_path)
+    continuation = FakeApprovalContinuation()
+    app.state.voice_session = continuation
+    app.state.signaling_service = WebRTCSignalingService()
+    pending = asyncio.run(gateway.dispatch(_request(["touch", "report.txt"])))
+    assert pending.approval_id is not None
+
+    with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
+        login = client.post(
+            "/api/auth/login",
+            headers={"Origin": PUBLIC_ORIGIN},
+            json={"password": "correct-horse-battery-staple"},
+        )
+        approved = client.patch(
+            f"/api/tools/approvals/{pending.approval_id}",
+            headers={"Origin": PUBLIC_ORIGIN, "X-CSRF-Token": login.json()["csrf_token"]},
+            json={"action": "approved"},
+        )
+
+    assert approved.status_code == 200
+    assert [(approval_id, outcome.status) for approval_id, outcome in continuation.calls] == [
+        (pending.approval_id, "completed")
+    ]

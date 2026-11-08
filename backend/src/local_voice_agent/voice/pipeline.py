@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -33,6 +35,7 @@ def create_pipeline_worker(
     memory_store: MemoryStore | None = None,
     retriever: Retriever | None = None,
     tool_gateway: ToolGateway | None = None,
+    on_agent_processor: Callable[[PipecatAgentProcessor], None] | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
     paths.require_ready()
@@ -58,6 +61,8 @@ def create_pipeline_worker(
         retriever=retriever,
         tool_gateway=tool_gateway,
     )
+    if on_agent_processor is not None:
+        on_agent_processor(agent)
     tts = KokoroTTSService(
         model_path=str(paths.tts_model),
         voices_path=str(paths.tts_voices),
