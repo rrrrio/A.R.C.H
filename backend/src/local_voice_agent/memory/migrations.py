@@ -91,6 +91,34 @@ MIGRATIONS: tuple[Migration, ...] = (
         CREATE INDEX knowledge_chunks_by_source ON knowledge_chunks(source_path, ordinal);
         """,
     ),
+    Migration(
+        4,
+        "create tool approval audit tables",
+        """
+        CREATE TABLE tool_approvals (
+            id TEXT PRIMARY KEY,
+            request_sha256 TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            argv_json TEXT NOT NULL,
+            working_directory TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired', 'consumed')),
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            decided_at TEXT,
+            decided_by TEXT
+        );
+        CREATE INDEX tool_approvals_by_status_expiry ON tool_approvals(status, expires_at);
+        CREATE TABLE tool_approval_events (
+            id INTEGER PRIMARY KEY,
+            approval_id TEXT NOT NULL REFERENCES tool_approvals(id),
+            action TEXT NOT NULL CHECK (action IN ('created', 'approved', 'rejected', 'expired', 'consumed')),
+            actor TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX tool_approval_events_by_approval ON tool_approval_events(approval_id, id);
+        """,
+    ),
 )
 
 
