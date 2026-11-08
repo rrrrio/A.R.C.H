@@ -29,6 +29,7 @@ services:
       - "${LVA_HTTPS_PORT:-8443}:8443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../frontend/dist:/srv:ro
       - ./caddy-data:/data
       - ./caddy-config:/config
     extra_hosts:
