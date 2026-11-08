@@ -10,7 +10,7 @@ def test_knowledge_store_replaces_sources_searches_vectors_and_removes_missing_p
 ) -> None:
     """Source replacement and deletion keep the local index consistent with the inbox."""
     store = KnowledgeStore(tmp_path / "voice.sqlite3")
-    assert store.migrate() == (1, 2, 3, 4)
+    assert store.migrate() == (1, 2, 3, 4, 5)
     store.replace_source(
         "notes.md",
         "digest-1",

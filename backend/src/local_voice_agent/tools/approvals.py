@@ -25,6 +25,7 @@ class ToolApproval:
     id: str
     request_sha256: str
     tool_name: str
+    request_arguments_json: str | None
     argv_json: str
     working_directory: str
     reason: str
@@ -56,6 +57,7 @@ class ApprovalStore:
             str(uuid.uuid4()),
             _request_hash(request),
             request.name,
+            request.arguments_json,
             json.dumps(result.command.argv, separators=(",", ":")),
             str(result.command.working_directory),
             result.reason,
@@ -69,14 +71,16 @@ class ApprovalStore:
             connection.execute(
                 """
                 INSERT INTO tool_approvals(
-                    id, request_sha256, tool_name, argv_json, working_directory, reason,
+                    id, request_sha256, tool_name, request_arguments_json, argv_json,
+                    working_directory, reason,
                     status, created_at, expires_at, decided_at, decided_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval.id,
                     approval.request_sha256,
                     approval.tool_name,
+                    approval.request_arguments_json,
                     approval.argv_json,
                     approval.working_directory,
                     approval.reason,
@@ -96,13 +100,21 @@ class ApprovalStore:
             self._expire(connection)
             rows = connection.execute(
                 """
-                SELECT id, request_sha256, tool_name, argv_json, working_directory, reason,
+                SELECT id, request_sha256, tool_name, request_arguments_json, argv_json,
+                       working_directory, reason,
                        status, created_at, expires_at, decided_at, decided_by
                 FROM tool_approvals WHERE status = 'pending'
                 ORDER BY created_at DESC, id DESC
                 """
             ).fetchall()
         return tuple(_approval(row) for row in rows)
+
+    def get(self, approval_id: str) -> ToolApproval | None:
+        """Return one current record after making any elapsed authorization visibly expired."""
+        with self._connect() as connection:
+            self._expire(connection)
+            row = _get_approval(connection, approval_id)
+        return None if row is None else _approval(row)
 
     def decide(self, approval_id: str, action: ApprovalAction, actor: str) -> ToolApproval:
         """Approve or reject one still-pending request and retain the actor."""
@@ -186,7 +198,8 @@ def _record_event(
 def _get_approval(connection: sqlite3.Connection, approval_id: str) -> tuple[object, ...] | None:
     row = connection.execute(
         """
-        SELECT id, request_sha256, tool_name, argv_json, working_directory, reason,
+        SELECT id, request_sha256, tool_name, request_arguments_json, argv_json,
+               working_directory, reason,
                status, created_at, expires_at, decided_at, decided_by
         FROM tool_approvals WHERE id = ?
         """,
@@ -208,6 +221,7 @@ def _approval(row: tuple[object, ...] | None) -> ToolApproval:
         approval_id,
         request_sha256,
         tool_name,
+        request_arguments_json,
         argv_json,
         working_directory,
         reason,
@@ -221,6 +235,7 @@ def _approval(row: tuple[object, ...] | None) -> ToolApproval:
         isinstance(approval_id, str)
         and isinstance(request_sha256, str)
         and isinstance(tool_name, str)
+        and (request_arguments_json is None or isinstance(request_arguments_json, str))
         and isinstance(argv_json, str)
         and isinstance(working_directory, str)
         and isinstance(reason, str)
@@ -235,6 +250,7 @@ def _approval(row: tuple[object, ...] | None) -> ToolApproval:
         approval_id,
         request_sha256,
         tool_name,
+        request_arguments_json,
         argv_json,
         working_directory,
         reason,

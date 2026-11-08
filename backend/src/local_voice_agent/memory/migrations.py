@@ -119,6 +119,13 @@ MIGRATIONS: tuple[Migration, ...] = (
         CREATE INDEX tool_approval_events_by_approval ON tool_approval_events(approval_id, id);
         """,
     ),
+    Migration(
+        5,
+        "store original tool approval arguments",
+        """
+        ALTER TABLE tool_approvals ADD COLUMN request_arguments_json TEXT;
+        """,
+    ),
 )
 
 
