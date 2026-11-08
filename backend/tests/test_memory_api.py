@@ -54,6 +54,13 @@ def test_memory_candidates_require_login_and_csrf_for_edits(tmp_path: Path) -> N
             json={"action": "approved"},
         )
         pending_after_approval = client.get("/api/memory/candidates")
+        approved_listed = client.get("/api/memory/candidates?status=approved")
+        deleted = client.patch(
+            f"/api/memory/candidates/{candidate.id}",
+            headers={"Origin": PUBLIC_ORIGIN, "X-CSRF-Token": csrf_token},
+            json={"action": "deleted"},
+        )
+        approved_after_deletion = client.get("/api/memory/candidates?status=approved")
 
     assert anonymous.status_code == 401
     assert listed.json() == [
@@ -71,3 +78,6 @@ def test_memory_candidates_require_login_and_csrf_for_edits(tmp_path: Path) -> N
     assert edited.json()["content"] == "用户偏好短回答"
     assert approved.json()["status"] == "approved"
     assert pending_after_approval.json() == []
+    assert approved_listed.json()[0]["id"] == candidate.id
+    assert deleted.json()["status"] == "deleted"
+    assert approved_after_deletion.json() == []

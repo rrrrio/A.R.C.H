@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from local_voice_agent.api.auth import AuthServiceDependency
@@ -42,11 +42,14 @@ MemoryStoreDependency = Annotated[MemoryStore, Depends(get_memory_store)]
 
 @router.get("/candidates", response_model=list[CandidateResponse])
 def candidates(
-    request: Request, auth: AuthServiceDependency, store: MemoryStoreDependency
+    request: Request,
+    auth: AuthServiceDependency,
+    store: MemoryStoreDependency,
+    status: Literal["pending", "approved"] = Query(default="pending"),
 ) -> list[CandidateResponse]:
-    """List only pending candidates for the authenticated local administrator."""
+    """List the authenticated administrator's pending or approved candidates only."""
     auth.require_session(request)
-    return [_candidate_response(candidate) for candidate in store.list_candidates("pending")]
+    return [_candidate_response(candidate) for candidate in store.list_candidates(status)]
 
 
 @router.patch("/candidates/{candidate_id}", response_model=CandidateResponse)

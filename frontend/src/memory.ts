@@ -7,6 +7,8 @@ export type MemoryCandidate = {
   updated_at: string
 }
 
+export type VisibleMemoryStatus = 'pending' | 'approved'
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -33,8 +35,8 @@ export function readMemoryCandidate(value: unknown): MemoryCandidate | null {
   }
 }
 
-export async function fetchMemoryCandidates(): Promise<MemoryCandidate[]> {
-  const response = await fetch('/api/memory/candidates', { headers: { Accept: 'application/json' } })
+export async function fetchMemoryCandidates(status: VisibleMemoryStatus = 'pending'): Promise<MemoryCandidate[]> {
+  const response = await fetch(`/api/memory/candidates?status=${status}`, { headers: { Accept: 'application/json' } })
   const payload: unknown = await response.json()
   if (!response.ok || !Array.isArray(payload)) throw new Error('Memory candidate response was invalid.')
   const candidates = payload.map(readMemoryCandidate)

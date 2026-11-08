@@ -47,18 +47,24 @@ function App() {
   const [conversation, setConversation] = useState<ConversationState>(initialConversation)
   const [audioInputs, setAudioInputs] = useState<AudioInput[]>([])
   const [audioDeviceId, setAudioDeviceId] = useState('')
-  const [memoryCandidates, setMemoryCandidates] = useState<MemoryCandidate[]>([])
+  const [pendingCandidates, setPendingCandidates] = useState<MemoryCandidate[]>([])
+  const [approvedCandidates, setApprovedCandidates] = useState<MemoryCandidate[]>([])
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({})
   const [candidateActionId, setCandidateActionId] = useState<string | null>(null)
   const voiceClient = useRef<VoiceClient | null>(null)
 
   async function refreshMemoryCandidates() {
     try {
-      const candidates = await fetchMemoryCandidates()
-      setMemoryCandidates(candidates)
-      setCandidateDrafts(Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.content])))
+      const [pending, approved] = await Promise.all([
+        fetchMemoryCandidates('pending'),
+        fetchMemoryCandidates('approved'),
+      ])
+      setPendingCandidates(pending)
+      setApprovedCandidates(approved)
+      setCandidateDrafts(Object.fromEntries(pending.map((candidate) => [candidate.id, candidate.content])))
     } catch {
-      setMemoryCandidates([])
+      setPendingCandidates([])
+      setApprovedCandidates([])
     }
   }
 
@@ -110,7 +116,8 @@ function App() {
     await disconnectVoice()
     await logout(session.csrfToken)
     setSession({ kind: 'anonymous' })
-    setMemoryCandidates([])
+    setPendingCandidates([])
+    setApprovedCandidates([])
     setCandidateDrafts({})
   }
 
@@ -155,7 +162,7 @@ function App() {
     })
   }
 
-  async function updateCandidate(candidateId: string, update: { content?: string; action?: 'approved' | 'rejected' }) {
+  async function updateCandidate(candidateId: string, update: { content?: string; action?: 'approved' | 'rejected' | 'deleted' }) {
     if (session.kind !== 'authenticated') return
     setCandidateActionId(candidateId)
     try {
@@ -188,9 +195,9 @@ function App() {
           ) : null}
           <section className="memory-review" aria-labelledby="memory-title">
             <h2 id="memory-title">待确认记忆</h2>
-            {memoryCandidates.length ? (
+            {pendingCandidates.length ? (
               <div className="memory-candidate-list">
-                {memoryCandidates.map((candidate) => {
+                {pendingCandidates.map((candidate) => {
                   const busy = candidateActionId === candidate.id
                   const draft = candidateDrafts[candidate.id] ?? candidate.content
                   const changed = draft.trim() !== candidate.content
@@ -213,6 +220,25 @@ function App() {
                 })}
               </div>
             ) : <p className="memory-empty">暂无待确认项目。</p>}
+          </section>
+          <section className="memory-review memory-review--saved" aria-labelledby="approved-memory-title">
+            <h2 id="approved-memory-title">已保存记忆</h2>
+            {approvedCandidates.length ? (
+              <div className="memory-candidate-list">
+                {approvedCandidates.map((candidate) => {
+                  const busy = candidateActionId === candidate.id
+                  return (
+                    <div key={candidate.id} className="memory-candidate">
+                      <p className="memory-source">来源消息 #{candidate.source_message_id}</p>
+                      <p className="memory-approved-content">{candidate.content}</p>
+                      <div className="candidate-actions">
+                        <button type="button" className="secondary-button" disabled={busy} onClick={() => void updateCandidate(candidate.id, { action: 'deleted' })}>删除</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : <p className="memory-empty">暂无已保存项目。</p>}
           </section>
           <div className="audio-input-row">
             <label htmlFor="audio-input">麦克风</label>

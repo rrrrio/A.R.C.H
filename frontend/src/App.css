@@ -174,6 +174,10 @@ button:disabled {
   font-weight: 650;
 }
 
+.memory-review--saved {
+  margin-top: 20px;
+}
+
 .memory-empty {
   margin: 10px 0 0;
   color: #4d5965;
@@ -197,6 +201,13 @@ button:disabled {
   margin: 0;
   color: #4d5965;
   font-size: 13px;
+}
+
+.memory-approved-content {
+  margin: 0;
+  color: #33414d;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .memory-candidate textarea {
