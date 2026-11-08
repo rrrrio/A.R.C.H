@@ -11,12 +11,13 @@ from local_voice_agent.agent.core import (
     AgentRequest,
     AgentResponseEvent,
     AgentResponseKind,
+    ToolRequest,
 )
 from local_voice_agent.memory.context import bounded_approved_memories
 
 
 class LlamaCppAgentCore:
-    """Stream text from the loopback llama.cpp OpenAI-compatible endpoint only."""
+    """Stream text and one constrained OpenAI-compatible tool request from llama.cpp."""
 
     def __init__(
         self,
@@ -50,7 +51,10 @@ class LlamaCppAgentCore:
             "temperature": 0.6,
             "top_p": 0.95,
             "max_tokens": 256,
+            "tools": [_terminal_tool_definition()],
+            "tool_choice": "auto",
         }
+        tool_call = _StreamToolCall()
         try:
             async with httpx.AsyncClient(timeout=180.0, transport=self._transport) as client:
                 async with client.stream(
@@ -58,8 +62,9 @@ class LlamaCppAgentCore:
                 ) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
-                        event = self._event_from_sse_line(request.utterance_id, line)
-                        if event is not None:
+                        for event in self._events_from_sse_line(
+                            request.utterance_id, line, tool_call
+                        ):
                             yield event
         except (httpx.HTTPError, ValueError):
             yield AgentResponseEvent(
@@ -71,26 +76,118 @@ class LlamaCppAgentCore:
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
 
     @staticmethod
-    def _event_from_sse_line(utterance_id: str, line: str) -> AgentResponseEvent | None:
+    def _events_from_sse_line(
+        utterance_id: str, line: str, tool_call: _StreamToolCall
+    ) -> tuple[AgentResponseEvent, ...]:
+        """Accumulate streamed tool fragments and emit only a complete single request."""
         if not line.startswith("data: "):
-            return None
+            return ()
         payload = line.removeprefix("data: ")
         if payload == "[DONE]":
-            return None
+            return ()
         decoded = json.loads(payload)
         choices = decoded.get("choices")
         if not isinstance(choices, list) or not choices:
-            return None
+            return ()
         first_choice = choices[0]
         if not isinstance(first_choice, dict):
-            return None
+            return ()
         delta = first_choice.get("delta")
         if not isinstance(delta, dict):
-            return None
+            return ()
+        tool_call.add(delta.get("tool_calls"))
         text = delta.get("content")
-        if not isinstance(text, str) or not text:
+        events: list[AgentResponseEvent] = []
+        if isinstance(text, str) and text:
+            events.append(AgentResponseEvent(utterance_id, AgentResponseKind.TEXT, text=text))
+        if first_choice.get("finish_reason") == "tool_calls":
+            request = tool_call.complete()
+            if request is not None:
+                events.append(
+                    AgentResponseEvent(
+                        utterance_id,
+                        AgentResponseKind.TOOL_REQUEST,
+                        tool_request=request,
+                    )
+                )
+        return tuple(events)
+
+
+class _StreamToolCall:
+    """Retain only one OpenAI streaming function call and bound its untrusted fragments."""
+
+    _maximum_arguments = 4096
+
+    def __init__(self) -> None:
+        self._name: str | None = None
+        self._arguments: list[str] = []
+        self._invalid = False
+        self._completed = False
+
+    def add(self, value: object) -> None:
+        """Append one supported `delta.tool_calls` fragment without trusting its shape."""
+        if self._completed or self._invalid or not isinstance(value, list) or len(value) > 1:
+            self._invalid = self._invalid or bool(value)
+            return
+        for item in value:
+            if not isinstance(item, dict) or item.get("index") not in (None, 0):
+                self._invalid = True
+                return
+            function = item.get("function")
+            if not isinstance(function, dict):
+                self._invalid = True
+                return
+            name = function.get("name")
+            arguments = function.get("arguments")
+            if name is not None:
+                if not isinstance(name, str) or self._name is not None and name != self._name:
+                    self._invalid = True
+                    return
+                self._name = name
+            if arguments is not None:
+                if not isinstance(arguments, str):
+                    self._invalid = True
+                    return
+                self._arguments.append(arguments)
+                if sum(map(len, self._arguments)) > self._maximum_arguments:
+                    self._invalid = True
+                    return
+
+    def complete(self) -> ToolRequest | None:
+        """Return the sole complete call once, leaving syntax validation to ToolPolicy."""
+        if self._completed:
             return None
-        return AgentResponseEvent(utterance_id, AgentResponseKind.TEXT, text=text)
+        self._completed = True
+        if self._invalid or self._name is None or not self._arguments:
+            return None
+        return ToolRequest(self._name, "".join(self._arguments))
+
+
+def _terminal_tool_definition() -> dict[str, object]:
+    """Describe the only model-visible tool; policy still validates every requested argv."""
+    return {
+        "type": "function",
+        "function": {
+            "name": "terminal",
+            "description": "在本机受限工作目录中执行一个受策略控制的终端命令。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "argv": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "命令和参数；不能使用 shell 语法。",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "相对于受限工作目录的工作目录；省略时为当前目录。",
+                    },
+                },
+                "required": ["argv"],
+                "additionalProperties": False,
+            },
+        },
+    }
 
 
 def _approved_memory_messages(memories: tuple[str, ...]) -> tuple[dict[str, str], ...]:
