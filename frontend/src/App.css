@@ -203,6 +203,47 @@ button:disabled {
   line-height: 1.5;
 }
 
+.tool-review {
+  margin-top: 20px;
+  border-top: 1px solid #d7dde2;
+  padding-top: 20px;
+}
+
+.tool-review h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.tool-approval-list {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.tool-approval {
+  display: grid;
+  gap: 7px;
+  border-left: 3px solid #d7943f;
+  padding-left: 10px;
+}
+
+.tool-approval code,
+.tool-approval p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tool-approval code {
+  color: #17212b;
+  font-size: 13px;
+}
+
+.tool-detail {
+  color: #4d5965;
+  font-size: 13px;
+}
+
 .memory-empty {
   margin: 10px 0 0;
   color: #4d5965;

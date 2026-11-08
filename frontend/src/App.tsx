@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
 import { fetchKnowledgeStatus, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
+import { decideToolApproval, fetchToolApprovals, type ToolApproval } from './tools'
 import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceEvent, VoiceClient } from './voice'
 import './App.css'
 
@@ -53,6 +54,8 @@ function App() {
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({})
   const [candidateActionId, setCandidateActionId] = useState<string | null>(null)
+  const [toolApprovals, setToolApprovals] = useState<ToolApproval[]>([])
+  const [toolActionId, setToolActionId] = useState<string | null>(null)
   const voiceClient = useRef<VoiceClient | null>(null)
 
   async function refreshMemoryCandidates() {
@@ -78,6 +81,14 @@ function App() {
     }
   }
 
+  async function refreshToolApprovals() {
+    try {
+      setToolApprovals(await fetchToolApprovals())
+    } catch {
+      setToolApprovals([])
+    }
+  }
+
   async function refreshSession() {
     try {
       const status = await fetchAuthStatus()
@@ -88,6 +99,7 @@ function App() {
         setSession({ kind: 'authenticated', csrfToken })
         void refreshMemoryCandidates()
         void refreshKnowledgeStatus()
+        void refreshToolApprovals()
       } else {
         setSession({ kind: 'anonymous' })
       }
@@ -117,6 +129,7 @@ function App() {
       setSession({ kind: 'authenticated', csrfToken })
       void refreshMemoryCandidates()
       void refreshKnowledgeStatus()
+      void refreshToolApprovals()
       setPassword('')
     } catch {
       setSession({ kind: 'anonymous' })
@@ -132,6 +145,7 @@ function App() {
     setApprovedCandidates([])
     setKnowledgeStatus(null)
     setCandidateDrafts({})
+    setToolApprovals([])
   }
 
   async function connectVoice() {
@@ -183,6 +197,17 @@ function App() {
       await refreshMemoryCandidates()
     } finally {
       setCandidateActionId(null)
+    }
+  }
+
+  async function decideTool(approvalId: string, action: 'approved' | 'rejected') {
+    if (session.kind !== 'authenticated') return
+    setToolActionId(approvalId)
+    try {
+      await decideToolApproval(session.csrfToken, approvalId, action)
+      await refreshToolApprovals()
+    } finally {
+      setToolActionId(null)
     }
   }
 
@@ -265,6 +290,27 @@ function App() {
             <button type="button" className="secondary-button" onClick={() => void refreshKnowledgeStatus()}>
               刷新状态
             </button>
+          </section>
+          <section className="tool-review" aria-labelledby="tool-review-title">
+            <h2 id="tool-review-title">待确认工具操作</h2>
+            {toolApprovals.length ? (
+              <div className="tool-approval-list">
+                {toolApprovals.map((approval) => {
+                  const busy = toolActionId === approval.id
+                  return <div key={approval.id} className="tool-approval">
+                    <code>{approval.argv_json}</code>
+                    <p>{approval.reason}</p>
+                    <p className="tool-detail">工作目录：{approval.working_directory}</p>
+                    <p className="tool-detail">将在 {formatTimestamp(approval.expires_at)} 过期</p>
+                    <div className="candidate-actions">
+                      <button type="button" disabled={busy} onClick={() => void decideTool(approval.id, 'approved')}>批准并执行</button>
+                      <button type="button" className="secondary-button" disabled={busy} onClick={() => void decideTool(approval.id, 'rejected')}>拒绝</button>
+                    </div>
+                  </div>
+                })}
+              </div>
+            ) : <p className="memory-empty">暂无待确认工具操作。</p>}
+            <button type="button" className="secondary-button" onClick={() => void refreshToolApprovals()}>刷新操作</button>
           </section>
           <div className="audio-input-row">
             <label htmlFor="audio-input">麦克风</label>
