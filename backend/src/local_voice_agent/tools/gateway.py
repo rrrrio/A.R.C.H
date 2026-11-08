@@ -50,7 +50,23 @@ class ToolGateway:
         if policy_result.command is None:
             return ToolOutcome("denied", "The requested tool has no safe command adapter.")
         if policy_result.decision is PolicyDecision.APPROVAL_REQUIRED:
-            approval = await asyncio.to_thread(self._approvals.create, request, self._policy)
+            approval_task = asyncio.create_task(
+                asyncio.to_thread(self._approvals.create, request, self._policy)
+            )
+            try:
+                approval = await asyncio.shield(approval_task)
+            except asyncio.CancelledError:
+                try:
+                    approval = await asyncio.shield(approval_task)
+                    await asyncio.shield(
+                        asyncio.to_thread(self._approvals.cancel_unconsumed, approval.id)
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # If persistence itself failed, there is no approval to expose or retract.
+                    pass
+                raise
             return ToolOutcome(
                 "approval_required",
                 "This local tool action requires browser approval.",

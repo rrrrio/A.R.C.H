@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Protocol
 
 from pipecat.frames.frames import (
     Frame,
@@ -19,11 +20,20 @@ from local_voice_agent.agent.core import (
     AgentRequest,
     AgentResponseKind,
     ConversationTurn,
+    ToolRequest,
 )
 from local_voice_agent.memory.context import bounded_approved_memories
 from local_voice_agent.memory.extractor import MemoryCandidateExtractor
 from local_voice_agent.memory.store import MemoryStore, StoredMessage
 from local_voice_agent.rag.retriever import Retriever
+from local_voice_agent.tools.gateway import ToolOutcome
+
+
+class ToolDispatcher(Protocol):
+    """Minimal tool boundary needed by the media-facing processor."""
+
+    async def dispatch(self, request: ToolRequest) -> ToolOutcome:
+        """Classify and execute only tool requests admitted by application policy."""
 
 
 class PipecatAgentProcessor(FrameProcessor):
@@ -36,6 +46,7 @@ class PipecatAgentProcessor(FrameProcessor):
         memory_store: MemoryStore | None = None,
         candidate_extractor: MemoryCandidateExtractor | None = None,
         retriever: Retriever | None = None,
+        tool_gateway: ToolDispatcher | None = None,
     ) -> None:
         super().__init__()
         self._agent = agent
@@ -45,7 +56,9 @@ class PipecatAgentProcessor(FrameProcessor):
         self._memory_store = memory_store
         self._candidate_extractor = candidate_extractor
         self._retriever = retriever
+        self._tool_gateway = tool_gateway
         self._candidate_task: asyncio.Task[None] | None = None
+        self._response_task: asyncio.Task[object] | None = None
         self._conversation_id = (
             memory_store.create_conversation() if memory_store is not None else None
         )
@@ -63,6 +76,7 @@ class PipecatAgentProcessor(FrameProcessor):
             return
         if isinstance(frame, InterruptionFrame):
             self._cancel_candidate_extraction()
+            self._cancel_active_response()
             self._active_utterance_id = None
             await self.push_frame(frame, direction)
             return
@@ -73,6 +87,9 @@ class PipecatAgentProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
     async def _respond_to_transcription(self, frame: TranscriptionFrame) -> None:
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._response_task = current_task
         utterance_id = f"agent:{frame.id}"
         self._active_utterance_id = utterance_id
         language = frame.language.value if frame.language is not None else "zh"
@@ -84,28 +101,44 @@ class PipecatAgentProcessor(FrameProcessor):
             approved_memories=await self._approved_memories_for_request(),
             retrieved_context=await self._retrieved_context_for_request(frame.text),
         )
-        stored_user = await self._record_turn(ConversationTurn("user", frame.text, utterance_id))
-        assistant_parts: list[str] = []
-        await self.push_frame(LLMFullResponseStartFrame())
-        async for event in self._agent.respond(request):
-            if event.utterance_id != utterance_id or self._active_utterance_id != utterance_id:
-                continue
-            if event.kind == AgentResponseKind.TEXT:
-                assistant_parts.append(event.text)
-                await self.push_frame(LLMTextFrame(event.text))
-            elif event.kind == AgentResponseKind.ERROR:
-                assistant_parts.append(event.text)
-                await self.push_frame(LLMTextFrame(event.text))
-            elif event.kind == AgentResponseKind.END:
-                break
-        if self._active_utterance_id != utterance_id:
-            return
-        assistant_text = "".join(assistant_parts)
-        if assistant_text:
-            await self._record_turn(ConversationTurn("assistant", assistant_text, utterance_id))
-            self._start_candidate_extraction(stored_user, language)
-        self._active_utterance_id = None
-        await self.push_frame(LLMFullResponseEndFrame())
+        try:
+            stored_user = await self._record_turn(
+                ConversationTurn("user", frame.text, utterance_id)
+            )
+            assistant_history_parts: list[str] = []
+            await self.push_frame(LLMFullResponseStartFrame())
+            async for event in self._agent.respond(request):
+                if event.utterance_id != utterance_id or self._active_utterance_id != utterance_id:
+                    continue
+                if event.kind in {AgentResponseKind.TEXT, AgentResponseKind.ERROR}:
+                    assistant_history_parts.append(event.text)
+                    await self.push_frame(LLMTextFrame(event.text))
+                elif event.kind == AgentResponseKind.TOOL_REQUEST:
+                    tool_text = await self._dispatch_tool_request(event.tool_request)
+                    if tool_text:
+                        await self.push_frame(LLMTextFrame(tool_text))
+                elif event.kind == AgentResponseKind.END:
+                    break
+            if self._active_utterance_id != utterance_id:
+                return
+            assistant_text = "".join(assistant_history_parts)
+            if assistant_text:
+                await self._record_turn(ConversationTurn("assistant", assistant_text, utterance_id))
+                self._start_candidate_extraction(stored_user, language)
+            self._active_utterance_id = None
+            await self.push_frame(LLMFullResponseEndFrame())
+        finally:
+            if self._response_task is current_task:
+                self._response_task = None
+
+    async def _dispatch_tool_request(self, request: ToolRequest | None) -> str:
+        """Send only typed requests through the application policy boundary."""
+        if self._tool_gateway is None:
+            return "本地工具暂不可用。"
+        if request is None:
+            return "工具请求无效，未执行任何操作。"
+        outcome = await self._tool_gateway.dispatch(request)
+        return _tool_outcome_text(outcome)
 
     async def _history_for_request(self) -> tuple[ConversationTurn, ...]:
         if self._memory_store is None or self._conversation_id is None:
@@ -159,6 +192,12 @@ class PipecatAgentProcessor(FrameProcessor):
             self._candidate_task.cancel()
             self._candidate_task = None
 
+    def _cancel_active_response(self) -> None:
+        """Stop a concurrent response, including a bounded tool invocation, on interruption."""
+        task = self._response_task
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
     async def _extract_candidates(self, message: StoredMessage, language: str) -> None:
         if self._candidate_extractor is None or self._memory_store is None:
             return
@@ -175,9 +214,36 @@ class PipecatAgentProcessor(FrameProcessor):
         """Cancel an idle extraction before Pipecat releases this session's resources."""
         task = self._candidate_task
         self._cancel_candidate_extraction()
+        response_task = self._response_task
+        self._cancel_active_response()
         if task is not None:
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+        if response_task is not None:
+            try:
+                await response_task
+            except asyncio.CancelledError:
+                pass
         await super().cleanup()  # type: ignore[no-untyped-call]
+
+
+def _tool_outcome_text(outcome: ToolOutcome) -> str:
+    """Render bounded tool feedback without placing untrusted output in model history."""
+    if outcome.status == "approval_required":
+        return "此本地操作已提交，请在浏览器中批准。"
+    if outcome.status == "denied":
+        return f"本地操作未执行：{outcome.message}"
+    if outcome.result is None:
+        return "本地操作已完成。"
+    output = outcome.result.stdout or outcome.result.stderr
+    if not output:
+        return "本地操作已完成。"
+    bounded_output = output[:1000]
+    suffix = (
+        "（输出已截断）"
+        if len(output) > len(bounded_output) or outcome.result.output_truncated
+        else ""
+    )
+    return f"本地操作结果：{bounded_output}{suffix}"

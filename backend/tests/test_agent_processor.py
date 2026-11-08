@@ -13,11 +13,19 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 
-from local_voice_agent.agent.core import AgentRequest, AgentResponseEvent, AgentResponseKind
+from local_voice_agent.agent.core import (
+    AgentCore,
+    AgentRequest,
+    AgentResponseEvent,
+    AgentResponseKind,
+    ToolRequest,
+)
 from local_voice_agent.memory.extractor import MemoryCandidateExtractor
 from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.rag.retriever import Retriever
-from local_voice_agent.voice.agent_processor import PipecatAgentProcessor
+from local_voice_agent.tools.gateway import ToolOutcome
+from local_voice_agent.tools.terminal import TerminalResult
+from local_voice_agent.voice.agent_processor import PipecatAgentProcessor, ToolDispatcher
 
 
 class FakeAgent:
@@ -37,16 +45,18 @@ class InspectingAgentProcessor(PipecatAgentProcessor):
 
     def __init__(
         self,
-        agent: FakeAgent,
+        agent: AgentCore,
         memory_store: MemoryStore | None = None,
         candidate_extractor: MemoryCandidateExtractor | None = None,
         retriever: Retriever | None = None,
+        tool_gateway: ToolDispatcher | None = None,
     ) -> None:
         super().__init__(
             agent,
             memory_store=memory_store,
             candidate_extractor=candidate_extractor,
             retriever=retriever,
+            tool_gateway=tool_gateway,
         )
         self.forwarded: list[Frame] = []
 
@@ -245,3 +255,113 @@ def test_agent_processor_adds_local_retrieval_context_to_only_the_current_reques
     assert retriever.queries == ["如何本机部署？"]
     assert agent.requests[0].retrieved_context == ("来源：manual.md\n本机部署步骤",)
     assert agent.requests[0].history == ()
+
+
+class ToolRequestAgent:
+    """Yield one tool request so the processor can exercise the policy gateway boundary."""
+
+    async def respond(self, request: AgentRequest) -> AsyncIterator[AgentResponseEvent]:
+        yield AgentResponseEvent(
+            request.utterance_id,
+            AgentResponseKind.TOOL_REQUEST,
+            tool_request=ToolRequest("terminal", '{"argv":["pwd"],"cwd":"."}'),
+        )
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+
+class FakeToolGateway:
+    """Return one controlled gateway result without invoking the real terminal adapter."""
+
+    def __init__(self, outcome: ToolOutcome) -> None:
+        self.outcome = outcome
+        self.requests: list[ToolRequest] = []
+
+    async def dispatch(self, request: ToolRequest) -> ToolOutcome:
+        self.requests.append(request)
+        return self.outcome
+
+
+def test_agent_processor_routes_tool_requests_through_gateway_and_renders_bounded_result(
+    tmp_path: Path,
+) -> None:
+    """The media layer never executes an Agent Core tool request directly."""
+    result = TerminalResult(0, "workspace\n", "", False, False)
+    gateway = FakeToolGateway(ToolOutcome("completed", "done", result=result))
+    store = MemoryStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    processor = InspectingAgentProcessor(
+        ToolRequestAgent(), memory_store=store, tool_gateway=gateway
+    )
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("当前目录", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+
+    asyncio.run(exercise())
+
+    assert [request.name for request in gateway.requests] == ["terminal"]
+    text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
+    assert text_frames == ["本地操作结果：workspace\n"]
+    conversation_id = processor.conversation_id
+    assert conversation_id is not None
+    messages = store.list_messages(conversation_id)
+    persisted = [(message.role, message.content) for message in messages]
+    assert persisted == [("user", "当前目录")]
+
+
+def test_agent_processor_leaves_approval_required_tool_without_side_effect() -> None:
+    """Approval-required requests only instruct the user to review them in the browser."""
+    gateway = FakeToolGateway(ToolOutcome("approval_required", "review", approval_id="approval-1"))
+    processor = InspectingAgentProcessor(ToolRequestAgent(), tool_gateway=gateway)
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("创建文件", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+
+    asyncio.run(exercise())
+
+    text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
+    assert text_frames == ["此本地操作已提交，请在浏览器中批准。"]
+
+
+class BlockingToolGateway:
+    """Block dispatch until the interruption path cancels its response task."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def dispatch(self, request: ToolRequest) -> ToolOutcome:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        raise AssertionError("blocking dispatch should have been cancelled")
+
+
+def test_agent_processor_cancels_an_active_tool_dispatch_on_interruption() -> None:
+    """A barge-in cannot leave a pending media response executing its tool request."""
+    gateway = BlockingToolGateway()
+    processor = InspectingAgentProcessor(ToolRequestAgent(), tool_gateway=gateway)
+
+    async def exercise() -> None:
+        response_task = asyncio.create_task(
+            processor.process_frame(
+                TranscriptionFrame("执行操作", "user", "timestamp"), FrameDirection.DOWNSTREAM
+            )
+        )
+        await gateway.started.wait()
+        processor._cancel_active_response()
+        await gateway.cancelled.wait()
+        try:
+            await response_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(exercise())
+
+    assert not any(isinstance(frame, LLMFullResponseEndFrame) for frame in processor.forwarded)

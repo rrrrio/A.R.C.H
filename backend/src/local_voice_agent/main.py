@@ -63,6 +63,7 @@ def create_app(
                 app.state.memory_store,
                 database_path=settings.database_path,
                 rag_model_path=settings.rag_model_path,
+                tool_gateway=app.state.tool_gateway,
             )
             app.state.signaling_service = WebRTCSignalingService(
                 on_connection=voice_session.start,

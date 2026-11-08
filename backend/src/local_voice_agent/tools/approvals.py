@@ -138,6 +138,25 @@ class ApprovalStore:
             row = _get_approval(connection, approval_id)
         return _approval(row)
 
+    def cancel_unconsumed(self, approval_id: str) -> ToolApproval | None:
+        """Revoke an interrupted approval unless another request has already consumed it."""
+        now = self._clock().isoformat()
+        with self._connect() as connection:
+            self._expire(connection, now)
+            cursor = connection.execute(
+                """
+                UPDATE tool_approvals
+                SET status = 'rejected', decided_at = ?, decided_by = 'interrupted_media'
+                WHERE id = ? AND status IN ('pending', 'approved') AND expires_at > ?
+                """,
+                (now, approval_id, now),
+            )
+            if cursor.rowcount != 1:
+                return None
+            _record_event(connection, approval_id, "rejected", "interrupted_media", now)
+            row = _get_approval(connection, approval_id)
+        return _approval(row)
+
     def consume(self, approval_id: str, request: ToolRequest, actor: str) -> ToolApproval | None:
         """Consume exactly one live approved record bound to the exact original request hash."""
         if not actor:

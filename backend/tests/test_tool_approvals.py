@@ -68,6 +68,22 @@ def test_approval_is_one_time_and_bound_to_exact_request(tmp_path: Path) -> None
     assert store.consume(approval.id, request, "executor") is None
 
 
+def test_interruption_revokes_a_browser_approved_but_unconsumed_request(tmp_path: Path) -> None:
+    """Cancellation wins over a pending execution because both state changes are atomic."""
+    clock = _Clock()
+    store, policy, _ = _store(tmp_path, clock)
+    request = _request(["touch", "report.txt"])
+    approval = store.create(request, policy)
+
+    assert store.decide(approval.id, "approved", "administrator").status == "approved"
+    revoked = store.cancel_unconsumed(approval.id)
+
+    assert revoked is not None
+    assert revoked.status == "rejected"
+    assert revoked.decided_by == "interrupted_media"
+    assert store.consume(approval.id, request, "executor") is None
+
+
 def test_expiry_invalidates_pending_approval_and_is_audited(tmp_path: Path) -> None:
     clock = _Clock()
     store, policy, database_path = _store(tmp_path, clock)

@@ -12,6 +12,7 @@ from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.rag.embeddings import SentenceTransformerEmbedder
 from local_voice_agent.rag.retriever import LocalKnowledgeRetriever, Retriever
 from local_voice_agent.rag.store import KnowledgeStore
+from local_voice_agent.tools.gateway import ToolGateway
 from local_voice_agent.voice.llama import LlamaCppServer
 from local_voice_agent.voice.models import VoiceModelPaths
 from local_voice_agent.voice.pipeline import create_pipeline_worker
@@ -27,11 +28,13 @@ class LocalVoiceSession:
         *,
         database_path: Path | None = None,
         rag_model_path: Path | None = None,
+        tool_gateway: ToolGateway | None = None,
     ) -> None:
         self._paths = paths
         self._memory_store = memory_store
         self._database_path = database_path
         self._rag_model_path = rag_model_path
+        self._tool_gateway = tool_gateway
         self._retriever: Retriever | None = None
         self._llama = LlamaCppServer(paths)
         self._runner: WorkerRunner | None = None
@@ -52,6 +55,7 @@ class LocalVoiceSession:
                 self._llama.endpoint,
                 self._memory_store,
                 self._retriever,
+                self._tool_gateway,
             )
             runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
             ready = asyncio.Event()

@@ -75,6 +75,14 @@ class TerminalExecutor:
                 timed_out = True
                 process.kill()
                 await process.wait()
+            except asyncio.CancelledError:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+                stdout_task.cancel()
+                stderr_task.cancel()
+                await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+                raise
             stdout, stdout_truncated = await stdout_task
             stderr, stderr_truncated = await stderr_task
             return TerminalResult(
