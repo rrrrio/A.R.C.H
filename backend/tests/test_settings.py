@@ -13,6 +13,7 @@ def test_settings_allow_a_data_subdirectory() -> None:
     settings = Settings(data_dir=Path("data/cache"))
 
     assert settings.data_dir == (PROJECT_ROOT / "data/cache").resolve()
+    assert settings.terminal_workspace_path == (PROJECT_ROOT / "data/cache/workspace").resolve()
 
 
 def test_settings_reject_paths_outside_data() -> None:

@@ -63,6 +63,7 @@ class Settings(BaseSettings):
             "knowledge/inbox",
             "logs",
             "models",
+            "workspace",
             "voices",
         ):
             (self.data_dir / relative_path).mkdir(parents=True, exist_ok=True)
@@ -86,6 +87,11 @@ class Settings(BaseSettings):
     def knowledge_inbox_path(self) -> Path:
         """Return the only user-managed source directory eligible for RAG indexing."""
         return self.data_dir / "knowledge/inbox"
+
+    @property
+    def terminal_workspace_path(self) -> Path:
+        """Return the only writable root exposed to the first terminal tool release."""
+        return self.data_dir / "workspace"
 
 
 @lru_cache
