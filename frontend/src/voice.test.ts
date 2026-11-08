@@ -17,11 +17,14 @@ describe('isVoiceEvent', () => {
   it('accepts the bounded state and transcript protocol', () => {
     expect(isVoiceEvent({ type: 'voice_state', state: 'speaking' })).toBe(true)
     expect(isVoiceEvent({ type: 'transcript', state: 'thinking', role: 'assistant', phase: 'delta', text: '你好' })).toBe(true)
+    expect(isVoiceEvent({ type: 'latency', utterance_id: 'turn-1', stage: 'llm-first-token', elapsed_ms: 42 })).toBe(true)
   })
 
   it('rejects unknown activity and transcript phases', () => {
     expect(isVoiceEvent({ type: 'voice_state', state: 'running' })).toBe(false)
     expect(isVoiceEvent({ type: 'transcript', state: 'thinking', role: 'assistant', phase: 'chunk', text: '你好' })).toBe(false)
+    expect(isVoiceEvent({ type: 'latency', utterance_id: 'turn-1', stage: 'unknown', elapsed_ms: 42 })).toBe(false)
+    expect(isVoiceEvent({ type: 'latency', utterance_id: 'turn-1', stage: 'asr-final', elapsed_ms: -1 })).toBe(false)
   })
 })
 

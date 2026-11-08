@@ -16,7 +16,9 @@ from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
+from local_voice_agent.observability.metrics import LatencyStage, LatencyTracker
 from local_voice_agent.voice.events import VoiceEventProcessor
+from local_voice_agent.voice.metrics import VoiceLatencyProcessor
 from local_voice_agent.voice.models import VoiceModelPaths
 
 
@@ -64,17 +66,46 @@ def create_pipeline_worker(
     user_events = VoiceEventProcessor(connection.send_app_message)
     assistant_events = VoiceEventProcessor(connection.send_app_message)
     output_events = VoiceEventProcessor(connection.send_app_message)
+    tracker = LatencyTracker()
+    input_latency = VoiceLatencyProcessor(
+        connection.send_app_message,
+        tracker,
+        stages=frozenset(
+            {
+                LatencyStage.SPEECH_START,
+                LatencyStage.SPEECH_END,
+                LatencyStage.PLAYBACK_STOPPED,
+            }
+        ),
+    )
+    asr_latency = VoiceLatencyProcessor(
+        connection.send_app_message, tracker, stages=frozenset({LatencyStage.ASR_FINAL})
+    )
+    llm_latency = VoiceLatencyProcessor(
+        connection.send_app_message, tracker, stages=frozenset({LatencyStage.LLM_FIRST_TOKEN})
+    )
+    tts_latency = VoiceLatencyProcessor(
+        connection.send_app_message, tracker, stages=frozenset({LatencyStage.TTS_FIRST_BYTE})
+    )
+    output_latency = VoiceLatencyProcessor(
+        connection.send_app_message, tracker, stages=frozenset({LatencyStage.PLAYBACK_FIRST_AUDIO})
+    )
     pipeline = Pipeline(
         [
             transport.input(),
             vad,
+            input_latency,
             stt,
+            asr_latency,
             user_events,
             context_aggregator.user(),
             llm,
+            llm_latency,
             assistant_events,
             tts,
+            tts_latency,
             output_events,
+            output_latency,
             transport.output(),
             context_aggregator.assistant(),
         ]

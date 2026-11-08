@@ -157,6 +157,11 @@ button:disabled {
   font-size: 14px;
 }
 
+.transcript p.latency {
+  color: #4d5965;
+  font-size: 14px;
+}
+
 @media (max-width: 640px) {
   .topbar {
     padding: 0 16px;

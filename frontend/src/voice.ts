@@ -3,10 +3,12 @@ type OfferResponse = { sdp: string; type: 'answer'; pc_id: string }
 type Candidate = { candidate: string; sdp_mid: string; sdp_mline_index: number }
 
 export type VoiceActivity = 'user-speaking' | 'recognizing' | 'thinking' | 'speaking' | 'listening'
+export type LatencyStage = 'speech-start' | 'speech-end' | 'asr-final' | 'llm-first-token' | 'tts-first-byte' | 'playback-first-audio' | 'playback-stopped'
 
 export type VoiceEvent =
   | { type: 'voice_state'; state: VoiceActivity }
   | { type: 'transcript'; state: VoiceActivity; role: 'user' | 'assistant'; phase: 'final' | 'start' | 'delta' | 'end'; text: string }
+  | { type: 'latency'; utterance_id: string; stage: LatencyStage; elapsed_ms: number }
 
 export type AudioInput = { deviceId: string; label: string }
 
@@ -145,6 +147,16 @@ export function isVoiceEvent(value: unknown): value is VoiceEvent {
   if (value.type === 'voice_state') {
     return 'state' in value && isVoiceActivity(value.state)
   }
+  if (value.type === 'latency') {
+    return 'utterance_id' in value &&
+      typeof value.utterance_id === 'string' &&
+      'stage' in value &&
+      isLatencyStage(value.stage) &&
+      'elapsed_ms' in value &&
+      typeof value.elapsed_ms === 'number' &&
+      Number.isInteger(value.elapsed_ms) &&
+      value.elapsed_ms >= 0
+  }
   return (
     value.type === 'transcript' &&
     'state' in value &&
@@ -160,4 +172,10 @@ export function isVoiceEvent(value: unknown): value is VoiceEvent {
 
 function isVoiceActivity(value: unknown): value is VoiceActivity {
   return value === 'user-speaking' || value === 'recognizing' || value === 'thinking' || value === 'speaking' || value === 'listening'
+}
+
+function isLatencyStage(value: unknown): value is LatencyStage {
+  return value === 'speech-start' || value === 'speech-end' || value === 'asr-final' ||
+    value === 'llm-first-token' || value === 'tts-first-byte' ||
+    value === 'playback-first-audio' || value === 'playback-stopped'
 }

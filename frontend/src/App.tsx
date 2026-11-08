@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
-import { listAudioInputs, type AudioInput, type VoiceActivity, type VoiceEvent, VoiceClient } from './voice'
+import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceEvent, VoiceClient } from './voice'
 import './App.css'
 
 type SessionState =
@@ -16,9 +16,10 @@ type ConversationState = {
   activity: VoiceActivity
   userText: string
   assistantText: string
+  latency: { stage: LatencyStage; elapsedMs: number } | null
 }
 
-const initialConversation: ConversationState = { activity: 'listening', userText: '', assistantText: '' }
+const initialConversation: ConversationState = { activity: 'listening', userText: '', assistantText: '', latency: null }
 
 const activityLabels: Record<VoiceActivity, string> = {
   'user-speaking': '正在聆听',
@@ -26,6 +27,16 @@ const activityLabels: Record<VoiceActivity, string> = {
   thinking: '正在思考',
   speaking: '正在播报',
   listening: '等待说话',
+}
+
+const latencyLabels: Record<LatencyStage, string> = {
+  'speech-start': '检测开始',
+  'speech-end': '检测结束',
+  'asr-final': '识别完成',
+  'llm-first-token': '首个文本',
+  'tts-first-byte': '首段语音',
+  'playback-first-audio': '发送首段音频',
+  'playback-stopped': '播放停止',
 }
 
 function App() {
@@ -109,6 +120,9 @@ function App() {
 
   function handleVoiceEvent(event: VoiceEvent) {
     setConversation((current) => {
+      if (event.type === 'latency') {
+        return { ...current, latency: { stage: event.stage, elapsedMs: event.elapsed_ms } }
+      }
       if (event.type === 'voice_state') return { ...current, activity: event.state }
       if (event.role === 'user') {
         return { ...current, activity: event.state, userText: event.text }
@@ -138,6 +152,7 @@ function App() {
             <div className="transcript" aria-live="polite">
               <p><span>你</span>{conversation.userText || '...'}</p>
               <p><span>助手</span>{conversation.assistantText || '...'}</p>
+              {conversation.latency ? <p className="latency"><span>{latencyLabels[conversation.latency.stage]}</span>{conversation.latency.elapsedMs} ms</p> : null}
             </div>
           ) : null}
           <div className="audio-input-row">
