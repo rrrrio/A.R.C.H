@@ -80,6 +80,7 @@ class WebRTCSignalingService:
         self._assert_session_owns_connection(session_id, self._owner_pc_id)
         await self._handler.close()
         self._clear_owner()
+        await self._notify_disconnection()
 
     async def close(self) -> None:
         """Release all local peer resources during application shutdown."""

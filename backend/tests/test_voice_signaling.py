@@ -123,3 +123,26 @@ def test_second_session_cannot_take_an_existing_voice_connection() -> None:
         assert error.value.status_code == 409
 
     asyncio.run(exercise())
+
+
+def test_release_notifies_the_media_owner_once_after_closing_the_peer() -> None:
+    """An explicit browser disconnect must stop the model-owning media session."""
+    stopped = 0
+
+    async def mark_stopped() -> None:
+        nonlocal stopped
+        stopped += 1
+
+    service = WebRTCSignalingService(
+        FakeSmallWebRTCHandler(),
+        on_disconnection=mark_stopped,
+    )
+
+    async def exercise() -> None:
+        await service.offer("owner", SmallWebRTCRequest(sdp="offer", type="offer"))
+        await service.release("owner")
+        await service.close()
+
+    asyncio.run(exercise())
+
+    assert stopped == 1

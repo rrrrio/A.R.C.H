@@ -15,7 +15,7 @@
 
 ## 解说
 
-应用从仓库根目录 `.env` 读取 `LVA_` 前缀的变量；未设置时使用下表默认值。`LVA_DATA_DIR` 必须为仓库 `data/` 或其子目录，越界路径会让后端拒绝启动。`LVA_PUBLIC_ORIGIN` 是浏览器进行登录、语音信令、记忆和工具审批时必须匹配的完整 HTTPS origin；它必须与 `LVA_LAN_HOST`、`LVA_HTTPS_PORT` 共同组成同一地址。
+应用从仓库根目录 `.env` 读取 `LVA_` 前缀的变量；未设置时使用下表默认值。`LVA_DATA_DIR` 和可选的 `LVA_ARTIFACT_DIR` 都必须为仓库 `data/` 或其子目录，越界路径会让后端拒绝启动。后者只为模型和运行时制品提供固定读取位置，不能替代 `LVA_DATA_DIR` 的用户状态写入边界。`LVA_PUBLIC_ORIGIN` 是浏览器进行登录、语音信令、记忆和工具审批时必须匹配的完整 HTTPS origin；它必须与 `LVA_LAN_HOST`、`LVA_HTTPS_PORT` 共同组成同一地址。
 
 ## 参考场景
 
@@ -43,6 +43,7 @@ Feature: Browser origin configuration
 ```yaml
 application:
   data_dir: data
+  artifact_dir: null
   public_origin: https://local-voice-agent.local:8443
   search:
     enabled: false
@@ -57,6 +58,7 @@ gateway:
 | 参数 | 类型 / 默认值 | 约束 | 作用 |
 | --- | --- | --- | --- |
 | `LVA_DATA_DIR` | `Path` / `data` | 必须在仓库 `data/` 内 | 模型、凭据、数据库、知识库、日志和运行时状态的唯一写入根目录。 |
+| `LVA_ARTIFACT_DIR` | `Path` / 未设置 | 未设置时等于 `LVA_DATA_DIR`；设置时必须在仓库 `data/` 内 | 固定模型和运行时制品的读取根目录；隔离验收用它读取已有制品，同时将凭据与 SQLite 写入独立 `LVA_DATA_DIR`。 |
 | `LVA_ENVIRONMENT` | `str` / `development` | 非空字符串 | 健康检查中返回的环境标签。 |
 | `LVA_HOST` | `str` / `127.0.0.1` | 合法监听地址 | 后端开发服务器的默认监听主机；生产入口由 Caddy 代理。 |
 | `LVA_PORT` | `int` / `8000` | 1 到 65535 | 后端默认端口。 |

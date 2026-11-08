@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     data_dir: Path = PROJECT_ROOT / "data"
+    artifact_dir: Path | None = None
     public_origin: str = "https://local-voice-agent.local:8443"
     search_enabled: bool = False
     searxng_endpoint: str = "http://127.0.0.1:8080"
@@ -38,6 +39,20 @@ class Settings(BaseSettings):
         allowed_root = (PROJECT_ROOT / "data").resolve()
         if resolved != allowed_root and allowed_root not in resolved.parents:
             message = f"LVA_DATA_DIR must be inside {allowed_root}, got {resolved}"
+            raise ValueError(message)
+        return resolved
+
+    @field_validator("artifact_dir")
+    @classmethod
+    def artifact_dir_must_be_under_project(cls, value: Path | None) -> Path | None:
+        """Allow a separate artifact source only below the project data root."""
+        if value is None:
+            return None
+        candidate = value if value.is_absolute() else PROJECT_ROOT / value
+        resolved = candidate.resolve()
+        allowed_root = (PROJECT_ROOT / "data").resolve()
+        if resolved != allowed_root and allowed_root not in resolved.parents:
+            message = f"LVA_ARTIFACT_DIR must be inside {allowed_root}, got {resolved}"
             raise ValueError(message)
         return resolved
 
@@ -93,6 +108,11 @@ class Settings(BaseSettings):
         return self.data_dir / "auth" / "admin.json"
 
     @property
+    def artifact_data_dir(self) -> Path:
+        """Return the bounded source for model artifacts without widening writable state."""
+        return self.artifact_dir or self.data_dir
+
+    @property
     def database_path(self) -> Path:
         """Return the bounded SQLite database path for persistent local state."""
         return self.data_dir / "db" / "local-voice-agent.sqlite3"
@@ -100,7 +120,7 @@ class Settings(BaseSettings):
     @property
     def rag_model_path(self) -> Path:
         """Return the fixed local BGE-M3 snapshot used for offline knowledge retrieval."""
-        return self.data_dir / "models/bge-m3/5617a9f61b028005a4858fdac845db406aefb181"
+        return self.artifact_data_dir / "models/bge-m3/5617a9f61b028005a4858fdac845db406aefb181"
 
     @property
     def knowledge_inbox_path(self) -> Path:

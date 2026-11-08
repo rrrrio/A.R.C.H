@@ -99,6 +99,18 @@ def test_agent_processor_converts_transcription_to_response_frames_and_history()
     ]
 
 
+def test_agent_processor_accepts_a_runtime_string_language_code() -> None:
+    """Whisper may provide a string code despite Pipecat's enum-oriented annotation."""
+    agent = FakeAgent()
+    processor = InspectingAgentProcessor(agent)
+    frame = TranscriptionFrame("你好", "user", "timestamp")
+    frame.language = "zh"  # type: ignore[assignment]
+
+    asyncio.run(processor.process_frame(frame, FrameDirection.DOWNSTREAM))
+
+    assert agent.requests[0].language == "zh"
+
+
 def test_agent_processor_persists_completed_turns_but_not_pending_memory(tmp_path: Path) -> None:
     """Session history survives in SQLite while the memory candidate table remains untouched."""
     agent = FakeAgent()

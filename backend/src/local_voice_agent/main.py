@@ -65,7 +65,7 @@ def create_app(
             app.state.auth_service = AuthService(settings.credential_path, settings.public_origin)
         if not hasattr(app.state, "signaling_service"):
             voice_session = LocalVoiceSession(
-                VoiceModelPaths.from_data_dir(settings.data_dir),
+                VoiceModelPaths.from_data_dir(settings.artifact_data_dir),
                 app.state.memory_store,
                 database_path=settings.database_path,
                 rag_model_path=settings.rag_model_path,

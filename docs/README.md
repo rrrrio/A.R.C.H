@@ -8,6 +8,7 @@
 - [让局域网设备访问](how-to/lan-access.md)：将同一 `/23` 网段内的设备安全接入 HTTPS 网关。
 - [启用或关闭联网搜索](how-to/enable-web-search.md)：启动本地 SearXNG，并保持它不暴露到局域网。
 - [管理本地知识库](how-to/manage-knowledge.md)：放入资料、建立索引、确认删除生效。
+- [运行浏览器语音冒烟验收](how-to/browser-voice-smoke-test.md)：用固定本地 WAV 验证完整浏览器语音链路。
 - [配置参考](reference/configuration.md)：环境变量、端口、持久化目录和支持的文件格式。
 - [架构与安全边界](explanation/architecture.md)：实时路径、审批、取消、记忆、RAG 与未来数字人的设计理由。
 - [开发环境](DEVELOPMENT.md)：运行测试、启动开发服务和维护文档。

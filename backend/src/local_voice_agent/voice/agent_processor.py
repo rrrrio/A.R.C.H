@@ -114,7 +114,7 @@ class PipecatAgentProcessor(FrameProcessor):
             self._response_task = current_task
         utterance_id = f"agent:{frame.id}"
         self._active_utterance_id = utterance_id
-        language = frame.language.value if frame.language is not None else "zh"
+        language = _language_code(frame.language)
         request = AgentRequest(
             utterance_id=utterance_id,
             transcript=frame.text,
@@ -391,6 +391,14 @@ class PipecatAgentProcessor(FrameProcessor):
             except asyncio.CancelledError:
                 pass
         await super().cleanup()  # type: ignore[no-untyped-call]
+
+
+def _language_code(language: object | None) -> str:
+    """Normalize Pipecat language enums and runtime string codes for Agent Core requests."""
+    if language is None:
+        return "zh"
+    value = getattr(language, "value", language)
+    return value if isinstance(value, str) else "zh"
 
 
 def _tool_outcome_text(outcome: ToolOutcome) -> str:

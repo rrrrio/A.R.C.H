@@ -22,6 +22,18 @@ def test_settings_reject_paths_outside_data() -> None:
         Settings(data_dir=Path("/tmp/local-voice-agent-escape"))
 
 
+def test_settings_allow_a_separate_project_artifact_source() -> None:
+    """Model inputs can be separated from writes without sourcing arbitrary host paths."""
+    assert Settings(data_dir=Path("data/cache")).artifact_data_dir == (
+        PROJECT_ROOT / "data/cache"
+    ).resolve()
+    assert Settings(artifact_dir=Path("data")).artifact_data_dir == (
+        PROJECT_ROOT / "data"
+    ).resolve()
+    with pytest.raises(ValidationError, match="LVA_ARTIFACT_DIR must be inside"):
+        Settings(artifact_dir=Path("/tmp/local-voice-agent-artifacts"))
+
+
 def test_settings_reject_non_https_or_path_public_origins() -> None:
     """Browser mutation checks require one exact HTTPS origin rather than a URL prefix."""
     with pytest.raises(ValidationError, match="LVA_PUBLIC_ORIGIN must be a bare HTTPS origin"):
