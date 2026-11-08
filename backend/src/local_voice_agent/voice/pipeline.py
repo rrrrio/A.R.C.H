@@ -20,6 +20,7 @@ from local_voice_agent.observability.metrics import LatencyStage, LatencyTracker
 from local_voice_agent.voice.events import VoiceEventProcessor
 from local_voice_agent.voice.metrics import VoiceLatencyProcessor
 from local_voice_agent.voice.models import VoiceModelPaths
+from local_voice_agent.voice.pipecat_output import PipecatOutputMuxProcessor
 
 
 def create_pipeline_worker(
@@ -90,6 +91,7 @@ def create_pipeline_worker(
     output_latency = VoiceLatencyProcessor(
         connection.send_app_message, tracker, stages=frozenset({LatencyStage.PLAYBACK_FIRST_AUDIO})
     )
+    output_mux = PipecatOutputMuxProcessor(output_sample_rate=24000)
     pipeline = Pipeline(
         [
             transport.input(),
@@ -104,6 +106,7 @@ def create_pipeline_worker(
             assistant_events,
             tts,
             tts_latency,
+            output_mux,
             output_events,
             output_latency,
             transport.output(),
