@@ -32,7 +32,14 @@
     "cudart_sha256": "6f1d562086d84ae85df880d3711079ec225602b51d530608e5001600625067dd"
   },
   "tts": {
-    "model": "hexgrad/Kokoro-82M-v1.1-zh",
+    "model": "onnx-community/Kokoro-82M-v1.1-zh-ONNX",
+    "revision": "6cc0f0d2ebe369a68b0df87c2b65c1af8c0ac3e3",
+    "model_filename": "onnx/model_fp16.onnx",
+    "model_sha256": "d59cb626c885c91acb7ecf7250f26f9915ad0af99b770572000d90b598c3dfbc",
+    "voice_filename": "voices-v1.1-zh.bin",
+    "voice_url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.1-zh.bin",
+    "voice_sha256": "14cb6186c99e4f6016871405f62046c5df863ae27465cbdc4ee08be7dd703acd",
+    "voice": "zf_001",
     "runtime": "kokoro-onnx",
     "sample_rate_hz": 24000,
     "license": "Apache-2.0",

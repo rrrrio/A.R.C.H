@@ -5,10 +5,10 @@ BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 COMPOSE := docker compose -f deploy/compose.yaml
 
-.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare
+.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare benchmark-tts
 
 help:
-	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare'
+	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare benchmark-tts'
 
 bootstrap:
 	uv sync --directory $(BACKEND_DIR) --all-groups
@@ -55,6 +55,12 @@ ollama-import: ollama-up
 
 llamacpp-prepare:
 	uv run --directory $(BACKEND_DIR) python spikes/prepare_llama_cpp.py
+
+tts-prepare:
+	uv run --directory $(BACKEND_DIR) python spikes/prepare_tts_model.py
+
+benchmark-tts:
+	@printf '%s\n' 'Run tts_benchmark.py with run_kokoro_tts.py and the pinned files under data/models/kokoro-zh/.'
 
 asr-prepare:
 	uv run --directory $(BACKEND_DIR) python spikes/prepare_asr_model.py
