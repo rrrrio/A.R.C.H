@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
-import { VoiceClient } from './voice'
+import { type VoiceActivity, type VoiceEvent, VoiceClient } from './voice'
 import './App.css'
 
 type SessionState =
@@ -12,10 +12,27 @@ type SessionState =
   | { kind: 'authenticated'; csrfToken: string }
   | { kind: 'error' }
 
+type ConversationState = {
+  activity: VoiceActivity
+  userText: string
+  assistantText: string
+}
+
+const initialConversation: ConversationState = { activity: 'listening', userText: '', assistantText: '' }
+
+const activityLabels: Record<VoiceActivity, string> = {
+  'user-speaking': '正在聆听',
+  recognizing: '正在识别',
+  thinking: '正在思考',
+  speaking: '正在播报',
+  listening: '等待说话',
+}
+
 function App() {
   const [session, setSession] = useState<SessionState>({ kind: 'loading' })
   const [password, setPassword] = useState('')
   const [voiceState, setVoiceState] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle')
+  const [conversation, setConversation] = useState<ConversationState>(initialConversation)
   const voiceClient = useRef<VoiceClient | null>(null)
 
   async function refreshSession() {
@@ -58,8 +75,9 @@ function App() {
   async function connectVoice() {
     if (session.kind !== 'authenticated') return
     setVoiceState('connecting')
+    setConversation(initialConversation)
     try {
-      const client = new VoiceClient(session.csrfToken)
+      const client = new VoiceClient(session.csrfToken, handleVoiceEvent)
       voiceClient.current = client
       await client.connect()
       setVoiceState('connected')
@@ -74,6 +92,21 @@ function App() {
     await voiceClient.current?.close().catch(() => undefined)
     voiceClient.current = null
     setVoiceState('idle')
+    setConversation(initialConversation)
+  }
+
+  function handleVoiceEvent(event: VoiceEvent) {
+    setConversation((current) => {
+      if (event.type === 'voice_state') return { ...current, activity: event.state }
+      if (event.role === 'user') {
+        return { ...current, activity: event.state, userText: event.text }
+      }
+      if (event.phase === 'start') return { ...current, activity: event.state, assistantText: '' }
+      if (event.phase === 'delta') {
+        return { ...current, activity: event.state, assistantText: current.assistantText + event.text }
+      }
+      return { ...current, activity: event.state }
+    })
   }
 
   return (
@@ -87,8 +120,14 @@ function App() {
       {session.kind === 'authenticated' ? (
         <section className="setup-panel" aria-labelledby="voice-title">
           <p className="eyebrow">语音会话</p>
-          <h1 id="voice-title">{voiceState === 'connected' ? '已连接' : '等待连接'}</h1>
+          <h1 id="voice-title">{voiceState === 'connected' ? activityLabels[conversation.activity] : '等待连接'}</h1>
           {voiceState === 'error' ? <p>无法建立语音连接。</p> : null}
+          {voiceState === 'connected' ? (
+            <div className="transcript" aria-live="polite">
+              <p><span>你</span>{conversation.userText || '...'}</p>
+              <p><span>助手</span>{conversation.assistantText || '...'}</p>
+            </div>
+          ) : null}
           <div className="action-row">
             {voiceState === 'connected' ? (
               <button type="button" className="secondary-button" onClick={() => void disconnectVoice()}>

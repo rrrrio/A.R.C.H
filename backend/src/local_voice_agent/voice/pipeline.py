@@ -16,6 +16,7 @@ from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
+from local_voice_agent.voice.events import VoiceEventProcessor
 from local_voice_agent.voice.models import VoiceModelPaths
 
 
@@ -60,14 +61,20 @@ def create_pipeline_worker(
         ]
     )
     context_aggregator = LLMContextAggregatorPair(context)
+    user_events = VoiceEventProcessor(connection.send_app_message)
+    assistant_events = VoiceEventProcessor(connection.send_app_message)
+    output_events = VoiceEventProcessor(connection.send_app_message)
     pipeline = Pipeline(
         [
             transport.input(),
             vad,
             stt,
+            user_events,
             context_aggregator.user(),
             llm,
+            assistant_events,
             tts,
+            output_events,
             transport.output(),
             context_aggregator.assistant(),
         ]

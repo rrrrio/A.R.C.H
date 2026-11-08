@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { isOfferResponse, VoiceClient } from './voice'
+import { isOfferResponse, isVoiceEvent, VoiceClient } from './voice'
 
 describe('isOfferResponse', () => {
   it('accepts a complete server answer', () => {
@@ -10,6 +10,18 @@ describe('isOfferResponse', () => {
   it('rejects incomplete or malformed answers', () => {
     expect(isOfferResponse({ sdp: 'v=0', type: 'offer', pc_id: 'connection-1' })).toBe(false)
     expect(isOfferResponse({ sdp: 'v=0', type: 'answer' })).toBe(false)
+  })
+})
+
+describe('isVoiceEvent', () => {
+  it('accepts the bounded state and transcript protocol', () => {
+    expect(isVoiceEvent({ type: 'voice_state', state: 'speaking' })).toBe(true)
+    expect(isVoiceEvent({ type: 'transcript', state: 'thinking', role: 'assistant', phase: 'delta', text: '你好' })).toBe(true)
+  })
+
+  it('rejects unknown activity and transcript phases', () => {
+    expect(isVoiceEvent({ type: 'voice_state', state: 'running' })).toBe(false)
+    expect(isVoiceEvent({ type: 'transcript', state: 'thinking', role: 'assistant', phase: 'chunk', text: '你好' })).toBe(false)
   })
 })
 
@@ -58,10 +70,14 @@ describe('VoiceClient', () => {
         async setRemoteDescription() {}
 
         close() {}
+
+        createDataChannel() {
+          return { close() {}, onmessage: null } as unknown as RTCDataChannel
+        }
       },
     )
 
-    const client = new VoiceClient('csrf-token')
+    const client = new VoiceClient('csrf-token', () => undefined)
     await expect(client.connect()).rejects.toThrow('network unavailable')
     await client.close()
 

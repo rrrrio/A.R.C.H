@@ -122,6 +122,27 @@ button:disabled {
   margin-top: 20px;
 }
 
+.transcript {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.transcript p {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+  color: #33414d;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.transcript span {
+  color: #4d5965;
+  font-size: 14px;
+}
+
 @media (max-width: 640px) {
   .topbar {
     padding: 0 16px;
