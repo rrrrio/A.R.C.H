@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     data_dir: Path = PROJECT_ROOT / "data"
+    public_origin: str = "https://local-voice-agent.local:8443"
 
     @field_validator("data_dir")
     @classmethod
@@ -37,10 +39,38 @@ class Settings(BaseSettings):
             raise ValueError(message)
         return resolved
 
+    @field_validator("public_origin")
+    @classmethod
+    def public_origin_must_be_https_origin(cls, value: str) -> str:
+        """Require the same HTTPS origin that browsers use for state-changing requests."""
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("LVA_PUBLIC_ORIGIN must be a bare HTTPS origin.")
+        return value.rstrip("/")
+
     def ensure_runtime_directories(self) -> None:
         """Create the bounded runtime directories required by the application."""
-        for relative_path in ("cache", "db", "knowledge/inbox", "logs", "models", "voices"):
+        for relative_path in (
+            "auth",
+            "cache",
+            "db",
+            "knowledge/inbox",
+            "logs",
+            "models",
+            "voices",
+        ):
             (self.data_dir / relative_path).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def credential_path(self) -> Path:
+        """Return the bounded, local-only administrator credential location."""
+        return self.data_dir / "auth" / "admin.json"
 
 
 @lru_cache

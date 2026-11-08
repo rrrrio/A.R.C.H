@@ -19,3 +19,11 @@ def test_settings_reject_paths_outside_data() -> None:
     """Configuration cannot redirect writable state into an arbitrary path."""
     with pytest.raises(ValidationError, match="LVA_DATA_DIR must be inside"):
         Settings(data_dir=Path("/tmp/local-voice-agent-escape"))
+
+
+def test_settings_reject_non_https_or_path_public_origins() -> None:
+    """Browser mutation checks require one exact HTTPS origin rather than a URL prefix."""
+    with pytest.raises(ValidationError, match="LVA_PUBLIC_ORIGIN must be a bare HTTPS origin"):
+        Settings(public_origin="http://voice.test:8443")
+    with pytest.raises(ValidationError, match="LVA_PUBLIC_ORIGIN must be a bare HTTPS origin"):
+        Settings(public_origin="https://voice.test:8443/application")

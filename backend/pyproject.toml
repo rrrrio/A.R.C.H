@@ -5,6 +5,7 @@ description = "Local-first real-time voice agent"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "argon2-cffi==25.1.0",
     "fastapi==0.162.2",
     "pipecat-ai==1.15.0",
     "pydantic-settings>=2.6,<3",
