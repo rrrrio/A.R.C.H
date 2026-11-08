@@ -7,6 +7,7 @@ import asyncio
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.workers.runner import WorkerRunner
 
+from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.voice.llama import LlamaCppServer
 from local_voice_agent.voice.models import VoiceModelPaths
 from local_voice_agent.voice.pipeline import create_pipeline_worker
@@ -15,8 +16,9 @@ from local_voice_agent.voice.pipeline import create_pipeline_worker
 class LocalVoiceSession:
     """Own the one local model server and Pipecat worker attached to a peer connection."""
 
-    def __init__(self, paths: VoiceModelPaths) -> None:
+    def __init__(self, paths: VoiceModelPaths, memory_store: MemoryStore | None = None) -> None:
         self._paths = paths
+        self._memory_store = memory_store
         self._llama = LlamaCppServer(paths)
         self._runner: WorkerRunner | None = None
         self._runner_task: asyncio.Task[None] | None = None
@@ -29,7 +31,9 @@ class LocalVoiceSession:
         runner: WorkerRunner | None = None
         runner_task: asyncio.Task[None] | None = None
         try:
-            worker = create_pipeline_worker(connection, self._paths, self._llama.endpoint)
+            worker = create_pipeline_worker(
+                connection, self._paths, self._llama.endpoint, self._memory_store
+            )
             runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
             ready = asyncio.Event()
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from pipecat.frames.frames import (
     Frame,
     InterruptionFrame,
@@ -18,17 +20,32 @@ from local_voice_agent.agent.core import (
     AgentResponseKind,
     ConversationTurn,
 )
+from local_voice_agent.memory.store import MemoryStore
 
 
 class PipecatAgentProcessor(FrameProcessor):
     """Keep media framing in Pipecat while the Agent Core owns local text generation."""
 
-    def __init__(self, agent: AgentCore, history_limit: int = 20) -> None:
+    def __init__(
+        self,
+        agent: AgentCore,
+        history_limit: int = 20,
+        memory_store: MemoryStore | None = None,
+    ) -> None:
         super().__init__()
         self._agent = agent
         self._history_limit = history_limit
         self._history: list[ConversationTurn] = []
         self._active_utterance_id: str | None = None
+        self._memory_store = memory_store
+        self._conversation_id = (
+            memory_store.create_conversation() if memory_store is not None else None
+        )
+
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the durable conversation identifier owned by this media session."""
+        return self._conversation_id
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """Consume user transcription and preserve all unrelated media frames unchanged."""
@@ -53,9 +70,9 @@ class PipecatAgentProcessor(FrameProcessor):
             utterance_id=utterance_id,
             transcript=frame.text,
             language=language,
-            history=tuple(self._history),
+            history=await self._history_for_request(),
         )
-        self._append_history(ConversationTurn("user", frame.text, utterance_id))
+        await self._record_turn(ConversationTurn("user", frame.text, utterance_id))
         assistant_parts: list[str] = []
         await self.push_frame(LLMFullResponseStartFrame())
         async for event in self._agent.respond(request):
@@ -73,11 +90,30 @@ class PipecatAgentProcessor(FrameProcessor):
             return
         assistant_text = "".join(assistant_parts)
         if assistant_text:
-            self._append_history(ConversationTurn("assistant", assistant_text, utterance_id))
+            await self._record_turn(ConversationTurn("assistant", assistant_text, utterance_id))
         self._active_utterance_id = None
         await self.push_frame(LLMFullResponseEndFrame())
 
-    def _append_history(self, turn: ConversationTurn) -> None:
+    async def _history_for_request(self) -> tuple[ConversationTurn, ...]:
+        if self._memory_store is None or self._conversation_id is None:
+            return tuple(self._history)
+        messages = await asyncio.to_thread(
+            self._memory_store.list_messages, self._conversation_id, self._history_limit
+        )
+        return tuple(
+            ConversationTurn(message.role, message.content, message.utterance_id)
+            for message in messages
+        )
+
+    async def _record_turn(self, turn: ConversationTurn) -> None:
+        if self._memory_store is not None and self._conversation_id is not None:
+            await asyncio.to_thread(
+                self._memory_store.append_message,
+                self._conversation_id,
+                turn.utterance_id,
+                turn.role,
+                turn.text,
+            )
         self._history.append(turn)
         overflow = len(self._history) - self._history_limit
         if overflow > 0:

@@ -33,7 +33,10 @@ def create_app(
         if not hasattr(app.state, "auth_service"):
             app.state.auth_service = AuthService(settings.credential_path, settings.public_origin)
         if not hasattr(app.state, "signaling_service"):
-            voice_session = LocalVoiceSession(VoiceModelPaths.from_data_dir(settings.data_dir))
+            voice_session = LocalVoiceSession(
+                VoiceModelPaths.from_data_dir(settings.data_dir),
+                MemoryStore(settings.database_path),
+            )
             app.state.signaling_service = WebRTCSignalingService(
                 on_connection=voice_session.start,
                 on_disconnection=voice_session.stop,

@@ -14,6 +14,7 @@ from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
 from local_voice_agent.agent.llama import LlamaCppAgentCore
+from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.observability.metrics import LatencyStage, LatencyTracker
 from local_voice_agent.voice.agent_processor import PipecatAgentProcessor
 from local_voice_agent.voice.events import VoiceEventProcessor
@@ -26,6 +27,7 @@ def create_pipeline_worker(
     connection: SmallWebRTCConnection,
     paths: VoiceModelPaths,
     llama_endpoint: str,
+    memory_store: MemoryStore | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
     paths.require_ready()
@@ -44,7 +46,7 @@ def create_pipeline_worker(
         compute_type="float16",
         settings=WhisperSTTService.Settings(model=str(paths.asr_model), language=Language.ZH),
     )
-    agent = PipecatAgentProcessor(LlamaCppAgentCore(llama_endpoint))
+    agent = PipecatAgentProcessor(LlamaCppAgentCore(llama_endpoint), memory_store=memory_store)
     tts = KokoroTTSService(
         model_path=str(paths.tts_model),
         voices_path=str(paths.tts_voices),

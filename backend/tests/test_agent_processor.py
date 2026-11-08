@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from pipecat.frames.frames import (
     Frame,
@@ -13,6 +14,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection
 
 from local_voice_agent.agent.core import AgentRequest, AgentResponseEvent, AgentResponseKind
+from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.voice.agent_processor import PipecatAgentProcessor
 
 
@@ -31,8 +33,8 @@ class FakeAgent:
 class InspectingAgentProcessor(PipecatAgentProcessor):
     """Capture generated frames without a full media worker."""
 
-    def __init__(self, agent: FakeAgent) -> None:
-        super().__init__(agent)
+    def __init__(self, agent: FakeAgent, memory_store: MemoryStore | None = None) -> None:
+        super().__init__(agent, memory_store=memory_store)
         self.forwarded: list[Frame] = []
 
     async def push_frame(
@@ -69,5 +71,30 @@ def test_agent_processor_converts_transcription_to_response_frames_and_history()
     assert [request.transcript for request in agent.requests] == ["你好", "再说一次"]
     assert [(turn.role, turn.text) for turn in agent.requests[1].history] == [
         ("user", "你好"),
+        ("assistant", "回答"),
+    ]
+
+
+def test_agent_processor_persists_completed_turns_but_not_pending_memory(tmp_path: Path) -> None:
+    """Session history survives in SQLite while the memory candidate table remains untouched."""
+    agent = FakeAgent()
+    store = MemoryStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    processor = InspectingAgentProcessor(agent, memory_store=store)
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("持久化这一轮", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+
+    asyncio.run(exercise())
+
+    conversation_id = processor.conversation_id
+    assert conversation_id is not None
+    persisted = [
+        (message.role, message.content) for message in store.list_messages(conversation_id)
+    ]
+    assert persisted == [
+        ("user", "持久化这一轮"),
         ("assistant", "回答"),
     ]
