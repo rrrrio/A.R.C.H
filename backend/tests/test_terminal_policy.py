@@ -113,3 +113,43 @@ def test_terminal_executor_rejects_forged_commands_and_symlinked_working_directo
 
     assert isinstance(forged, ValueError)
     assert isinstance(linked, OSError)
+
+
+def test_gateway_approved_adapters_create_and_read_confined_files_without_following_symlinks(
+    tmp_path: Path,
+) -> None:
+    """Approval does not permit a write or read adapter to traverse a replaced workspace path."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private")
+    (workspace / "escape.txt").symlink_to(outside)
+    from local_voice_agent.memory.migrations import MigrationRunner
+    from local_voice_agent.tools.approvals import ApprovalStore
+    from local_voice_agent.tools.gateway import ToolGateway, ToolOutcome
+
+    database_path = tmp_path / "voice.sqlite3"
+    MigrationRunner(database_path).migrate()
+    policy = TerminalToolPolicy(workspace)
+    gateway = ToolGateway(
+        policy, ApprovalStore(database_path), TerminalExecutor(workspace, 10.0, 4)
+    )
+
+    def approve_and_execute(request: ToolRequest) -> ToolOutcome:
+        pending = asyncio.run(gateway.dispatch(request))
+        assert pending.approval_id is not None
+        gateway._approvals.decide(pending.approval_id, "approved", "administrator")
+        return asyncio.run(gateway.execute_approved(pending.approval_id, request, "executor"))
+
+    approve_and_execute(_request(["touch", "created.txt"]))
+    (workspace / "created.txt").write_text("abcdef")
+    read = approve_and_execute(_request(["cat", "created.txt"]))
+    approve_and_execute(_request(["mkdir", "nested"]))
+
+    assert read.result is not None
+    assert read.result.stdout == "abcd"
+    assert read.result.output_truncated
+    assert (workspace / "nested").is_dir()
+    denied = asyncio.run(gateway.dispatch(_request(["cat", "escape.txt"])))
+    assert denied.status == "denied"
+    assert outside.read_text() == "private"
