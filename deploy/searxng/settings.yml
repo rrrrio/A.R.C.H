@@ -1,7 +1,8 @@
 use_default_settings: true
 
 server:
-  secret_key: "change-this-before-enabling-search"
+  # SearXNG replaces this value with the ignored runtime SEARXNG_SECRET environment value.
+  secret_key: "runtime-secret-required"
   bind_address: "0.0.0.0"
   port: 8080
 

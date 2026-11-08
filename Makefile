@@ -5,10 +5,10 @@ BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 COMPOSE := docker compose -f deploy/compose.yaml
 
-.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts
+.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts
 
 help:
-	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts'
+	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts'
 
 bootstrap:
 	uv sync --directory $(BACKEND_DIR) --all-groups
@@ -48,6 +48,18 @@ gateway-down:
 
 gateway-logs:
 	$(COMPOSE) --profile gateway logs --tail=100 caddy
+
+search-provision:
+	uv run --directory $(BACKEND_DIR) python scripts/provision_searxng_secret.py
+
+search-up: search-provision
+	$(COMPOSE) --profile search up -d searxng
+
+search-down:
+	$(COMPOSE) --profile search stop searxng
+
+search-logs:
+	$(COMPOSE) --profile search logs --tail=100 searxng
 
 models-baseline:
 	uv run --directory $(BACKEND_DIR) python spikes/download_benchmark_sample.py

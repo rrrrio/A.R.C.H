@@ -38,6 +38,10 @@ services:
   searxng:
     image: searxng/searxng@sha256:c750ee1d859b26d3aeae51c07f6a48c3a0bfbaa9195d71a18b258862d88c4c3c
     profiles: ["search"]
+    entrypoint: ["/bin/sh", "/etc/searxng/lva-entrypoint.sh"]
+    env_file:
+      - path: ../data/runtime/searxng.env
+        required: false
     environment:
       SEARXNG_BASE_URL: http://127.0.0.1:8080/
       HTTP_PROXY: ${HTTP_PROXY:-}
