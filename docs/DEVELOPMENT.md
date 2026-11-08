@@ -1,8 +1,8 @@
 # 开发环境
 
-当前工作区已完成 Milestone 0 的工程骨架和 Milestone 1 的组件基准。Milestone 2 已包含本机管理员认证、浏览器 WebRTC 协商、DataChannel 字幕与状态事件，以及本地媒体流水线；真实浏览器语音会话与 LAN 验收尚未完成。日常开发不会下载或加载语音、语言、嵌入或数字人模型。
+本页面面向修改项目的开发者。部署与使用请从[文档导航](README.md)进入相应教程、操作指南、参考或架构说明。
 
-## 初始化
+## 初始化与质量检查
 
 在仓库根目录执行：
 
@@ -13,73 +13,46 @@
     make frontend-build
     make compose-config
 
-`make bootstrap` 创建后端虚拟环境，并按 `frontend/package-lock.json` 安装前端依赖。它不会覆盖 `.env`，也不会删除 `data/` 内的用户数据。
+`make bootstrap` 创建后端虚拟环境并按 `frontend/package-lock.json` 安装前端依赖；它不会覆盖 `.env` 或删除 `data/` 中的用户数据。当前全量 `ruff check .` 可能报告 `memory/migrations.py` 的既有长 SQL 行；修改新文件时至少应运行其范围内的 Ruff 检查，并在变更说明中区分既有失败与新增失败。
 
-## HTTPS 网关
+## 启动开发服务
 
-先在 `.env` 设定局域网设备会访问的无路径 HTTPS origin。默认主机名是 `local-voice-agent.local`，端口是 `8443`；`LVA_PUBLIC_ORIGIN`、`LVA_LAN_HOST` 和 `LVA_HTTPS_PORT` 必须组成同一个 origin。
-
-在一个终端启动只绑定回环地址的后端：
+后端只绑定回环地址：
 
     cd backend
     uv run uvicorn local_voice_agent.main:app --host 127.0.0.1 --port 8000
 
-在仓库根目录构建前端并启动唯一的 LAN 入口：
+前端开发服务器可单独运行：
+
+    cd frontend
+    npm run dev
+
+浏览器 HTTPS 入口通过 Caddy 启动：
 
     make gateway-up
 
-该网关使用 Docker host network，因而能够代理回环后端；它只监听配置的 HTTPS 端口，后端不会暴露到 LAN。停止网关使用 `make gateway-down`，查看日志使用 `make gateway-logs`。
+停止或查看网关日志：
 
-Caddy 首次启动会创建本地 CA。将其公有根证书复制到客户端并在客户端信任；不要复制私钥或 Caddy 的整个数据目录：
+    make gateway-down
+    make gateway-logs
 
-    docker cp local-voice-agent-caddy-1:/data/caddy/pki/authorities/local/root.crt /tmp/local-voice-agent-root.crt
+实际浏览器部署、证书、代理和 LAN 处理见[让局域网设备访问](how-to/lan-access.md)。
 
-让每个 LAN 客户端将 `LVA_LAN_HOST` 解析到这台机器的 LAN IP。例如当前主机的 `192.168.10.126` 网络可使用本地 DNS，或为测试临时添加 `192.168.10.126 local-voice-agent.local`。之后从客户端访问 `https://local-voice-agent.local:8443`。
+## 数据与迁移
 
-在本机可使用 CA 文件进行不安装系统证书库的验收：
+所有可写数据必须保留在 `data/` 内。运行 SQLite migration：
 
-    curl --cacert /tmp/local-voice-agent-root.crt \
-      --resolve local-voice-agent.local:8443:192.168.10.126 \
-      https://local-voice-agent.local:8443/api/health
+    make migrate
 
-## 健康检查
-
-启动后端：
-
-    cd backend
-    uv run uvicorn local_voice_agent.main:app --host 127.0.0.1 --port 8000
-
-在另一个终端请求：
-
-    curl http://127.0.0.1:8000/api/health
-
-预期结果：
-
-    {"status":"ok","environment":"development"}
-
-## 管理员密码
-
-在首次通过 HTTPS 浏览器登录前，使用交互式 CLI 初始化本机唯一管理员。该命令通过终端读取密码两次，只会将 Argon2id 哈希写入受忽略的 `data/auth/admin.json`：
-
-    uv run --directory backend python scripts/create_admin.py
-
-如需轮换已存在的密码，显式传入 `--replace`：
-
-    uv run --directory backend python scripts/create_admin.py --replace
-
-不要把密码放入 `.env`、命令行参数、脚本、Git 或日志。认证 API 要求浏览器请求的 `Origin` 与 `LVA_PUBLIC_ORIGIN` 完全一致；该值必须是无路径的 HTTPS origin，例如 `https://local-voice-agent.local:8443`。
-
-## 数据边界
-
-应用只接受 `data/` 及其子目录作为可写目录。`LVA_DATA_DIR` 指向仓库外部路径时，后端会拒绝启动。模型、数据库、日志、知识文件、语音参考材料和管理员凭据都必须保存在 `data/` 下；Git 会忽略其内容，只保留目录占位文件。
-
-## 本地知识库
-
-将允许索引的资料放入 `data/knowledge/inbox/`。当前摄取器只接受受限大小的常规 `.txt`、`.md`、`.pdf`、`.py`、`.json`、`.yaml` 和 `.yml` 文件；它会跳过符号链接、损坏 PDF 与不支持的文件。不要把管理员凭据、私钥或不希望进入本地 LLM 上下文的内容放入该目录。
-
-首次准备嵌入模型需要网络访问；该命令固定 BGE-M3 revision 并在 `data/models/` 记录来源。之后索引命令强制离线运行，不会下载模型或扫描该目录之外的文件：
+准备和重建本地知识库：
 
     make rag-prepare
     make rag-index
 
-索引使用文件内容 hash 增量更新 SQLite；删除资料后再次运行 `make rag-index` 会删除对应向量。登录浏览器后，“本地知识库”区域显示已索引文件数量和最近更新时间。页面不执行下载或索引操作。
+详细目录限制和文件类型见[配置参考](reference/configuration.md)。不要将真实密码、CA 私钥、SearXNG 密钥、模型、数据库、日志或浏览器运行结果写入 Git。
+
+## 文档同步要求
+
+每次改变用户可见行为、部署步骤、网络/安全边界、配置参数、数据格式或验收状态时，必须在同一变更中更新相应 `docs/` 页面和 `execplan/local-voice-agent.md`。选择一个与读者任务匹配的 Diataxis 类型：新手线性路径写入 `docs/tutorials/`，具体操作写入 `docs/how-to/`，事实与参数写入 `docs/reference/`，设计取舍写入 `docs/explanation/`。不要把多个类型重新堆回本页。
+
+文档评审至少检查：命令是否存在、默认值是否与 `.env.example` 和代码一致、网络地址是否与 Caddy 和后端实际监听一致、未完成能力是否明确标注，以及新增或变更页面是否在 `docs/README.md` 中可找到。涉及多组件数据流时，使用简洁、证据可追溯的 ASCII 图。
