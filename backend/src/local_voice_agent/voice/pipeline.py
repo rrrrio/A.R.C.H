@@ -37,21 +37,19 @@ def create_pipeline_worker(
     )
     vad = VADProcessor(vad_analyzer=SileroVADAnalyzer(sample_rate=16000))
     stt = WhisperSTTService(
-        model=str(paths.asr_model),
         device="cuda",
         compute_type="float16",
-        language=Language.ZH,
+        settings=WhisperSTTService.Settings(model=str(paths.asr_model), language=Language.ZH),
     )
     llm = OpenAILLMService(
-        model="qwen3-8b-q4-k-m",
         api_key="local-not-used",
         base_url=llama_endpoint,
+        settings=OpenAILLMService.Settings(model="qwen3-8b-q4-k-m"),
     )
     tts = KokoroTTSService(
         model_path=str(paths.tts_model),
         voices_path=str(paths.tts_voices),
-        voice_id="zf_001",
-        settings=KokoroTTSService.Settings(language=Language.ZH, speed=1.0),
+        settings=KokoroTTSService.Settings(voice="zf_001", language=Language.ZH, speed=1.0),
     )
     context = LLMContext(
         messages=[

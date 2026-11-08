@@ -33,8 +33,16 @@ class SmallWebRTCHandler(Protocol):
 class WebRTCSignalingService:
     """Own one local peer connection and bind it to the authenticated browser session."""
 
-    def __init__(self, handler: SmallWebRTCHandler | None = None) -> None:
+    def __init__(
+        self,
+        handler: SmallWebRTCHandler | None = None,
+        on_connection: Callable[[SmallWebRTCConnection], Awaitable[None]] | None = None,
+        on_disconnection: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._handler = handler or SmallWebRTCRequestHandler(connection_mode=ConnectionMode.SINGLE)
+        self._on_connection_callback = on_connection
+        self._on_disconnection_callback = on_disconnection
+        self._disconnection_notified = False
         self._owner_session_id: str | None = None
         self._owner_pc_id: str | None = None
 
@@ -77,6 +85,7 @@ class WebRTCSignalingService:
         """Release all local peer resources during application shutdown."""
         await self._handler.close()
         self._clear_owner()
+        await self._notify_disconnection()
 
     def _assert_session_owns_connection(self, session_id: str, pc_id: str | None) -> None:
         if self._owner_session_id is None:
@@ -104,9 +113,19 @@ class WebRTCSignalingService:
         async def release_closed_connection(closed: SmallWebRTCConnection) -> None:
             if closed.pc_id == self._owner_pc_id:
                 self._clear_owner()
+                await self._notify_disconnection()
 
+        if self._on_connection_callback is not None:
+            await self._on_connection_callback(connection)
+        self._disconnection_notified = False
         await connection.connect()  # type: ignore[no-untyped-call]
 
     def _clear_owner(self) -> None:
         self._owner_session_id = None
         self._owner_pc_id = None
+
+    async def _notify_disconnection(self) -> None:
+        if self._disconnection_notified or self._on_disconnection_callback is None:
+            return
+        self._disconnection_notified = True
+        await self._on_disconnection_callback()

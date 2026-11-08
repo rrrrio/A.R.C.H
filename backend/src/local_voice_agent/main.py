@@ -12,6 +12,8 @@ from local_voice_agent.api.auth import router as auth_router
 from local_voice_agent.api.voice import router as voice_router
 from local_voice_agent.auth.service import AuthService
 from local_voice_agent.settings import Settings, get_settings
+from local_voice_agent.voice.models import VoiceModelPaths
+from local_voice_agent.voice.session import LocalVoiceSession
 from local_voice_agent.voice.webrtc import WebRTCSignalingService
 
 
@@ -29,7 +31,11 @@ def create_app(
         if not hasattr(app.state, "auth_service"):
             app.state.auth_service = AuthService(settings.credential_path, settings.public_origin)
         if not hasattr(app.state, "signaling_service"):
-            app.state.signaling_service = WebRTCSignalingService()
+            voice_session = LocalVoiceSession(VoiceModelPaths.from_data_dir(settings.data_dir))
+            app.state.signaling_service = WebRTCSignalingService(
+                on_connection=voice_session.start,
+                on_disconnection=voice_session.stop,
+            )
         yield
         await app.state.signaling_service.close()
 
