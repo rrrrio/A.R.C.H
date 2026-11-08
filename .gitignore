@@ -22,19 +22,31 @@ deploy/caddy-config/
 data/*
 !data/.gitkeep
 !data/knowledge/
+data/knowledge/*
 !data/knowledge/.gitkeep
 !data/knowledge/inbox/
+data/knowledge/inbox/*
 !data/knowledge/inbox/.gitkeep
 !data/models/
+data/models/*
 !data/models/.gitkeep
 !data/voices/
+data/voices/*
 !data/voices/.gitkeep
 !data/db/
+data/db/*
 !data/db/.gitkeep
 !data/logs/
+data/logs/*
 !data/logs/.gitkeep
 !data/cache/
+data/cache/*
 !data/cache/.gitkeep
+!data/benchmarks/
+data/benchmarks/*
+!data/benchmarks/.gitkeep
+!data/runtime/
+data/runtime/*
 
 # Editor and operating system files
 .DS_Store

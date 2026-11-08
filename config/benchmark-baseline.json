@@ -1,0 +1,41 @@
+{
+  "vad": {
+    "model": "snakers4/silero-vad",
+    "license": "MIT",
+    "sample_rate_hz": 16000
+  },
+  "asr": {
+    "model": "dropbox-dash/faster-whisper-large-v3-turbo",
+    "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "model_bin_sha256": "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+    "runtime": "faster-whisper",
+    "device": "cuda",
+    "compute_type": "float16",
+    "license": "MIT"
+  },
+  "llm": {
+    "model": "qwen3-8b-q4-k-m",
+    "runtime": "llama.cpp",
+    "source_repo": "Qwen/Qwen3-8B-GGUF",
+    "revision": "6a569868d07d3bd59e8b97fb001bf8c0b254bb20",
+    "filename": "Qwen3-8B-Q4_K_M.gguf",
+    "file_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+    "context_tokens": 8192,
+    "license": "Apache-2.0"
+  },
+  "llama_cpp_runtime": {
+    "build": "b12110",
+    "commit": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
+    "binary_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12110/llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz",
+    "binary_sha256": "4af1e1da23661db4a5b84b29aae16ebc053df689c5b8b1427c4670f2c6406d8c",
+    "cudart_url": "https://github.com/ggml-org/llama.cpp/releases/download/b12110/cudart-llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz",
+    "cudart_sha256": "6f1d562086d84ae85df880d3711079ec225602b51d530608e5001600625067dd"
+  },
+  "tts": {
+    "model": "hexgrad/Kokoro-82M-v1.1-zh",
+    "runtime": "kokoro-onnx",
+    "sample_rate_hz": 24000,
+    "license": "Apache-2.0",
+    "streaming_note": "Use sentence-level playback; this model is not token-level streaming."
+  }
+}

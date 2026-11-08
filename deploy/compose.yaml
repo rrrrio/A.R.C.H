@@ -1,6 +1,27 @@
 name: local-voice-agent
 
 services:
+  ollama:
+    image: ollama/ollama:0.40.15
+    profiles: ["models"]
+    environment:
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-${HTTP_PROXY:-}}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      all_proxy: ${ALL_PROXY:-${HTTP_PROXY:-}}
+      NO_PROXY: 127.0.0.1,localhost,host.docker.internal
+      no_proxy: 127.0.0.1,localhost,host.docker.internal
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ../data/models/ollama:/root/.ollama
+      - ../data/models:/models:ro
+      - ./ollama:/modelfiles:ro
+    gpus: all
+    restart: unless-stopped
+
   caddy:
     image: caddy:2.11.8-alpine
     profiles: ["gateway"]
