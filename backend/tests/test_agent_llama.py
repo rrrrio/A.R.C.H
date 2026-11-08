@@ -56,6 +56,7 @@ def test_llama_agent_streams_only_text_and_uses_prior_history() -> None:
     assert [event.text for event in events] == ["你好", "。", ""]
     assert received["stream"] is True
     assert received["tool_choice"] == "auto"
+    assert received["chat_template_kwargs"] == {"enable_thinking": False}
     assert "parallel_tool_calls" not in received
     assert received["tools"] == [
         {

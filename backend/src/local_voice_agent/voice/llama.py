@@ -48,6 +48,8 @@ class LlamaCppServer:
             "--ctx-size",
             "8192",
             "--jinja",
+            "--reasoning",
+            "off",
             "--reasoning-format",
             "deepseek",
             cwd=self._paths.llama_server.parent,

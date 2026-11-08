@@ -44,6 +44,7 @@ class LlamaCppAgentCore:
             "max_tokens": 256,
             "tools": [_terminal_tool_definition(), _web_search_tool_definition()],
             "tool_choice": "auto",
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         try:
             async for event in self._stream(request.utterance_id, payload, _StreamToolCall()):
@@ -97,6 +98,7 @@ class LlamaCppAgentCore:
             "temperature": 0.4,
             "top_p": 0.95,
             "max_tokens": 192,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         try:
             async for event in self._stream(request.utterance_id, payload, None):
