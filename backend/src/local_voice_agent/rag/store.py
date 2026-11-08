@@ -76,6 +76,37 @@ class KnowledgeStore:
         """Score every local chunk by cosine similarity; suitable for the single-user corpus."""
         if limit < 1:
             raise ValueError("Knowledge search limit must be positive.")
+        hits = self._vector_hits(query)
+        return tuple(sorted(hits, key=lambda hit: hit.score, reverse=True)[:limit])
+
+    def search_hybrid(
+        self, query: tuple[float, ...], text: str, limit: int = 4
+    ) -> tuple[KnowledgeHit, ...]:
+        """Combine local vector similarity and lightweight keyword overlap for one query."""
+        if limit < 1:
+            raise ValueError("Knowledge search limit must be positive.")
+        keywords = _keywords(text)
+        hits = self._vector_hits(query)
+        ranked = (
+            KnowledgeHit(
+                hit.path,
+                hit.content,
+                0.7 * hit.score + 0.3 * _keyword_score(keywords, hit.content),
+            )
+            for hit in hits
+        )
+        return tuple(sorted(ranked, key=lambda hit: hit.score, reverse=True)[:limit])
+
+    def index_status(self) -> tuple[int, str | None]:
+        """Return indexed source count and newest successful source update time."""
+        with self._connect(readonly=True) as connection:
+            count, newest = connection.execute(
+                "SELECT COUNT(*), MAX(updated_at) FROM knowledge_sources"
+            ).fetchone()
+        return int(count), newest if isinstance(newest, str) else None
+
+    def _vector_hits(self, query: tuple[float, ...]) -> list[KnowledgeHit]:
+        """Load compatible vectors for the intentionally small, single-user corpus."""
         with self._connect(readonly=True) as connection:
             rows = connection.execute(
                 "SELECT source_path, content, embedding, dimensions FROM knowledge_chunks"
@@ -89,7 +120,7 @@ class KnowledgeStore:
             and isinstance(dimensions, int)
             and dimensions == len(query)
         ]
-        return tuple(sorted(hits, key=lambda hit: hit.score, reverse=True)[:limit])
+        return hits
 
     def _connect(self, readonly: bool = False) -> sqlite3.Connection:
         if readonly:
@@ -119,3 +150,20 @@ def _cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
     if denominator == 0:
         return 0.0
     return sum(a * b for a, b in zip(left, right, strict=True)) / denominator
+
+
+def _keywords(text: str) -> frozenset[str]:
+    """Build a dependency-free token set that handles words and Chinese character pairs."""
+    normalized = text.casefold()
+    words = {word for word in normalized.split() if len(word) > 1}
+    han = "".join(character for character in normalized if "\u4e00" <= character <= "\u9fff")
+    pairs = {han[index : index + 2] for index in range(len(han) - 1)}
+    return frozenset(words | pairs)
+
+
+def _keyword_score(keywords: frozenset[str], content: str) -> float:
+    """Return the fraction of query tokens occurring in one chunk."""
+    if not keywords:
+        return 0.0
+    normalized = content.casefold()
+    return sum(keyword in normalized for keyword in keywords) / len(keywords)

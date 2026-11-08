@@ -17,6 +17,7 @@ from local_voice_agent.agent.llama import LlamaCppAgentCore
 from local_voice_agent.memory.extractor import LlamaCppMemoryCandidateExtractor
 from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.observability.metrics import LatencyStage, LatencyTracker
+from local_voice_agent.rag.retriever import Retriever
 from local_voice_agent.voice.agent_processor import PipecatAgentProcessor
 from local_voice_agent.voice.events import VoiceEventProcessor
 from local_voice_agent.voice.metrics import VoiceLatencyProcessor
@@ -29,6 +30,7 @@ def create_pipeline_worker(
     paths: VoiceModelPaths,
     llama_endpoint: str,
     memory_store: MemoryStore | None = None,
+    retriever: Retriever | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
     paths.require_ready()
@@ -51,6 +53,7 @@ def create_pipeline_worker(
         LlamaCppAgentCore(llama_endpoint),
         memory_store=memory_store,
         candidate_extractor=LlamaCppMemoryCandidateExtractor(llama_endpoint),
+        retriever=retriever,
     )
     tts = KokoroTTSService(
         model_path=str(paths.tts_model),

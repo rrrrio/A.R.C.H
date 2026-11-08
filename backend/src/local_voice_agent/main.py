@@ -40,6 +40,8 @@ def create_app(
             voice_session = LocalVoiceSession(
                 VoiceModelPaths.from_data_dir(settings.data_dir),
                 app.state.memory_store,
+                database_path=settings.database_path,
+                rag_model_path=settings.rag_model_path,
             )
             app.state.signaling_service = WebRTCSignalingService(
                 on_connection=voice_session.start,

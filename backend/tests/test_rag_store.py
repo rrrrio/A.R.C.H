@@ -26,3 +26,20 @@ def test_knowledge_store_replaces_sources_searches_vectors_and_removes_missing_p
 
     assert [hit.content for hit in store.search((0.0, 1.0))] == ["替换段"]
     assert not store.source_is_current("other.txt", "digest-2")
+
+
+def test_knowledge_store_hybrid_search_promotes_matching_keywords_and_reports_status(
+    tmp_path: Path,
+) -> None:
+    """Keyword overlap supplements vector similarity without a separate search service."""
+    store = KnowledgeStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    store.replace_source("unrelated.md", "digest-1", (("无关资料", (1.0, 0.0)),))
+    store.replace_source("weather.md", "digest-2", (("北京天气预报说明", (0.7, 0.7)),))
+
+    hits = store.search_hybrid((1.0, 0.0), "北京天气", limit=2)
+    count, newest = store.index_status()
+
+    assert [hit.path for hit in hits] == ["weather.md", "unrelated.md"]
+    assert count == 2
+    assert newest is not None

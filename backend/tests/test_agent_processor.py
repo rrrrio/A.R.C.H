@@ -16,6 +16,7 @@ from pipecat.processors.frame_processor import FrameDirection
 from local_voice_agent.agent.core import AgentRequest, AgentResponseEvent, AgentResponseKind
 from local_voice_agent.memory.extractor import MemoryCandidateExtractor
 from local_voice_agent.memory.store import MemoryStore
+from local_voice_agent.rag.retriever import Retriever
 from local_voice_agent.voice.agent_processor import PipecatAgentProcessor
 
 
@@ -39,8 +40,14 @@ class InspectingAgentProcessor(PipecatAgentProcessor):
         agent: FakeAgent,
         memory_store: MemoryStore | None = None,
         candidate_extractor: MemoryCandidateExtractor | None = None,
+        retriever: Retriever | None = None,
     ) -> None:
-        super().__init__(agent, memory_store=memory_store, candidate_extractor=candidate_extractor)
+        super().__init__(
+            agent,
+            memory_store=memory_store,
+            candidate_extractor=candidate_extractor,
+            retriever=retriever,
+        )
         self.forwarded: list[Frame] = []
 
     async def push_frame(
@@ -209,3 +216,32 @@ def test_agent_processor_sends_only_approved_memories_to_agent_core(tmp_path: Pa
     asyncio.run(exercise())
 
     assert agent.requests[1].approved_memories == ("用户偏好简洁回答",)
+
+
+class FakeRetriever:
+    """Record the transcription supplied to synchronous local retrieval."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def retrieve(self, query: str) -> tuple[str, ...]:
+        self.queries.append(query)
+        return ("来源：manual.md\n本机部署步骤",)
+
+
+def test_agent_processor_adds_local_retrieval_context_to_only_the_current_request() -> None:
+    """RAG lookup runs off the media loop and does not become conversation history."""
+    agent = FakeAgent()
+    retriever = FakeRetriever()
+    processor = InspectingAgentProcessor(agent, retriever=retriever)
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("如何本机部署？", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+
+    asyncio.run(exercise())
+
+    assert retriever.queries == ["如何本机部署？"]
+    assert agent.requests[0].retrieved_context == ("来源：manual.md\n本机部署步骤",)
+    assert agent.requests[0].history == ()

@@ -23,6 +23,7 @@ from local_voice_agent.agent.core import (
 from local_voice_agent.memory.context import bounded_approved_memories
 from local_voice_agent.memory.extractor import MemoryCandidateExtractor
 from local_voice_agent.memory.store import MemoryStore, StoredMessage
+from local_voice_agent.rag.retriever import Retriever
 
 
 class PipecatAgentProcessor(FrameProcessor):
@@ -34,6 +35,7 @@ class PipecatAgentProcessor(FrameProcessor):
         history_limit: int = 20,
         memory_store: MemoryStore | None = None,
         candidate_extractor: MemoryCandidateExtractor | None = None,
+        retriever: Retriever | None = None,
     ) -> None:
         super().__init__()
         self._agent = agent
@@ -42,6 +44,7 @@ class PipecatAgentProcessor(FrameProcessor):
         self._active_utterance_id: str | None = None
         self._memory_store = memory_store
         self._candidate_extractor = candidate_extractor
+        self._retriever = retriever
         self._candidate_task: asyncio.Task[None] | None = None
         self._conversation_id = (
             memory_store.create_conversation() if memory_store is not None else None
@@ -79,6 +82,7 @@ class PipecatAgentProcessor(FrameProcessor):
             language=language,
             history=await self._history_for_request(),
             approved_memories=await self._approved_memories_for_request(),
+            retrieved_context=await self._retrieved_context_for_request(frame.text),
         )
         stored_user = await self._record_turn(ConversationTurn("user", frame.text, utterance_id))
         assistant_parts: list[str] = []
@@ -119,6 +123,14 @@ class PipecatAgentProcessor(FrameProcessor):
             return ()
         candidates = await asyncio.to_thread(self._memory_store.list_candidates, "approved", 12)
         return bounded_approved_memories(candidate.content for candidate in candidates)
+
+    async def _retrieved_context_for_request(self, transcript: str) -> tuple[str, ...]:
+        if self._retriever is None:
+            return ()
+        try:
+            return await asyncio.to_thread(self._retriever.retrieve, transcript)
+        except Exception:
+            return ()
 
     async def _record_turn(self, turn: ConversationTurn) -> StoredMessage | None:
         if self._memory_store is not None and self._conversation_id is not None:
