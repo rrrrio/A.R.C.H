@@ -14,6 +14,7 @@ from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
 from local_voice_agent.agent.llama import LlamaCppAgentCore
+from local_voice_agent.memory.extractor import LlamaCppMemoryCandidateExtractor
 from local_voice_agent.memory.store import MemoryStore
 from local_voice_agent.observability.metrics import LatencyStage, LatencyTracker
 from local_voice_agent.voice.agent_processor import PipecatAgentProcessor
@@ -46,7 +47,11 @@ def create_pipeline_worker(
         compute_type="float16",
         settings=WhisperSTTService.Settings(model=str(paths.asr_model), language=Language.ZH),
     )
-    agent = PipecatAgentProcessor(LlamaCppAgentCore(llama_endpoint), memory_store=memory_store)
+    agent = PipecatAgentProcessor(
+        LlamaCppAgentCore(llama_endpoint),
+        memory_store=memory_store,
+        candidate_extractor=LlamaCppMemoryCandidateExtractor(llama_endpoint),
+    )
     tts = KokoroTTSService(
         model_path=str(paths.tts_model),
         voices_path=str(paths.tts_voices),

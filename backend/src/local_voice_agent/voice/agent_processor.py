@@ -20,7 +20,8 @@ from local_voice_agent.agent.core import (
     AgentResponseKind,
     ConversationTurn,
 )
-from local_voice_agent.memory.store import MemoryStore
+from local_voice_agent.memory.extractor import MemoryCandidateExtractor
+from local_voice_agent.memory.store import MemoryStore, StoredMessage
 
 
 class PipecatAgentProcessor(FrameProcessor):
@@ -31,6 +32,7 @@ class PipecatAgentProcessor(FrameProcessor):
         agent: AgentCore,
         history_limit: int = 20,
         memory_store: MemoryStore | None = None,
+        candidate_extractor: MemoryCandidateExtractor | None = None,
     ) -> None:
         super().__init__()
         self._agent = agent
@@ -38,6 +40,8 @@ class PipecatAgentProcessor(FrameProcessor):
         self._history: list[ConversationTurn] = []
         self._active_utterance_id: str | None = None
         self._memory_store = memory_store
+        self._candidate_extractor = candidate_extractor
+        self._candidate_task: asyncio.Task[None] | None = None
         self._conversation_id = (
             memory_store.create_conversation() if memory_store is not None else None
         )
@@ -54,10 +58,12 @@ class PipecatAgentProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
         if isinstance(frame, InterruptionFrame):
+            self._cancel_candidate_extraction()
             self._active_utterance_id = None
             await self.push_frame(frame, direction)
             return
         if isinstance(frame, TranscriptionFrame):
+            self._cancel_candidate_extraction()
             await self._respond_to_transcription(frame)
             return
         await self.push_frame(frame, direction)
@@ -72,7 +78,7 @@ class PipecatAgentProcessor(FrameProcessor):
             language=language,
             history=await self._history_for_request(),
         )
-        await self._record_turn(ConversationTurn("user", frame.text, utterance_id))
+        stored_user = await self._record_turn(ConversationTurn("user", frame.text, utterance_id))
         assistant_parts: list[str] = []
         await self.push_frame(LLMFullResponseStartFrame())
         async for event in self._agent.respond(request):
@@ -91,6 +97,7 @@ class PipecatAgentProcessor(FrameProcessor):
         assistant_text = "".join(assistant_parts)
         if assistant_text:
             await self._record_turn(ConversationTurn("assistant", assistant_text, utterance_id))
+            self._start_candidate_extraction(stored_user, language)
         self._active_utterance_id = None
         await self.push_frame(LLMFullResponseEndFrame())
 
@@ -105,16 +112,52 @@ class PipecatAgentProcessor(FrameProcessor):
             for message in messages
         )
 
-    async def _record_turn(self, turn: ConversationTurn) -> None:
+    async def _record_turn(self, turn: ConversationTurn) -> StoredMessage | None:
         if self._memory_store is not None and self._conversation_id is not None:
-            await asyncio.to_thread(
+            stored = await asyncio.to_thread(
                 self._memory_store.append_message,
                 self._conversation_id,
                 turn.utterance_id,
                 turn.role,
                 turn.text,
             )
+        else:
+            stored = None
         self._history.append(turn)
         overflow = len(self._history) - self._history_limit
         if overflow > 0:
             del self._history[:overflow]
+        return stored
+
+    def _start_candidate_extraction(self, message: StoredMessage | None, language: str) -> None:
+        if message is None or self._candidate_extractor is None or self._memory_store is None:
+            return
+        self._candidate_task = asyncio.create_task(self._extract_candidates(message, language))
+
+    def _cancel_candidate_extraction(self) -> None:
+        if self._candidate_task is not None:
+            self._candidate_task.cancel()
+            self._candidate_task = None
+
+    async def _extract_candidates(self, message: StoredMessage, language: str) -> None:
+        if self._candidate_extractor is None or self._memory_store is None:
+            return
+        try:
+            candidates = await self._candidate_extractor.extract(message.content, language)
+            for content in candidates:
+                await asyncio.to_thread(self._memory_store.create_candidate, message.id, content)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
+
+    async def cleanup(self) -> None:
+        """Cancel an idle extraction before Pipecat releases this session's resources."""
+        task = self._candidate_task
+        self._cancel_candidate_extraction()
+        if task is not None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        await super().cleanup()  # type: ignore[no-untyped-call]
