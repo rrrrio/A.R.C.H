@@ -178,6 +178,31 @@ button:disabled {
   margin-top: 20px;
 }
 
+.knowledge-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-top: 20px;
+  border-top: 1px solid #d7dde2;
+  padding-top: 20px;
+}
+
+.knowledge-status h2 {
+  width: 100%;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.knowledge-status p {
+  flex: 1 1 260px;
+  margin: 0;
+  color: #4d5965;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .memory-empty {
   margin: 10px 0 0;
   color: #4d5965;

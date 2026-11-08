@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
+import { fetchKnowledgeStatus, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
 import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceEvent, VoiceClient } from './voice'
 import './App.css'
@@ -49,6 +50,7 @@ function App() {
   const [audioDeviceId, setAudioDeviceId] = useState('')
   const [pendingCandidates, setPendingCandidates] = useState<MemoryCandidate[]>([])
   const [approvedCandidates, setApprovedCandidates] = useState<MemoryCandidate[]>([])
+  const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({})
   const [candidateActionId, setCandidateActionId] = useState<string | null>(null)
   const voiceClient = useRef<VoiceClient | null>(null)
@@ -68,6 +70,14 @@ function App() {
     }
   }
 
+  async function refreshKnowledgeStatus() {
+    try {
+      setKnowledgeStatus(await fetchKnowledgeStatus())
+    } catch {
+      setKnowledgeStatus(null)
+    }
+  }
+
   async function refreshSession() {
     try {
       const status = await fetchAuthStatus()
@@ -77,6 +87,7 @@ function App() {
         const csrfToken = await fetchCsrfToken()
         setSession({ kind: 'authenticated', csrfToken })
         void refreshMemoryCandidates()
+        void refreshKnowledgeStatus()
       } else {
         setSession({ kind: 'anonymous' })
       }
@@ -105,6 +116,7 @@ function App() {
       const csrfToken = (await login(password)).csrf_token
       setSession({ kind: 'authenticated', csrfToken })
       void refreshMemoryCandidates()
+      void refreshKnowledgeStatus()
       setPassword('')
     } catch {
       setSession({ kind: 'anonymous' })
@@ -118,6 +130,7 @@ function App() {
     setSession({ kind: 'anonymous' })
     setPendingCandidates([])
     setApprovedCandidates([])
+    setKnowledgeStatus(null)
     setCandidateDrafts({})
   }
 
@@ -240,6 +253,19 @@ function App() {
               </div>
             ) : <p className="memory-empty">暂无已保存项目。</p>}
           </section>
+          <section className="knowledge-status" aria-labelledby="knowledge-status-title">
+            <h2 id="knowledge-status-title">本地知识库</h2>
+            {knowledgeStatus === null ? (
+              <p>暂时无法读取索引状态。</p>
+            ) : knowledgeStatus.source_count === 0 ? (
+              <p>尚未索引文件。</p>
+            ) : (
+              <p>已索引 {knowledgeStatus.source_count} 个文件{knowledgeStatus.indexed_at ? `，最近更新于 ${formatTimestamp(knowledgeStatus.indexed_at)}` : ''}。</p>
+            )}
+            <button type="button" className="secondary-button" onClick={() => void refreshKnowledgeStatus()}>
+              刷新状态
+            </button>
+          </section>
           <div className="audio-input-row">
             <label htmlFor="audio-input">麦克风</label>
             <select
@@ -301,6 +327,12 @@ function App() {
       )}
     </main>
   )
+}
+
+function formatTimestamp(value: string): string {
+  const timestamp = new Date(value)
+  if (Number.isNaN(timestamp.getTime())) return value
+  return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' }).format(timestamp)
 }
 
 export default App

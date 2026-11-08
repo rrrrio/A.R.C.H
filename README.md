@@ -1,6 +1,6 @@
 # Local Voice Agent Workspace
 
-本工作区用于实现一个单用户、全流程本地运行、可通过局域网浏览器访问的实时语音 Agent。Milestone 0 已建立工程骨架；Milestone 1 已完成本地 ASR、LLM 与 TTS 组件基准；Milestone 2 已实现认证、浏览器 WebRTC 协商和本地媒体流水线。真实浏览器通话的 LAN 验收、记忆、RAG、工具和数字人尚未完成。
+本工作区用于实现一个单用户、全流程本地运行、可通过局域网浏览器访问的实时语音 Agent。Milestone 0 已建立工程骨架；Milestone 1 已完成本地 ASR、LLM 与 TTS 组件基准；Milestone 2 已实现认证、浏览器 WebRTC 协商和本地媒体流水线。Milestone 4 已实现会话记忆、审批和本地 RAG；真实浏览器通话的 LAN 验收、工具和数字人仍未完成。
 
 权威文档：
 
