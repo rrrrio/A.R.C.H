@@ -40,6 +40,14 @@ services:
     profiles: ["search"]
     environment:
       SEARXNG_BASE_URL: http://127.0.0.1:8080/
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-${HTTP_PROXY:-}}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      all_proxy: ${ALL_PROXY:-${HTTP_PROXY:-}}
+      NO_PROXY: 127.0.0.1,localhost
+      no_proxy: 127.0.0.1,localhost
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

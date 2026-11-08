@@ -7,3 +7,6 @@ server:
 
 search:
   safe_search: 1
+  formats:
+    - html
+    - json
