@@ -1,0 +1,25 @@
+name: local-voice-agent
+
+services:
+  caddy:
+    image: caddy:2.11.8-alpine
+    profiles: ["gateway"]
+    ports:
+      - "${LVA_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  searxng:
+    image: searxng/searxng@sha256:c750ee1d859b26d3aeae51c07f6a48c3a0bfbaa9195d71a18b258862d88c4c3c
+    profiles: ["search"]
+    environment:
+      SEARXNG_BASE_URL: http://127.0.0.1:8080/
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    restart: unless-stopped

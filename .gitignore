@@ -1,0 +1,42 @@
+# Python
+backend/.venv/
+backend/.mypy_cache/
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/__pycache__/
+backend/**/*.py[cod]
+
+# Node and browser test output
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+
+# Local configuration and runtime state
+.env
+backend/.env
+deploy/certs/
+deploy/caddy-data/
+deploy/caddy-config/
+data/*
+!data/.gitkeep
+!data/knowledge/
+!data/knowledge/.gitkeep
+!data/knowledge/inbox/
+!data/knowledge/inbox/.gitkeep
+!data/models/
+!data/models/.gitkeep
+!data/voices/
+!data/voices/.gitkeep
+!data/db/
+!data/db/.gitkeep
+!data/logs/
+!data/logs/.gitkeep
+!data/cache/
+!data/cache/.gitkeep
+
+# Editor and operating system files
+.DS_Store
+.idea/
+.vscode/
