@@ -116,22 +116,60 @@ class MemoryStore:
             )
         return MemoryCandidate(candidate_id, source_message_id, content, "pending", now, now)
 
+    def list_candidates(self, status: MemoryStatus | None = None) -> tuple[MemoryCandidate, ...]:
+        """Return candidates without treating their existence as prompt eligibility."""
+        query = (
+            "SELECT id, source_message_id, content, status, created_at, updated_at "
+            "FROM memory_candidates"
+        )
+        parameters: tuple[MemoryStatus, ...] = ()
+        if status is not None:
+            query += " WHERE status = ?"
+            parameters = (status,)
+        query += " ORDER BY created_at DESC, id DESC"
+        with self._connect(readonly=True) as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return tuple(_memory_candidate(row) for row in rows)
+
+    def edit_candidate(self, candidate_id: str, content: str, actor: str) -> MemoryCandidate:
+        """Edit a pending candidate and retain its original wording in the audit trail."""
+        replacement = content.strip()
+        if not replacement:
+            raise ValueError("Memory candidate content cannot be empty.")
+        with self._connect() as connection:
+            candidate = self._candidate_for_update(connection, candidate_id)
+            if candidate.status != "pending":
+                raise ValueError("Only pending memory candidates can be edited.")
+            now = _now()
+            connection.execute(
+                "UPDATE memory_candidates SET content = ?, updated_at = ? WHERE id = ?",
+                (replacement, now, candidate_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO memory_edits(
+                    candidate_id, previous_content, replacement_content, actor, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (candidate_id, candidate.content, replacement, actor, now),
+            )
+        return MemoryCandidate(
+            candidate.id,
+            candidate.source_message_id,
+            replacement,
+            candidate.status,
+            candidate.created_at,
+            now,
+        )
+
     def decide_candidate(
         self, candidate_id: str, action: Literal["approved", "rejected", "deleted"], actor: str
     ) -> MemoryCandidate:
         """Apply one legal, audited state transition to a candidate."""
         with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT source_message_id, content, status, created_at, updated_at
-                FROM memory_candidates WHERE id = ?
-                """,
-                (candidate_id,),
-            ).fetchone()
-            if row is None:
-                raise KeyError(f"Unknown memory candidate: {candidate_id}")
-            source_message_id, content, status, created_at, _ = row
-            _validate_transition(status, action)
+            candidate = self._candidate_for_update(connection, candidate_id)
+            _validate_transition(candidate.status, action)
             now = _now()
             connection.execute(
                 "UPDATE memory_candidates SET status = ?, updated_at = ? WHERE id = ?",
@@ -144,7 +182,27 @@ class MemoryStore:
                 """,
                 (candidate_id, action, actor, now),
             )
-        return MemoryCandidate(candidate_id, source_message_id, content, action, created_at, now)
+        return MemoryCandidate(
+            candidate_id,
+            candidate.source_message_id,
+            candidate.content,
+            action,
+            candidate.created_at,
+            now,
+        )
+
+    @staticmethod
+    def _candidate_for_update(connection: sqlite3.Connection, candidate_id: str) -> MemoryCandidate:
+        row = connection.execute(
+            """
+            SELECT id, source_message_id, content, status, created_at, updated_at
+            FROM memory_candidates WHERE id = ?
+            """,
+            (candidate_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown memory candidate: {candidate_id}")
+        return _memory_candidate(row)
 
     def _connect(self, readonly: bool = False) -> sqlite3.Connection:
         if readonly:
@@ -173,6 +231,22 @@ def _stored_message(row: tuple[object, ...] | None) -> StoredMessage:
     ):
         raise RuntimeError("SQLite returned an invalid message row.")
     return StoredMessage(message_id, conversation_id, utterance_id, role, content, created_at)
+
+
+def _memory_candidate(row: tuple[object, ...] | None) -> MemoryCandidate:
+    if row is None:
+        raise RuntimeError("SQLite memory candidate row was not found.")
+    candidate_id, source_message_id, content, status, created_at, updated_at = row
+    if not (
+        isinstance(candidate_id, str)
+        and isinstance(source_message_id, int)
+        and isinstance(content, str)
+        and status in ("pending", "approved", "rejected", "deleted")
+        and isinstance(created_at, str)
+        and isinstance(updated_at, str)
+    ):
+        raise RuntimeError("SQLite returned an invalid memory candidate row.")
+    return MemoryCandidate(candidate_id, source_message_id, content, status, created_at, updated_at)
 
 
 def _validate_transition(current: object, target: MemoryStatus) -> None:

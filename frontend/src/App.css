@@ -162,6 +162,59 @@ button:disabled {
   font-size: 14px;
 }
 
+.memory-review {
+  margin-top: 24px;
+  border-top: 1px solid #d7dde2;
+  padding-top: 20px;
+}
+
+.memory-review h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.memory-empty {
+  margin: 10px 0 0;
+  color: #4d5965;
+  font-size: 14px;
+}
+
+.memory-candidate-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.memory-candidate {
+  display: grid;
+  gap: 8px;
+  border-left: 3px solid #8ac6b4;
+  padding-left: 10px;
+}
+
+.memory-source {
+  margin: 0;
+  color: #4d5965;
+  font-size: 13px;
+}
+
+.memory-candidate textarea {
+  min-height: 68px;
+  resize: vertical;
+  border: 1px solid #aeb8c1;
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: inherit;
+  font: inherit;
+}
+
+.candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 @media (max-width: 640px) {
   .topbar {
     padding: 0 16px;

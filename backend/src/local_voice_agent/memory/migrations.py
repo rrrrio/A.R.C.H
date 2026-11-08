@@ -54,6 +54,20 @@ MIGRATIONS: tuple[Migration, ...] = (
         );
         """,
     ),
+    Migration(
+        2,
+        "create memory edit audit table",
+        """
+        CREATE TABLE memory_edits (
+            id INTEGER PRIMARY KEY,
+            candidate_id TEXT NOT NULL REFERENCES memory_candidates(id),
+            previous_content TEXT NOT NULL,
+            replacement_content TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
+import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
 import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceEvent, VoiceClient } from './voice'
 import './App.css'
 
@@ -46,7 +47,20 @@ function App() {
   const [conversation, setConversation] = useState<ConversationState>(initialConversation)
   const [audioInputs, setAudioInputs] = useState<AudioInput[]>([])
   const [audioDeviceId, setAudioDeviceId] = useState('')
+  const [memoryCandidates, setMemoryCandidates] = useState<MemoryCandidate[]>([])
+  const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({})
+  const [candidateActionId, setCandidateActionId] = useState<string | null>(null)
   const voiceClient = useRef<VoiceClient | null>(null)
+
+  async function refreshMemoryCandidates() {
+    try {
+      const candidates = await fetchMemoryCandidates()
+      setMemoryCandidates(candidates)
+      setCandidateDrafts(Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.content])))
+    } catch {
+      setMemoryCandidates([])
+    }
+  }
 
   async function refreshSession() {
     try {
@@ -54,7 +68,9 @@ function App() {
       if (!status.configured) {
         setSession({ kind: 'unconfigured' })
       } else if (status.authenticated) {
-        setSession({ kind: 'authenticated', csrfToken: await fetchCsrfToken() })
+        const csrfToken = await fetchCsrfToken()
+        setSession({ kind: 'authenticated', csrfToken })
+        void refreshMemoryCandidates()
       } else {
         setSession({ kind: 'anonymous' })
       }
@@ -80,7 +96,9 @@ function App() {
     event.preventDefault()
     setSession({ kind: 'signing-in' })
     try {
-      setSession({ kind: 'authenticated', csrfToken: (await login(password)).csrf_token })
+      const csrfToken = (await login(password)).csrf_token
+      setSession({ kind: 'authenticated', csrfToken })
+      void refreshMemoryCandidates()
       setPassword('')
     } catch {
       setSession({ kind: 'anonymous' })
@@ -92,6 +110,8 @@ function App() {
     await disconnectVoice()
     await logout(session.csrfToken)
     setSession({ kind: 'anonymous' })
+    setMemoryCandidates([])
+    setCandidateDrafts({})
   }
 
   async function connectVoice() {
@@ -135,6 +155,17 @@ function App() {
     })
   }
 
+  async function updateCandidate(candidateId: string, update: { content?: string; action?: 'approved' | 'rejected' }) {
+    if (session.kind !== 'authenticated') return
+    setCandidateActionId(candidateId)
+    try {
+      await updateMemoryCandidate(session.csrfToken, candidateId, update)
+      await refreshMemoryCandidates()
+    } finally {
+      setCandidateActionId(null)
+    }
+  }
+
   return (
     <main className="workspace-shell">
       <header className="topbar">
@@ -155,6 +186,34 @@ function App() {
               {conversation.latency ? <p className="latency"><span>{latencyLabels[conversation.latency.stage]}</span>{conversation.latency.elapsedMs} ms</p> : null}
             </div>
           ) : null}
+          <section className="memory-review" aria-labelledby="memory-title">
+            <h2 id="memory-title">待确认记忆</h2>
+            {memoryCandidates.length ? (
+              <div className="memory-candidate-list">
+                {memoryCandidates.map((candidate) => {
+                  const busy = candidateActionId === candidate.id
+                  const draft = candidateDrafts[candidate.id] ?? candidate.content
+                  const changed = draft.trim() !== candidate.content
+                  return (
+                    <div key={candidate.id} className="memory-candidate">
+                      <p className="memory-source">来源消息 #{candidate.source_message_id}</p>
+                      <textarea
+                        aria-label="候选记忆"
+                        value={draft}
+                        onChange={(event) => setCandidateDrafts((current) => ({ ...current, [candidate.id]: event.target.value }))}
+                        disabled={busy}
+                      />
+                      <div className="candidate-actions">
+                        <button type="button" className="secondary-button" disabled={busy || !changed} onClick={() => void updateCandidate(candidate.id, { content: draft })}>保存</button>
+                        <button type="button" disabled={busy} onClick={() => void updateCandidate(candidate.id, { content: changed ? draft : undefined, action: 'approved' })}>批准</button>
+                        <button type="button" className="secondary-button" disabled={busy} onClick={() => void updateCandidate(candidate.id, { action: 'rejected' })}>拒绝</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : <p className="memory-empty">暂无待确认项目。</p>}
+          </section>
           <div className="audio-input-row">
             <label htmlFor="audio-input">麦克风</label>
             <select

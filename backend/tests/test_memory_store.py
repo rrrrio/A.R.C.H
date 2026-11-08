@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from local_voice_agent.memory.migrations import Migration, MigrationRunner
+from local_voice_agent.memory.migrations import MIGRATIONS, Migration, MigrationRunner
 from local_voice_agent.memory.store import MemoryStore
 
 
@@ -39,10 +39,21 @@ def test_first_migration_backs_up_an_existing_unversioned_database(tmp_path: Pat
         assert backup.execute("SELECT value FROM legacy_records").fetchone() == ("preserve me",)
 
 
+def test_migration_upgrade_adds_edit_audit_table(tmp_path: Path) -> None:
+    """A v1 database upgrades to the candidate-edit audit schema without rebuilding data."""
+    database_path = tmp_path / "voice.sqlite3"
+    assert MigrationRunner(database_path, (MIGRATIONS[0],)).migrate() == (1,)
+    assert MigrationRunner(database_path).migrate() == (2,)
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_edits'"
+        ).fetchone() == ("memory_edits",)
+
+
 def test_store_keeps_candidates_out_of_context_until_an_audited_approval(tmp_path: Path) -> None:
     """Only legal state transitions can make a memory candidate approved or deleted."""
     store = MemoryStore(tmp_path / "voice.sqlite3")
-    assert store.migrate() == (1,)
+    assert store.migrate() == (1, 2)
     conversation_id = store.create_conversation()
     user = store.append_message(conversation_id, "turn-1", "user", "我喜欢简洁回答")
     store.append_message(conversation_id, "turn-1", "assistant", "明白。")
@@ -53,6 +64,9 @@ def test_store_keeps_candidates_out_of_context_until_an_audited_approval(tmp_pat
     ]
     candidate = store.create_candidate(user.id, "用户偏好简洁回答")
     assert candidate.status == "pending"
+    edited = store.edit_candidate(candidate.id, "用户偏好短回答", "administrator")
+    assert edited.content == "用户偏好短回答"
+    assert [entry.content for entry in store.list_candidates("pending")] == ["用户偏好短回答"]
     approved = store.decide_candidate(candidate.id, "approved", "administrator")
     assert approved.status == "approved"
     deleted = store.decide_candidate(candidate.id, "deleted", "administrator")

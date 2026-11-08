@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI
 
 from local_voice_agent.api.auth import router as auth_router
+from local_voice_agent.api.memory import router as memory_router
 from local_voice_agent.api.voice import router as voice_router
 from local_voice_agent.auth.service import AuthService
 from local_voice_agent.memory.store import MemoryStore
@@ -21,6 +22,7 @@ from local_voice_agent.voice.webrtc import WebRTCSignalingService
 def create_app(
     auth_service: AuthService | None = None,
     signaling_service: WebRTCSignalingService | None = None,
+    memory_store: MemoryStore | None = None,
 ) -> FastAPI:
     """Create the HTTP application, allowing isolated authentication tests."""
 
@@ -29,13 +31,15 @@ def create_app(
         """Validate configuration and prepare only application-owned directories."""
         settings = get_settings()
         settings.ensure_runtime_directories()
-        MemoryStore(settings.database_path).migrate()
+        if not hasattr(app.state, "memory_store"):
+            app.state.memory_store = MemoryStore(settings.database_path)
+        app.state.memory_store.migrate()
         if not hasattr(app.state, "auth_service"):
             app.state.auth_service = AuthService(settings.credential_path, settings.public_origin)
         if not hasattr(app.state, "signaling_service"):
             voice_session = LocalVoiceSession(
                 VoiceModelPaths.from_data_dir(settings.data_dir),
-                MemoryStore(settings.database_path),
+                app.state.memory_store,
             )
             app.state.signaling_service = WebRTCSignalingService(
                 on_connection=voice_session.start,
@@ -49,7 +53,10 @@ def create_app(
         application.state.auth_service = auth_service
     if signaling_service is not None:
         application.state.signaling_service = signaling_service
+    if memory_store is not None:
+        application.state.memory_store = memory_store
     application.include_router(auth_router)
+    application.include_router(memory_router)
     application.include_router(voice_router)
     return application
 

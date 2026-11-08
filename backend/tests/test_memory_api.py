@@ -1,0 +1,66 @@
+"""Tests for authenticated browser review of candidate memories."""
+
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from local_voice_agent.auth.credentials import provision_credentials
+from local_voice_agent.auth.service import AuthService
+from local_voice_agent.main import create_app
+from local_voice_agent.memory.store import MemoryStore
+
+PUBLIC_ORIGIN = "https://voice.test:8443"
+
+
+def test_memory_candidates_require_login_and_csrf_for_edits(tmp_path: Path) -> None:
+    """Only the local authenticated administrator can edit or approve a pending candidate."""
+    credential_path = tmp_path / "admin.json"
+    provision_credentials(credential_path, "correct-horse-battery-staple")
+    store = MemoryStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    conversation_id = store.create_conversation()
+    message = store.append_message(conversation_id, "turn-1", "user", "我喜欢简洁回答")
+    candidate = store.create_candidate(message.id, "用户偏好简洁回答")
+    app = create_app(AuthService(credential_path, PUBLIC_ORIGIN), memory_store=store)
+
+    with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
+        anonymous = client.get("/api/memory/candidates")
+        login = client.post(
+            "/api/auth/login",
+            headers={"Origin": PUBLIC_ORIGIN},
+            json={"password": "correct-horse-battery-staple"},
+        )
+        csrf_token = login.json()["csrf_token"]
+        listed = client.get("/api/memory/candidates")
+        missing_csrf = client.patch(
+            f"/api/memory/candidates/{candidate.id}",
+            headers={"Origin": PUBLIC_ORIGIN},
+            json={"content": "用户偏好短回答"},
+        )
+        edited = client.patch(
+            f"/api/memory/candidates/{candidate.id}",
+            headers={"Origin": PUBLIC_ORIGIN, "X-CSRF-Token": csrf_token},
+            json={"content": "用户偏好短回答"},
+        )
+        approved = client.patch(
+            f"/api/memory/candidates/{candidate.id}",
+            headers={"Origin": PUBLIC_ORIGIN, "X-CSRF-Token": csrf_token},
+            json={"action": "approved"},
+        )
+        pending_after_approval = client.get("/api/memory/candidates")
+
+    assert anonymous.status_code == 401
+    assert listed.json() == [
+        {
+            "id": candidate.id,
+            "source_message_id": message.id,
+            "content": "用户偏好简洁回答",
+            "status": "pending",
+            "created_at": candidate.created_at,
+            "updated_at": candidate.updated_at,
+        }
+    ]
+    assert missing_csrf.status_code == 403
+    assert edited.json()["content"] == "用户偏好短回答"
+    assert approved.json()["status"] == "approved"
+    assert pending_after_approval.json() == []
