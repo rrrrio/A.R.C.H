@@ -52,3 +52,8 @@ data/runtime/*
 .DS_Store
 .idea/
 .vscode/
+
+# Local agent context and implementation plans; never commit these files.
+AGENTS.md
+.agents/
+execplan/
