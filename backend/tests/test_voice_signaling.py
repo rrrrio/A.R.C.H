@@ -46,6 +46,49 @@ class FakeSmallWebRTCHandler:
         self.close_count += 1
 
 
+class FakeConnection:
+    """Exercise the asynchronous media-start boundary without aiortc."""
+
+    pc_id = "pc-1"
+
+    def __init__(self) -> None:
+        self.connect_count = 0
+        self.handlers: dict[str, Callable[[FakeConnection], Awaitable[None]]] = {}
+
+    def event_handler(
+        self, name: str
+    ) -> Callable[
+        [Callable[[FakeConnection], Awaitable[None]]], Callable[[FakeConnection], Awaitable[None]]
+    ]:
+        def register(
+            handler: Callable[[FakeConnection], Awaitable[None]],
+        ) -> Callable[[FakeConnection], Awaitable[None]]:
+            self.handlers[name] = handler
+            return handler
+
+        return register
+
+    async def connect(self) -> None:
+        self.connect_count += 1
+
+
+class CallbackFakeSmallWebRTCHandler(FakeSmallWebRTCHandler):
+    """Expose the request-handler callback used by production SmallWebRTC."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.connection = FakeConnection()
+
+    async def handle_web_request(
+        self,
+        request: SmallWebRTCRequest,
+        callback: Callable[[Any], Awaitable[None]],
+    ) -> dict[str, str]:
+        self.offers.append(request)
+        await callback(self.connection)
+        return {"sdp": "answer-sdp", "type": "answer", "pc_id": "pc-1"}
+
+
 def make_authenticated_client(tmp_path: Any) -> tuple[TestClient, FakeSmallWebRTCHandler]:
     """Create a configured test browser and its inspectable signaling fake."""
     credential_path = tmp_path / "admin.json"
@@ -146,3 +189,31 @@ def test_release_notifies_the_media_owner_once_after_closing_the_peer() -> None:
     asyncio.run(exercise())
 
     assert stopped == 1
+
+
+def test_offer_returns_before_media_startup_and_release_cancels_it() -> None:
+    """Slow local model startup cannot hold the SDP response until ICE has timed out."""
+    handler = CallbackFakeSmallWebRTCHandler()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def start_media(_: Any) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    service = WebRTCSignalingService(handler, on_connection=start_media)
+
+    async def exercise() -> None:
+        answer = await service.offer("owner", SmallWebRTCRequest(sdp="offer", type="offer"))
+        assert answer["pc_id"] == "pc-1"
+        assert handler.connection.connect_count == 1
+        assert not started.is_set()
+        await asyncio.sleep(0)
+        assert started.is_set()
+        await service.release("owner")
+        assert cancelled.is_set()
+
+    asyncio.run(exercise())

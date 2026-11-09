@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
@@ -14,6 +16,8 @@ from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCRequest,
     SmallWebRTCRequestHandler,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SmallWebRTCHandler(Protocol):
@@ -45,15 +49,22 @@ class WebRTCSignalingService:
         self._disconnection_notified = False
         self._owner_session_id: str | None = None
         self._owner_pc_id: str | None = None
+        self._startup_task: asyncio.Task[None] | None = None
 
     async def offer(
         self,
         session_id: str,
         request: SmallWebRTCRequest,
     ) -> dict[str, str]:
-        """Create or renegotiate the one connection after checking its session ownership."""
+        """Return an SDP answer before the local models finish starting."""
         self._assert_session_owns_connection(session_id, request.pc_id)
-        answer = await self._handler.handle_web_request(request, self._on_connection)
+        connection: SmallWebRTCConnection | None = None
+
+        async def capture_connection(candidate: SmallWebRTCConnection) -> None:
+            nonlocal connection
+            connection = candidate
+
+        answer = await self._handler.handle_web_request(request, capture_connection)
         if answer is None:
             raise RuntimeError("SmallWebRTC did not return an SDP answer.")
         pc_id = answer.get("pc_id")
@@ -61,6 +72,8 @@ class WebRTCSignalingService:
             raise RuntimeError("SmallWebRTC returned an invalid peer connection identifier.")
         self._owner_session_id = session_id
         self._owner_pc_id = pc_id
+        if connection is not None:
+            await self._activate_connection(connection)
         return answer
 
     async def add_candidates(
@@ -78,12 +91,14 @@ class WebRTCSignalingService:
     async def release(self, session_id: str) -> None:
         """Close and release the single connection only for its owning session."""
         self._assert_session_owns_connection(session_id, self._owner_pc_id)
+        await self._cancel_startup()
         await self._handler.close()
         self._clear_owner()
         await self._notify_disconnection()
 
     async def close(self) -> None:
         """Release all local peer resources during application shutdown."""
+        await self._cancel_startup()
         await self._handler.close()
         self._clear_owner()
         await self._notify_disconnection()
@@ -107,19 +122,49 @@ class WebRTCSignalingService:
                 detail="Unknown voice session.",
             )
 
-    async def _on_connection(self, connection: SmallWebRTCConnection) -> None:
-        """Start connection state handling and release ownership on an ungraceful close."""
+    async def _activate_connection(self, connection: SmallWebRTCConnection) -> None:
+        """Begin WebRTC immediately and load local media models in the background."""
 
         @connection.event_handler("closed")  # type: ignore[untyped-decorator]
         async def release_closed_connection(closed: SmallWebRTCConnection) -> None:
             if closed.pc_id == self._owner_pc_id:
+                await self._cancel_startup()
                 self._clear_owner()
                 await self._notify_disconnection()
 
-        if self._on_connection_callback is not None:
-            await self._on_connection_callback(connection)
         self._disconnection_notified = False
         await connection.connect()  # type: ignore[no-untyped-call]
+        if self._on_connection_callback is not None:
+            self._startup_task = asyncio.create_task(self._start_media(connection))
+
+    async def _start_media(self, connection: SmallWebRTCConnection) -> None:
+        """Own the background startup task so a disconnect can cancel it safely."""
+        try:
+            assert self._on_connection_callback is not None
+            await self._on_connection_callback(connection)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Local media startup failed after WebRTC connected.")
+            if connection.pc_id == self._owner_pc_id:
+                await self._handler.close()
+                self._clear_owner()
+                await self._notify_disconnection()
+        finally:
+            if self._startup_task is asyncio.current_task():
+                self._startup_task = None
+
+    async def _cancel_startup(self) -> None:
+        """Wait for a cancelled model startup before releasing its peer connection."""
+        task = self._startup_task
+        self._startup_task = None
+        if task is None or task.done() or task is asyncio.current_task():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     def _clear_owner(self) -> None:
         self._owner_session_id = None
