@@ -115,7 +115,9 @@ class LlamaCppAgentCore:
         tool_call: _StreamToolCall | None,
     ) -> AsyncIterator[AgentResponseEvent]:
         """Stream one loopback completion while optionally accepting one function call."""
-        async with httpx.AsyncClient(timeout=180.0, transport=self._transport) as client:
+        async with httpx.AsyncClient(
+            timeout=180.0, transport=self._transport, trust_env=False
+        ) as client:
             async with client.stream(
                 "POST", f"{self._endpoint}/chat/completions", json=payload
             ) as response:

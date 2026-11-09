@@ -44,7 +44,10 @@ class SearxngSearchClient:
         """Return up to five sanitized web references or raise a generic client error."""
         normalized = _query(query)
         async with httpx.AsyncClient(
-            timeout=self._timeout_seconds, transport=self._transport, follow_redirects=False
+            timeout=self._timeout_seconds,
+            transport=self._transport,
+            follow_redirects=False,
+            trust_env=False,
         ) as client:
             async with client.stream(
                 "GET",

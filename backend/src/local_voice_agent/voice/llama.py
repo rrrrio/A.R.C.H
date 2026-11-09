@@ -78,7 +78,7 @@ class LlamaCppServer:
 
     async def _wait_ready(self, timeout_seconds: float) -> None:
         deadline = time.monotonic() + timeout_seconds
-        async with httpx.AsyncClient(timeout=1.0) as client:
+        async with httpx.AsyncClient(timeout=1.0, trust_env=False) as client:
             while time.monotonic() < deadline:
                 if self._process is None:
                     raise RuntimeError("llama.cpp process was not created.")

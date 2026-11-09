@@ -45,7 +45,9 @@ class LlamaCppMemoryCandidateExtractor:
             "max_tokens": 192,
         }
         try:
-            async with httpx.AsyncClient(timeout=15.0, transport=self._transport) as client:
+            async with httpx.AsyncClient(
+                timeout=15.0, transport=self._transport, trust_env=False
+            ) as client:
                 response = await client.post(f"{self._endpoint}/chat/completions", json=payload)
                 response.raise_for_status()
                 return _candidates_from_response(response.json())
