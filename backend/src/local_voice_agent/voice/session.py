@@ -72,6 +72,7 @@ class LocalVoiceSession:
             await asyncio.wait_for(ready.wait(), timeout=20)
             self._runner = runner
             self._runner_task = runner_task
+            connection.send_app_message({"type": "voice_ready"})
         except BaseException:
             self._agent_processor = None
             if runner is not None:

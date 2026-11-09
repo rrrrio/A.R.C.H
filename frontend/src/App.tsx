@@ -45,7 +45,7 @@ const latencyLabels: Record<LatencyStage, string> = {
 function App() {
   const [session, setSession] = useState<SessionState>({ kind: 'loading' })
   const [password, setPassword] = useState('')
-  const [voiceState, setVoiceState] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle')
+  const [voiceState, setVoiceState] = useState<'idle' | 'connecting' | 'preparing' | 'ready' | 'error'>('idle')
   const [conversation, setConversation] = useState<ConversationState>(initialConversation)
   const [audioInputs, setAudioInputs] = useState<AudioInput[]>([])
   const [audioDeviceId, setAudioDeviceId] = useState('')
@@ -153,10 +153,12 @@ function App() {
     setVoiceState('connecting')
     setConversation(initialConversation)
     try {
-      const client = new VoiceClient(session.csrfToken, handleVoiceEvent, audioDeviceId || undefined)
+      const client = new VoiceClient(session.csrfToken, (event) => {
+        if (voiceClient.current === client) handleVoiceEvent(event)
+      }, audioDeviceId || undefined)
       voiceClient.current = client
       await client.connect()
-      setVoiceState('connected')
+      setVoiceState((current) => current === 'ready' ? current : 'preparing')
       void refreshAudioInputs()
     } catch {
       await voiceClient.current?.close().catch(() => undefined)
@@ -173,6 +175,10 @@ function App() {
   }
 
   function handleVoiceEvent(event: VoiceEvent) {
+    if (event.type === 'voice_ready') {
+      setVoiceState((current) => current === 'idle' || current === 'error' ? current : 'ready')
+      return
+    }
     setConversation((current) => {
       if (event.type === 'latency') {
         return { ...current, latency: { stage: event.stage, elapsedMs: event.elapsed_ms } }
@@ -222,9 +228,9 @@ function App() {
       {session.kind === 'authenticated' ? (
         <section className="setup-panel" aria-labelledby="voice-title">
           <p className="eyebrow">语音会话</p>
-          <h1 id="voice-title">{voiceState === 'connected' ? activityLabels[conversation.activity] : '等待连接'}</h1>
+          <h1 id="voice-title">{voiceHeading(voiceState, conversation.activity)}</h1>
           {voiceState === 'error' ? <p>无法建立语音连接。</p> : null}
-          {voiceState === 'connected' ? (
+          {voiceState === 'preparing' || voiceState === 'ready' ? (
             <div className="transcript" aria-live="polite">
               <p><span>你</span>{conversation.userText || '...'}</p>
               <p><span>助手</span>{conversation.assistantText || '...'}</p>
@@ -318,7 +324,7 @@ function App() {
               id="audio-input"
               value={audioDeviceId}
               onChange={(event) => setAudioDeviceId(event.target.value)}
-              disabled={voiceState === 'connecting' || voiceState === 'connected'}
+              disabled={voiceState === 'connecting' || voiceState === 'preparing' || voiceState === 'ready'}
             >
               <option value="">系统默认</option>
               {audioInputs.map((input) => <option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}
@@ -327,13 +333,13 @@ function App() {
               type="button"
               className="secondary-button"
               onClick={() => void refreshAudioInputs()}
-              disabled={voiceState === 'connecting' || voiceState === 'connected'}
+              disabled={voiceState === 'connecting' || voiceState === 'preparing' || voiceState === 'ready'}
             >
               刷新
             </button>
           </div>
           <div className="action-row">
-            {voiceState === 'connected' ? (
+            {voiceState === 'preparing' || voiceState === 'ready' ? (
               <button type="button" className="secondary-button" onClick={() => void disconnectVoice()}>
                 断开
               </button>
@@ -379,6 +385,16 @@ function formatTimestamp(value: string): string {
   const timestamp = new Date(value)
   if (Number.isNaN(timestamp.getTime())) return value
   return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' }).format(timestamp)
+}
+
+function voiceHeading(
+  voiceState: 'idle' | 'connecting' | 'preparing' | 'ready' | 'error',
+  activity: VoiceActivity,
+): string {
+  if (voiceState === 'connecting') return '正在连接'
+  if (voiceState === 'preparing') return '正在准备本地语音'
+  if (voiceState === 'ready') return activity === 'listening' ? '可以说话' : activityLabels[activity]
+  return '等待连接'
 }
 
 export default App
