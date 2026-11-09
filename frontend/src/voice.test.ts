@@ -84,6 +84,8 @@ describe('VoiceClient', () => {
       class {
         ontrack: ((event: RTCTrackEvent) => void) | null = null
         onicecandidate: ((event: RTCPeerConnectionIceEvent) => void) | null = null
+        iceGatheringState = 'complete' as RTCIceGatheringState
+        localDescription = { type: 'offer' as const, sdp: 'v=0' }
 
         addTrack() {}
 
@@ -142,6 +144,8 @@ describe('VoiceClient', () => {
       class {
         ontrack: ((event: RTCTrackEvent) => void) | null = null
         onicecandidate: ((event: RTCPeerConnectionIceEvent) => void) | null = null
+        iceGatheringState = 'complete' as RTCIceGatheringState
+        localDescription = { type: 'offer' as const, sdp: 'v=0' }
 
         addTrack() {}
 

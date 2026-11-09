@@ -20,12 +20,29 @@ class CdpClient {
       if (message.error) pending.reject(new Error(message.error.message))
       else pending.resolve(message.result)
     })
+    socket.addEventListener('close', () => {
+      for (const pending of this.pending.values()) pending.reject(new Error('browser-e2e: CDP WebSocket closed'))
+      this.pending.clear()
+    })
   }
 
   command(method, params = {}) {
     const id = this.nextId++
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      const timeout = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new Error(`browser-e2e: CDP command timed out: ${method}`))
+      }, 10_000)
+      this.pending.set(id, {
+        resolve: (result) => {
+          clearTimeout(timeout)
+          resolve(result)
+        },
+        reject: (error) => {
+          clearTimeout(timeout)
+          reject(error)
+        },
+      })
       this.socket.send(JSON.stringify({ id, method, params }))
     })
   }
@@ -47,11 +64,19 @@ class CdpClient {
 
 async function waitFor(description, predicate, timeoutMs) {
   const deadline = Date.now() + timeoutMs
+  let lastError
   while (Date.now() < deadline) {
-    if (await predicate()) return
+    try {
+      if (await predicate()) return
+    } catch (error) {
+      // Chrome destroys and recreates the execution context while the initial page loads.
+      // The next poll observes the replacement context.
+      lastError = error
+    }
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
-  throw new Error(`browser-e2e: timed out waiting for ${description}`)
+  const suffix = lastError instanceof Error ? `: ${lastError.message}` : ''
+  throw new Error(`browser-e2e: timed out waiting for ${description}${suffix}`)
 }
 
 async function fetchJson(url, options) {
@@ -63,8 +88,15 @@ async function fetchJson(url, options) {
 async function openSocket(url) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url)
-    socket.addEventListener('open', () => resolve(socket), { once: true })
-    socket.addEventListener('error', () => reject(new Error('browser-e2e: CDP WebSocket failed')), { once: true })
+    const timeout = setTimeout(() => reject(new Error('browser-e2e: CDP WebSocket timed out')), 10_000)
+    socket.addEventListener('open', () => {
+      clearTimeout(timeout)
+      resolve(socket)
+    }, { once: true })
+    socket.addEventListener('error', () => {
+      clearTimeout(timeout)
+      reject(new Error('browser-e2e: CDP WebSocket failed'))
+    }, { once: true })
   })
 }
 
@@ -95,6 +127,7 @@ const chromeArguments = [
   '--autoplay-policy=no-user-gesture-required',
   '--use-fake-ui-for-media-stream',
   '--use-fake-device-for-media-stream',
+  '--disable-features=WebRtcHideLocalIpsWithMdns',
   `--use-file-for-fake-audio-capture=${configuration.audio}`,
   `--host-resolver-rules=MAP local-voice-agent-e2e.local 127.0.0.1`,
   `--user-data-dir=${configuration.profileDir}`,
@@ -154,6 +187,11 @@ try {
     return assistant && audio
   })()`)), configuration.timeoutSeconds * 1000)
   console.log('browser-e2e: assistant transcript and audio latency observed')
+
+  if (configuration.assertBargeIn) {
+    await waitFor('browser interruption', async () => (await client.evaluate("document.body.innerText.includes('播放停止')")), configuration.timeoutSeconds * 1000)
+    console.log('browser-e2e: browser interruption observed')
+  }
 
   await client.evaluate(`(() => {
     const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === '断开')

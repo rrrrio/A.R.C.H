@@ -2,6 +2,7 @@
 
 import importlib.util
 import sys
+import wave
 from pathlib import Path
 from types import ModuleType
 
@@ -61,3 +62,18 @@ def test_create_run_layout_removes_partial_directory_when_provisioning_fails(
         module.create_run_layout(tmp_path)
 
     assert list((tmp_path / "e2e").iterdir()) == []
+
+
+def test_create_barge_in_fixture_repeats_the_fixed_pcm_segment(tmp_path: Path) -> None:
+    module = _load_script()
+    source = tmp_path / "source.wav"
+    destination = tmp_path / "barge-in.wav"
+    with wave.open(str(source), "wb") as output_file:
+        output_file.setparams((1, 2, 16_000, 96_000, "NONE", "not compressed"))
+        output_file.writeframes(b"\\x01\\x02" * 96_000)
+
+    module.create_barge_in_fixture(source, destination)
+
+    with wave.open(str(destination), "rb") as output_file:
+        assert output_file.getparams()[:3] == (1, 2, 16_000)
+        assert output_file.getnframes() == 112_000

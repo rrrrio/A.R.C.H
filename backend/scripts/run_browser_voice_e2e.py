@@ -13,6 +13,7 @@ import ssl
 import subprocess
 import sys
 import time
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=int, default=240)
     parser.add_argument("--chrome", type=Path, default=Path("/usr/bin/google-chrome"))
     parser.add_argument("--audio", type=Path, default=SAMPLE_WAV)
+    parser.add_argument("--assert-barge-in", action="store_true")
     return parser.parse_args()
 
 
@@ -156,6 +158,26 @@ def require_file(path: Path, description: str) -> None:
         raise FileNotFoundError(f"browser-e2e: {description} is missing: {path}")
 
 
+def create_barge_in_fixture(source: Path, destination: Path) -> Path:
+    """Create two spoken segments separated by one second for interruption acceptance."""
+    with wave.open(str(source), "rb") as input_file:
+        if input_file.getcomptype() != "NONE":
+            raise ValueError("browser-e2e: barge-in source WAV must be uncompressed PCM")
+        parameters = input_file.getparams()
+        frames = input_file.readframes(input_file.getnframes())
+    frame_size = parameters.sampwidth * parameters.nchannels
+    start = int(parameters.framerate * 2.0) * frame_size
+    end = int(parameters.framerate * 5.0) * frame_size
+    spoken = frames[start:end]
+    if not spoken:
+        raise ValueError("browser-e2e: source WAV has no usable barge-in speech segment")
+    silence = bytes(parameters.framerate * frame_size)
+    with wave.open(str(destination), "wb") as output_file:
+        output_file.setparams(parameters)
+        output_file.writeframes(spoken + silence + spoken)
+    return destination
+
+
 def main() -> None:
     """Own all isolated services and report stable browser acceptance milestones."""
     args = parse_args()
@@ -167,6 +189,9 @@ def main() -> None:
     require_file(FRONTEND_DIST / "index.html", "frontend build output")
 
     layout = create_run_layout()
+    audio = args.audio
+    if args.assert_barge_in:
+        audio = create_barge_in_fixture(args.audio, layout.root / "barge-in.wav")
     backend_port = reserve_port()
     https_port = reserve_port()
     caddy_name = f"local-voice-agent-e2e-{layout.root.name}"
@@ -226,7 +251,8 @@ def main() -> None:
                 "url": f"https://{E2E_HOST}:{https_port}",
                 "password": layout.password,
                 "chrome": str(args.chrome),
-                "audio": str(args.audio.resolve()),
+                "audio": str(audio.resolve()),
+                "assertBargeIn": args.assert_barge_in,
                 "timeoutSeconds": args.timeout_seconds,
                 "profileDir": str(layout.root / "chrome-profile"),
                 "debugPort": reserve_port(),

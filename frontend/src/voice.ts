@@ -72,7 +72,12 @@ export class VoiceClient {
     for (const track of this.stream.getAudioTracks()) this.connection.addTrack(track, this.stream)
     const offer = await this.connection.createOffer()
     await this.connection.setLocalDescription(offer)
-    const answer = await this.requestOffer(offer)
+    await waitForIceGathering(this.connection)
+    const localDescription = this.connection.localDescription
+    if (!localDescription || localDescription.type !== 'offer' || !localDescription.sdp) {
+      throw new Error('Voice offer was not created.')
+    }
+    const answer = await this.requestOffer(localDescription)
     this.pcId = answer.pc_id
     await this.connection.setRemoteDescription(answer)
     if (this.pendingCandidates.length) await this.sendCandidates(this.pendingCandidates.splice(0))
@@ -121,6 +126,22 @@ export class VoiceClient {
     })
     if (!response.ok) throw new Error('Voice ICE negotiation failed.')
   }
+}
+
+function waitForIceGathering(connection: RTCPeerConnection): Promise<void> {
+  if (connection.iceGatheringState === 'complete') return Promise.resolve()
+  return new Promise((resolve) => {
+    const timeout = setTimeout(finish, 5_000)
+    function finish() {
+      clearTimeout(timeout)
+      connection.removeEventListener('icegatheringstatechange', onStateChange)
+      resolve()
+    }
+    function onStateChange() {
+      if (connection.iceGatheringState === 'complete') finish()
+    }
+    connection.addEventListener('icegatheringstatechange', onStateChange)
+  })
 }
 
 export async function listAudioInputs(): Promise<AudioInput[]> {
