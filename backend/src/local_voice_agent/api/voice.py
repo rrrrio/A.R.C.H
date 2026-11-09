@@ -60,11 +60,11 @@ async def stream(websocket: WebSocket) -> None:
     """Carry fallback PCM media through the authenticated HTTPS origin."""
     auth = cast(AuthService, websocket.app.state.auth_service)
     try:
-        auth.require_websocket_csrf(websocket)
+        _, session = auth.require_websocket_csrf(websocket)
     except Exception:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-    await websocket.accept()
+    await websocket.accept(subprotocol=f"lva-csrf.{session.csrf_token}")
     voice_session = websocket.app.state.voice_session
     try:
         await voice_session.start_websocket(websocket)

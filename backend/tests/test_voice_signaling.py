@@ -170,10 +170,13 @@ def test_voice_websocket_requires_authenticated_same_origin_csrf_session(tmp_pat
             "/api/auth/login", headers=headers, json={"password": "correct-horse-battery-staple"}
         )
         csrf_token = login.json()["csrf_token"]
-        stream_url = f"/api/voice/stream?csrf={csrf_token}"
         session_cookie = client.cookies.get("lva_session")
         websocket_headers = {**headers, "Cookie": f"lva_session={session_cookie}"}
-        with client.websocket_connect(stream_url, headers=websocket_headers) as socket:
+        with client.websocket_connect(
+            "/api/voice/stream",
+            headers=websocket_headers,
+            subprotocols=[f"lva-csrf.{csrf_token}"],
+        ) as socket:
             assert socket.receive_text() == '{"type":"voice_ready"}'
 
     assert fake_session.started

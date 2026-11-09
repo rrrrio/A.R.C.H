@@ -116,11 +116,11 @@ class AuthService:
         return session_id, session
 
     def require_websocket_csrf(self, websocket: WebSocket) -> tuple[str, Session]:
-        """Authenticate a browser WebSocket using its cookie, origin, and CSRF query token."""
+        """Authenticate a browser WebSocket using cookie, origin, and its subprotocol token."""
         session_id = websocket.cookies.get(SESSION_COOKIE_NAME)
         session = self.sessions.get(session_id)
         origin = websocket.headers.get("origin")
-        token = websocket.query_params.get("csrf")
+        protocols = websocket.headers.get("sec-websocket-protocol", "").split(",")
         if session_id is None or session is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required."
@@ -129,6 +129,10 @@ class AuthService:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="Invalid request origin."
             )
-        if token is None or not secrets.compare_digest(token, session.csrf_token):
+        expected_protocol = f"lva-csrf.{session.csrf_token}"
+        valid_protocol = any(
+            secrets.compare_digest(protocol.strip(), expected_protocol) for protocol in protocols
+        )
+        if not valid_protocol:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token.")
         return session_id, session

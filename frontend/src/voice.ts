@@ -176,7 +176,10 @@ export class WebSocketVoiceClient implements VoiceConnection {
 
   async connect(): Promise<void> {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(`${protocol}//${location.host}/api/voice/stream?csrf=${encodeURIComponent(this.csrfToken)}`)
+    const socket = new WebSocket(
+      `${protocol}//${location.host}/api/voice/stream`,
+      `lva-csrf.${this.csrfToken}`,
+    )
     socket.binaryType = 'arraybuffer'
     await new Promise<void>((resolve, reject) => {
       socket.onopen = () => resolve()
