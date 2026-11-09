@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
@@ -89,6 +89,17 @@ class CallbackFakeSmallWebRTCHandler(FakeSmallWebRTCHandler):
         return {"sdp": "answer-sdp", "type": "answer", "pc_id": "pc-1"}
 
 
+class FakeWebSocketVoiceSession:
+    """Record the authenticated socket passed to the fallback media session."""
+
+    def __init__(self) -> None:
+        self.started = False
+
+    async def start_websocket(self, websocket: Any) -> None:
+        self.started = True
+        await websocket.send_text('{"type":"voice_ready"}')
+
+
 def make_authenticated_client(tmp_path: Any) -> tuple[TestClient, FakeSmallWebRTCHandler]:
     """Create a configured test browser and its inspectable signaling fake."""
     credential_path = tmp_path / "admin.json"
@@ -146,6 +157,26 @@ def test_voice_offer_and_candidates_require_authenticated_csrf_session(tmp_path:
     assert [offer.sdp for offer in handler.offers] == ["offer"]
     assert len(handler.patches) == 1
     assert handler.close_count >= 1
+
+
+def test_voice_websocket_requires_authenticated_same_origin_csrf_session(tmp_path: Any) -> None:
+    """The fallback route preserves the same browser authorization boundary as signaling."""
+    client, _ = make_authenticated_client(tmp_path)
+    fake_session = FakeWebSocketVoiceSession()
+    cast(Any, client.app).state.voice_session = fake_session
+    headers = {"Origin": PUBLIC_ORIGIN}
+    with client:
+        login = client.post(
+            "/api/auth/login", headers=headers, json={"password": "correct-horse-battery-staple"}
+        )
+        csrf_token = login.json()["csrf_token"]
+        stream_url = f"/api/voice/stream?csrf={csrf_token}"
+        session_cookie = client.cookies.get("lva_session")
+        websocket_headers = {**headers, "Cookie": f"lva_session={session_cookie}"}
+        with client.websocket_connect(stream_url, headers=websocket_headers) as socket:
+            assert socket.receive_text() == '{"type":"voice_ready"}'
+
+    assert fake_session.started
 
 
 def test_second_session_cannot_take_an_existing_voice_connection() -> None:

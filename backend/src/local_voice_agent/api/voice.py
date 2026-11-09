@@ -1,4 +1,4 @@
-"""Same-origin, authenticated WebRTC signaling endpoints."""
+"""Same-origin authenticated WebRTC signaling and WebSocket media endpoints."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pipecat.transports.smallwebrtc.request_handler import IceCandidate, SmallWe
 from pydantic import BaseModel, Field
 
 from local_voice_agent.api.auth import AuthServiceDependency
+from local_voice_agent.auth.service import AuthService
 from local_voice_agent.voice.webrtc import WebRTCSignalingService
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
@@ -57,7 +58,7 @@ SignalingServiceDependency = Annotated[WebRTCSignalingService, Depends(get_signa
 @router.websocket("/stream")
 async def stream(websocket: WebSocket) -> None:
     """Carry fallback PCM media through the authenticated HTTPS origin."""
-    auth = cast(AuthServiceDependency, websocket.app.state.auth_service)
+    auth = cast(AuthService, websocket.app.state.auth_service)
     try:
         auth.require_websocket_csrf(websocket)
     except Exception:
