@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from pipecat.frames.frames import (
     Frame,
@@ -101,7 +101,7 @@ def event_from_frame(frame: Frame) -> VoiceEvent | None:
 class VoiceEventProcessor(FrameProcessor):
     """Mirror selected downstream frames to a WebRTC application data channel."""
 
-    def __init__(self, send_event: Callable[[VoiceEvent], None]) -> None:
+    def __init__(self, send_event: Callable[[dict[str, str | int]], None]) -> None:
         super().__init__()
         self._send_event = send_event
 
@@ -111,5 +111,5 @@ class VoiceEventProcessor(FrameProcessor):
         if direction == FrameDirection.DOWNSTREAM:
             event = event_from_frame(frame)
             if event is not None:
-                self._send_event(event)
+                self._send_event(cast(dict[str, str | int], event))
         await self.push_frame(frame, direction)

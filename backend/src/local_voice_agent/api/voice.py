@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, WebSocket, status
 from pipecat.transports.smallwebrtc.request_handler import IceCandidate, SmallWebRTCRequest
 from pydantic import BaseModel, Field
 
@@ -52,6 +52,23 @@ def get_signaling_service(request: Request) -> WebRTCSignalingService:
 
 
 SignalingServiceDependency = Annotated[WebRTCSignalingService, Depends(get_signaling_service)]
+
+
+@router.websocket("/stream")
+async def stream(websocket: WebSocket) -> None:
+    """Carry fallback PCM media through the authenticated HTTPS origin."""
+    auth = cast(AuthServiceDependency, websocket.app.state.auth_service)
+    try:
+        auth.require_websocket_csrf(websocket)
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    await websocket.accept()
+    voice_session = websocket.app.state.voice_session
+    try:
+        await voice_session.start_websocket(websocket)
+    except Exception:
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
 
 
 @router.post("/offer", response_model=OfferResponse)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from fastapi import WebSocket
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
@@ -12,9 +13,10 @@ from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.services.kokoro.tts import KokoroTTSService
 from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.transcriptions.language import Language
-from pipecat.transports.base_transport import TransportParams
+from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 
 from local_voice_agent.agent.llama import LlamaCppAgentCore
 from local_voice_agent.memory.extractor import LlamaCppMemoryCandidateExtractor
@@ -24,9 +26,11 @@ from local_voice_agent.rag.retriever import Retriever
 from local_voice_agent.tools.gateway import ToolGateway
 from local_voice_agent.voice.agent_processor import PipecatAgentProcessor
 from local_voice_agent.voice.events import VoiceEventProcessor
+from local_voice_agent.voice.input_ready import InputReadyProcessor
 from local_voice_agent.voice.metrics import VoiceLatencyProcessor
 from local_voice_agent.voice.models import VoiceModelPaths
 from local_voice_agent.voice.pipecat_output import PipecatOutputMuxProcessor
+from local_voice_agent.voice.websocket import BrowserPCMSerializer
 
 LAN_VAD_PARAMS = VADParams(confidence=0.6, min_volume=0.25)
 
@@ -41,7 +45,6 @@ def create_pipeline_worker(
     on_agent_processor: Callable[[PipecatAgentProcessor], None] | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
-    paths.require_ready()
     transport = SmallWebRTCTransport(
         connection,
         TransportParams(
@@ -51,6 +54,52 @@ def create_pipeline_worker(
             audio_out_sample_rate=24000,
         ),
     )
+    return _create_pipeline_worker(
+        transport, connection.send_app_message, paths, llama_endpoint, memory_store, retriever,
+        tool_gateway, on_agent_processor,
+    )
+
+
+def create_websocket_pipeline_worker(
+    websocket: WebSocket,
+    send_event: Callable[[dict[str, str | int]], None],
+    paths: VoiceModelPaths,
+    llama_endpoint: str,
+    memory_store: MemoryStore | None = None,
+    retriever: Retriever | None = None,
+    tool_gateway: ToolGateway | None = None,
+    on_agent_processor: Callable[[PipecatAgentProcessor], None] | None = None,
+) -> PipelineWorker:
+    """Build the same worker over authenticated same-origin PCM WebSocket media."""
+    transport = FastAPIWebsocketTransport(
+        websocket,
+        FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_in_sample_rate=16000,
+            audio_out_enabled=True,
+            audio_out_sample_rate=24000,
+            serializer=BrowserPCMSerializer(),
+            allowed_origins=[],
+        ),
+    )
+    return _create_pipeline_worker(
+        transport, send_event, paths, llama_endpoint, memory_store, retriever, tool_gateway,
+        on_agent_processor,
+    )
+
+
+def _create_pipeline_worker(
+    transport: BaseTransport,
+    send_event: Callable[[dict[str, str | int]], None],
+    paths: VoiceModelPaths,
+    llama_endpoint: str,
+    memory_store: MemoryStore | None,
+    retriever: Retriever | None,
+    tool_gateway: ToolGateway | None,
+    on_agent_processor: Callable[[PipecatAgentProcessor], None] | None,
+) -> PipelineWorker:
+    """Assemble processors independent of the authenticated browser transport."""
+    paths.require_ready()
     # Remote LAN microphones can be quieter than the workstation default input.
     vad = VADProcessor(
         vad_analyzer=SileroVADAnalyzer(
@@ -77,12 +126,12 @@ def create_pipeline_worker(
         voices_path=str(paths.tts_voices),
         settings=KokoroTTSService.Settings(voice="zf_001", language=Language.ZH, speed=1.0),
     )
-    user_events = VoiceEventProcessor(connection.send_app_message)
-    assistant_events = VoiceEventProcessor(connection.send_app_message)
-    output_events = VoiceEventProcessor(connection.send_app_message)
+    user_events = VoiceEventProcessor(send_event)
+    assistant_events = VoiceEventProcessor(send_event)
+    output_events = VoiceEventProcessor(send_event)
     tracker = LatencyTracker()
     input_latency = VoiceLatencyProcessor(
-        connection.send_app_message,
+        send_event,
         tracker,
         stages=frozenset(
             {
@@ -93,21 +142,22 @@ def create_pipeline_worker(
         ),
     )
     asr_latency = VoiceLatencyProcessor(
-        connection.send_app_message, tracker, stages=frozenset({LatencyStage.ASR_FINAL})
+        send_event, tracker, stages=frozenset({LatencyStage.ASR_FINAL})
     )
     llm_latency = VoiceLatencyProcessor(
-        connection.send_app_message, tracker, stages=frozenset({LatencyStage.LLM_FIRST_TOKEN})
+        send_event, tracker, stages=frozenset({LatencyStage.LLM_FIRST_TOKEN})
     )
     tts_latency = VoiceLatencyProcessor(
-        connection.send_app_message, tracker, stages=frozenset({LatencyStage.TTS_FIRST_BYTE})
+        send_event, tracker, stages=frozenset({LatencyStage.TTS_FIRST_BYTE})
     )
     output_latency = VoiceLatencyProcessor(
-        connection.send_app_message, tracker, stages=frozenset({LatencyStage.PLAYBACK_FIRST_AUDIO})
+        send_event, tracker, stages=frozenset({LatencyStage.PLAYBACK_FIRST_AUDIO})
     )
     output_mux = PipecatOutputMuxProcessor(output_sample_rate=24000)
     pipeline = Pipeline(
         [
             transport.input(),
+            InputReadyProcessor(send_event),
             vad,
             input_latency,
             stt,

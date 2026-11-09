@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
+from fastapi import WebSocket
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.workers.runner import WorkerRunner
 
@@ -16,7 +18,10 @@ from local_voice_agent.tools.gateway import ToolGateway, ToolOutcome
 from local_voice_agent.voice.agent_processor import PipecatAgentProcessor
 from local_voice_agent.voice.llama import LlamaCppServer
 from local_voice_agent.voice.models import VoiceModelPaths
-from local_voice_agent.voice.pipeline import create_pipeline_worker
+from local_voice_agent.voice.pipeline import (
+    create_pipeline_worker,
+    create_websocket_pipeline_worker,
+)
 
 
 class LocalVoiceSession:
@@ -82,6 +87,44 @@ class LocalVoiceSession:
             await self._llama.stop()
             raise
 
+    async def start_websocket(self, websocket: WebSocket) -> None:
+        """Start the sole local media worker using a same-origin PCM WebSocket."""
+        if self._runner_task is not None:
+            raise RuntimeError("Voice session is in use.")
+
+        def send_event(event: dict[str, str | int]) -> None:
+            asyncio.create_task(websocket.send_text(json.dumps(event, separators=(",", ":"))))
+
+        await self._llama.start()
+        runner: WorkerRunner | None = None
+        runner_task: asyncio.Task[None] | None = None
+        try:
+            self._retriever = await asyncio.to_thread(self._create_retriever)
+            worker = create_websocket_pipeline_worker(
+                websocket, send_event, self._paths, self._llama.endpoint, self._memory_store,
+                self._retriever, self._tool_gateway, self._set_agent_processor,
+            )
+            runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
+            ready = asyncio.Event()
+
+            @runner.event_handler("on_ready")  # type: ignore[untyped-decorator]
+            async def mark_ready(_: WorkerRunner) -> None:
+                ready.set()
+
+            await runner.add_workers(worker)
+            runner_task = asyncio.create_task(runner.run(auto_end=False))
+            await asyncio.wait_for(ready.wait(), timeout=20)
+            self._runner = runner
+            self._runner_task = runner_task
+            send_event({"type": "voice_ready"})
+            await runner_task
+        finally:
+            if self._runner is runner:
+                await self.stop()
+            elif runner is not None:
+                await runner.cancel(reason="voice session closed")
+            await self._llama.stop()
+
     async def continue_after_approved_tool(self, approval_id: str, outcome: ToolOutcome) -> bool:
         """Resume only the active media session that originated a consumed browser approval."""
         processor = self._agent_processor
@@ -118,6 +161,6 @@ class LocalVoiceSession:
         self._agent_processor = None
         if runner is not None:
             await runner.cancel(reason="voice session closed")
-        if task is not None:
+        if task is not None and task is not asyncio.current_task():
             await task
         await self._llama.stop()

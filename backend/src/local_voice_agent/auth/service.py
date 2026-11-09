@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, Request, WebSocket, status
 
 from local_voice_agent.auth.credentials import load_credentials, verify_password
 
@@ -112,5 +112,23 @@ class AuthService:
         self.require_expected_origin(request)
         provided_token = request.headers.get("x-csrf-token")
         if provided_token is None or not secrets.compare_digest(provided_token, session.csrf_token):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token.")
+        return session_id, session
+
+    def require_websocket_csrf(self, websocket: WebSocket) -> tuple[str, Session]:
+        """Authenticate a browser WebSocket using its cookie, origin, and CSRF query token."""
+        session_id = websocket.cookies.get(SESSION_COOKIE_NAME)
+        session = self.sessions.get(session_id)
+        origin = websocket.headers.get("origin")
+        token = websocket.query_params.get("csrf")
+        if session_id is None or session is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required."
+            )
+        if origin is None or origin.rstrip("/") != self.public_origin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Invalid request origin."
+            )
+        if token is None or not secrets.compare_digest(token, session.csrf_token):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token.")
         return session_id, session

@@ -7,11 +7,17 @@ export type LatencyStage = 'speech-start' | 'speech-end' | 'asr-final' | 'llm-fi
 
 export type VoiceEvent =
   | { type: 'voice_ready' }
+  | { type: 'voice_input_ready' }
   | { type: 'voice_state'; state: VoiceActivity }
   | { type: 'transcript'; state: VoiceActivity; role: 'user' | 'assistant'; phase: 'final' | 'start' | 'delta' | 'end'; text: string }
   | { type: 'latency'; utterance_id: string; stage: LatencyStage; elapsed_ms: number }
 
 export type AudioInput = { deviceId: string; label: string }
+
+export interface VoiceConnection {
+  connect(): Promise<void>
+  close(): Promise<void>
+}
 
 export class VoiceClient {
   private readonly connection = new RTCPeerConnection()
@@ -147,6 +153,125 @@ export class VoiceClient {
   }
 }
 
+export class WebSocketVoiceClient implements VoiceConnection {
+  private readonly csrfToken: string
+  private readonly onEvent: (event: VoiceEvent) => void
+  private readonly audioDeviceId: string | undefined
+  private readonly onConnectionClosed: () => void
+  private socket: WebSocket | null = null
+  private stream: MediaStream | null = null
+  private context: AudioContext | null = null
+  private source: MediaStreamAudioSourceNode | null = null
+  private processor: ScriptProcessorNode | null = null
+  private gain: GainNode | null = null
+  private nextPlaybackTime = 0
+  private closing = false
+
+  constructor(csrfToken: string, onEvent: (event: VoiceEvent) => void, audioDeviceId?: string, onConnectionClosed: () => void = () => undefined) {
+    this.csrfToken = csrfToken
+    this.onEvent = onEvent
+    this.audioDeviceId = audioDeviceId
+    this.onConnectionClosed = onConnectionClosed
+  }
+
+  async connect(): Promise<void> {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const socket = new WebSocket(`${protocol}//${location.host}/api/voice/stream?csrf=${encodeURIComponent(this.csrfToken)}`)
+    socket.binaryType = 'arraybuffer'
+    await new Promise<void>((resolve, reject) => {
+      socket.onopen = () => resolve()
+      socket.onerror = () => reject(new Error('Voice fallback connection failed.'))
+    })
+    this.socket = socket
+    socket.onmessage = (message) => this.handleMessage(message)
+    socket.onclose = () => {
+      if (!this.closing) this.onConnectionClosed()
+    }
+    const audio: MediaTrackConstraints | boolean = this.audioDeviceId ? { deviceId: { exact: this.audioDeviceId } } : true
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
+    this.context = new AudioContext()
+    await this.context.resume()
+    this.gain = this.context.createGain()
+    this.gain.connect(this.context.destination)
+    this.source = this.context.createMediaStreamSource(this.stream)
+    this.processor = this.context.createScriptProcessor(2048, 1, 1)
+    this.processor.onaudioprocess = (event) => {
+      if (socket.readyState !== WebSocket.OPEN) return
+      socket.send(floatToPCM16(resample(event.inputBuffer.getChannelData(0), this.context?.sampleRate ?? 16000, 16000)))
+    }
+    this.source.connect(this.processor)
+    this.processor.connect(this.context.destination)
+  }
+
+  async close(): Promise<void> {
+    this.closing = true
+    this.stream?.getTracks().forEach((track) => track.stop())
+    this.stream = null
+    this.processor?.disconnect()
+    this.source?.disconnect()
+    this.gain?.disconnect()
+    this.processor = null
+    this.source = null
+    this.gain = null
+    await this.context?.close()
+    this.context = null
+    this.socket?.close()
+    this.socket = null
+  }
+
+  private handleMessage(message: MessageEvent) {
+    if (typeof message.data === 'string') {
+      try {
+        const event: unknown = JSON.parse(message.data)
+        if (isVoiceEvent(event)) this.onEvent(event)
+        else if (isAudioInterrupted(event)) this.interruptPlayback()
+      } catch { /* Ignore invalid server messages. */ }
+      return
+    }
+    if (message.data instanceof ArrayBuffer) this.playPCM(message.data)
+  }
+
+  private playPCM(payload: ArrayBuffer) {
+    if (!this.context || !this.gain) return
+    const input = new Int16Array(payload)
+    const buffer = this.context.createBuffer(1, input.length, 24000)
+    const samples = buffer.getChannelData(0)
+    for (let index = 0; index < input.length; index += 1) samples[index] = input[index] / 32768
+    const source = this.context.createBufferSource()
+    source.buffer = buffer
+    source.connect(this.gain)
+    const start = Math.max(this.context.currentTime, this.nextPlaybackTime)
+    source.start(start)
+    this.nextPlaybackTime = start + buffer.duration
+  }
+
+  private interruptPlayback() {
+    if (!this.context || !this.gain) return
+    this.gain.disconnect()
+    this.gain = this.context.createGain()
+    this.gain.connect(this.context.destination)
+    this.nextPlaybackTime = this.context.currentTime
+  }
+}
+
+function resample(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
+  if (inputRate === outputRate) return input
+  const output = new Float32Array(Math.round(input.length * outputRate / inputRate))
+  const step = inputRate / outputRate
+  for (let index = 0; index < output.length; index += 1) output[index] = input[Math.min(input.length - 1, Math.floor(index * step))]
+  return output
+}
+
+function floatToPCM16(input: Float32Array): ArrayBuffer {
+  const output = new Int16Array(input.length)
+  for (let index = 0; index < input.length; index += 1) output[index] = Math.max(-1, Math.min(1, input[index])) * 32767
+  return output.buffer
+}
+
+function isAudioInterrupted(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && 'type' in value && value.type === 'audio_interrupted'
+}
+
 function waitForIceGathering(connection: RTCPeerConnection): Promise<void> {
   if (connection.iceGatheringState === 'complete') return Promise.resolve()
   return new Promise((resolve) => {
@@ -187,7 +312,7 @@ export function isVoiceEvent(value: unknown): value is VoiceEvent {
   if (value.type === 'voice_state') {
     return 'state' in value && isVoiceActivity(value.state)
   }
-  if (value.type === 'voice_ready') return Object.keys(value).length === 1
+  if (value.type === 'voice_ready' || value.type === 'voice_input_ready') return Object.keys(value).length === 1
   if (value.type === 'latency') {
     return 'utterance_id' in value &&
       typeof value.utterance_id === 'string' &&

@@ -4,7 +4,7 @@ import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
 import { fetchKnowledgeStatus, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
 import { decideToolApproval, fetchToolApprovals, type ToolApproval } from './tools'
-import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceEvent, VoiceClient } from './voice'
+import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceConnection, type VoiceEvent, VoiceClient, WebSocketVoiceClient } from './voice'
 import './App.css'
 
 type SessionState =
@@ -56,7 +56,8 @@ function App() {
   const [candidateActionId, setCandidateActionId] = useState<string | null>(null)
   const [toolApprovals, setToolApprovals] = useState<ToolApproval[]>([])
   const [toolActionId, setToolActionId] = useState<string | null>(null)
-  const voiceClient = useRef<VoiceClient | null>(null)
+  const voiceClient = useRef<VoiceConnection | null>(null)
+  const inputReadyTimer = useRef<number | null>(null)
 
   async function refreshMemoryCandidates() {
     try {
@@ -163,6 +164,7 @@ function App() {
       )
       voiceClient.current = client
       await client.connect()
+      inputReadyTimer.current = window.setTimeout(() => void fallBackToWebSocket(session.csrfToken, client), 4_000)
       setVoiceState((current) => current === 'ready' ? current : 'preparing')
       void refreshAudioInputs()
     } catch {
@@ -173,13 +175,14 @@ function App() {
   }
 
   async function disconnectVoice() {
+    clearInputReadyTimer()
     await voiceClient.current?.close().catch(() => undefined)
     voiceClient.current = null
     setVoiceState('idle')
     setConversation(initialConversation)
   }
 
-  function handleVoiceDisconnect(client: VoiceClient) {
+  function handleVoiceDisconnect(client: VoiceConnection) {
     if (voiceClient.current !== client) return
     voiceClient.current = null
     setVoiceState('disconnected')
@@ -188,7 +191,8 @@ function App() {
   }
 
   function handleVoiceEvent(event: VoiceEvent) {
-    if (event.type === 'voice_ready') {
+    if (event.type === 'voice_input_ready') clearInputReadyTimer()
+    if (event.type === 'voice_ready' || event.type === 'voice_input_ready') {
       setVoiceState((current) => current === 'idle' || current === 'error' ? current : 'ready')
       return
     }
@@ -206,6 +210,34 @@ function App() {
       }
       return { ...current, activity: event.state }
     })
+  }
+
+  function clearInputReadyTimer() {
+    if (inputReadyTimer.current !== null) window.clearTimeout(inputReadyTimer.current)
+    inputReadyTimer.current = null
+  }
+
+  async function fallBackToWebSocket(csrfToken: string, webRtcClient: VoiceClient) {
+    if (voiceClient.current !== webRtcClient) return
+    await webRtcClient.close().catch(() => undefined)
+    if (voiceClient.current !== webRtcClient) return
+    setVoiceState('preparing')
+    const client = new WebSocketVoiceClient(
+      csrfToken,
+      (event) => { if (voiceClient.current === client) handleVoiceEvent(event) },
+      audioDeviceId || undefined,
+      () => handleVoiceDisconnect(client),
+    )
+    voiceClient.current = client
+    try {
+      await client.connect()
+    } catch {
+      if (voiceClient.current === client) {
+        voiceClient.current = null
+        setVoiceState('error')
+      }
+      await client.close().catch(() => undefined)
+    }
   }
 
   async function updateCandidate(candidateId: string, update: { content?: string; action?: 'approved' | 'rejected' | 'deleted' }) {
