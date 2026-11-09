@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
@@ -27,6 +28,8 @@ from local_voice_agent.voice.metrics import VoiceLatencyProcessor
 from local_voice_agent.voice.models import VoiceModelPaths
 from local_voice_agent.voice.pipecat_output import PipecatOutputMuxProcessor
 
+LAN_VAD_PARAMS = VADParams(confidence=0.6, min_volume=0.25)
+
 
 def create_pipeline_worker(
     connection: SmallWebRTCConnection,
@@ -48,7 +51,13 @@ def create_pipeline_worker(
             audio_out_sample_rate=24000,
         ),
     )
-    vad = VADProcessor(vad_analyzer=SileroVADAnalyzer(sample_rate=16000))
+    # Remote LAN microphones can be quieter than the workstation default input.
+    vad = VADProcessor(
+        vad_analyzer=SileroVADAnalyzer(
+            sample_rate=16000,
+            params=LAN_VAD_PARAMS,
+        )
+    )
     stt = WhisperSTTService(
         device="cuda",
         compute_type="float16",

@@ -182,4 +182,47 @@ describe('VoiceClient', () => {
       { type: 'voice_state', state: 'speaking' },
     ])
   })
+
+  it('reports an unexpected WebRTC closure once', async () => {
+    const track = { stop: vi.fn() } as unknown as MediaStreamTrack
+    const stream = { getAudioTracks: () => [track], getTracks: () => [track] } as unknown as MediaStream
+    const closed = vi.fn()
+    type PeerHarness = {
+      ontrack: ((event: RTCTrackEvent) => void) | null
+      onicecandidate: ((event: RTCPeerConnectionIceEvent) => void) | null
+      onconnectionstatechange: (() => void) | null
+      connectionState: RTCPeerConnectionState
+    }
+    const peers: PeerHarness[] = []
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ sdp: 'answer', type: 'answer', pc_id: 'pc-1' }))))
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) } })
+    vi.stubGlobal('Audio', class { autoplay = false; srcObject: MediaProvider | null = null; pause() {}; play() { return Promise.resolve() } })
+    vi.stubGlobal('RTCPeerConnection', class {
+      ontrack: ((event: RTCTrackEvent) => void) | null = null
+      onicecandidate: ((event: RTCPeerConnectionIceEvent) => void) | null = null
+      onconnectionstatechange: (() => void) | null = null
+      connectionState = 'connected' as RTCPeerConnectionState
+      iceGatheringState = 'complete' as RTCIceGatheringState
+      localDescription = { type: 'offer' as const, sdp: 'v=0' }
+
+      constructor() { peers.push(this) }
+      addTrack() {}
+      async createOffer() { return { type: 'offer' as const, sdp: 'v=0' } }
+      async setLocalDescription() {}
+      async setRemoteDescription() {}
+      close() {}
+      createDataChannel() { return { close() {}, onmessage: null } as unknown as RTCDataChannel }
+    })
+
+    const client = new VoiceClient('csrf-token', () => undefined, undefined, closed)
+    await client.connect()
+    const activePeer = peers[0]
+    if (!activePeer) throw new Error('Peer connection was not created.')
+    activePeer.connectionState = 'failed'
+    activePeer.onconnectionstatechange?.()
+    activePeer.onconnectionstatechange?.()
+
+    expect(closed).toHaveBeenCalledOnce()
+  })
 })

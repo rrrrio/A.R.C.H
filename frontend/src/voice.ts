@@ -19,16 +19,25 @@ export class VoiceClient {
   private readonly csrfToken: string
   private readonly onEvent: (event: VoiceEvent) => void
   private readonly audioDeviceId: string | undefined
+  private readonly onConnectionClosed: () => void
   private dataChannel: RTCDataChannel | null = null
   private pcId: string | null = null
   private pendingCandidates: Candidate[] = []
   private stream: MediaStream | null = null
   private serverSessionMayExist = false
+  private closing = false
+  private connectionClosedNotified = false
 
-  constructor(csrfToken: string, onEvent: (event: VoiceEvent) => void, audioDeviceId?: string) {
+  constructor(
+    csrfToken: string,
+    onEvent: (event: VoiceEvent) => void,
+    audioDeviceId?: string,
+    onConnectionClosed: () => void = () => undefined,
+  ) {
     this.csrfToken = csrfToken
     this.onEvent = onEvent
     this.audioDeviceId = audioDeviceId
+    this.onConnectionClosed = onConnectionClosed
     this.audio.autoplay = true
     this.connection.ontrack = (event) => {
       this.audio.srcObject = event.streams[0] ?? new MediaStream([event.track])
@@ -44,6 +53,14 @@ export class VoiceClient {
         sdp_mline_index: candidate.sdpMLineIndex,
       }
       void this.sendCandidates([serialized])
+    }
+    this.connection.onconnectionstatechange = () => {
+      const state = this.connection.connectionState
+      if (this.closing || this.connectionClosedNotified) return
+      if (state === 'closed' || state === 'disconnected' || state === 'failed') {
+        this.connectionClosedNotified = true
+        this.onConnectionClosed()
+      }
     }
   }
 
@@ -85,6 +102,7 @@ export class VoiceClient {
   }
 
   async close(): Promise<void> {
+    this.closing = true
     this.stream?.getTracks().forEach((track) => track.stop())
     this.stream = null
     this.audio.pause()

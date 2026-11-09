@@ -45,7 +45,7 @@ const latencyLabels: Record<LatencyStage, string> = {
 function App() {
   const [session, setSession] = useState<SessionState>({ kind: 'loading' })
   const [password, setPassword] = useState('')
-  const [voiceState, setVoiceState] = useState<'idle' | 'connecting' | 'preparing' | 'ready' | 'error'>('idle')
+  const [voiceState, setVoiceState] = useState<'idle' | 'connecting' | 'preparing' | 'ready' | 'disconnected' | 'error'>('idle')
   const [conversation, setConversation] = useState<ConversationState>(initialConversation)
   const [audioInputs, setAudioInputs] = useState<AudioInput[]>([])
   const [audioDeviceId, setAudioDeviceId] = useState('')
@@ -153,9 +153,14 @@ function App() {
     setVoiceState('connecting')
     setConversation(initialConversation)
     try {
-      const client = new VoiceClient(session.csrfToken, (event) => {
-        if (voiceClient.current === client) handleVoiceEvent(event)
-      }, audioDeviceId || undefined)
+      const client = new VoiceClient(
+        session.csrfToken,
+        (event) => {
+          if (voiceClient.current === client) handleVoiceEvent(event)
+        },
+        audioDeviceId || undefined,
+        () => handleVoiceDisconnect(client),
+      )
       voiceClient.current = client
       await client.connect()
       setVoiceState((current) => current === 'ready' ? current : 'preparing')
@@ -172,6 +177,14 @@ function App() {
     voiceClient.current = null
     setVoiceState('idle')
     setConversation(initialConversation)
+  }
+
+  function handleVoiceDisconnect(client: VoiceClient) {
+    if (voiceClient.current !== client) return
+    voiceClient.current = null
+    setVoiceState('disconnected')
+    setConversation(initialConversation)
+    void client.close().catch(() => undefined)
   }
 
   function handleVoiceEvent(event: VoiceEvent) {
@@ -230,6 +243,7 @@ function App() {
           <p className="eyebrow">语音会话</p>
           <h1 id="voice-title">{voiceHeading(voiceState, conversation.activity)}</h1>
           {voiceState === 'error' ? <p>无法建立语音连接。</p> : null}
+          {voiceState === 'disconnected' ? <p>媒体连接已断开，请重新连接。</p> : null}
           {voiceState === 'preparing' || voiceState === 'ready' ? (
             <div className="transcript" aria-live="polite">
               <p><span>你</span>{conversation.userText || '...'}</p>
@@ -388,12 +402,13 @@ function formatTimestamp(value: string): string {
 }
 
 function voiceHeading(
-  voiceState: 'idle' | 'connecting' | 'preparing' | 'ready' | 'error',
+  voiceState: 'idle' | 'connecting' | 'preparing' | 'ready' | 'disconnected' | 'error',
   activity: VoiceActivity,
 ): string {
   if (voiceState === 'connecting') return '正在连接'
   if (voiceState === 'preparing') return '正在准备本地语音'
   if (voiceState === 'ready') return activity === 'listening' ? '可以说话' : activityLabels[activity]
+  if (voiceState === 'disconnected') return '语音连接已断开'
   return '等待连接'
 }
 
