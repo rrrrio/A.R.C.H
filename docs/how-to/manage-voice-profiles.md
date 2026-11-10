@@ -21,8 +21,8 @@
 
 ## 选择与删除
 
-“选择克隆参考”只记录未来 Qwen 克隆模式要使用的一个 profile；在 Qwen 运行时安装、启用和完成
-设备验收前，当前会话仍使用 Kokoro。选择“使用 Kokoro 基线”会清除该选择，但不会删除已保存参考。
+“选择克隆参考”会让下一次新建语音会话请求本机隔离的 Qwen worker；当前已经连接的会话不改变。
+未运行 `make qwen-tts-prepare APPLY=1`、制品不完整或 worker 无法启动时，新会话会明确失败，绝不静默改用 Kokoro。选择“使用 Kokoro 基线”会清除该选择，但不会删除已保存参考。
 删除会移除该 profile 的本地 WAV 与元数据；若删除的是已选择 profile，系统自动恢复 Kokoro 选择。
 
 所有列出、保存、选择和删除请求都要求已登录会话、配置的 HTTPS Origin 和 CSRF token。未登录浏览器

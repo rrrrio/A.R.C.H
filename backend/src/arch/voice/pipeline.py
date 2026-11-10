@@ -11,6 +11,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.services.kokoro.tts import KokoroTTSService
+from pipecat.services.tts_service import TTSService
 from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport, TransportParams
@@ -30,6 +31,8 @@ from arch.voice.input_ready import InputReadyProcessor
 from arch.voice.metrics import VoiceLatencyProcessor
 from arch.voice.models import VoiceModelPaths
 from arch.voice.pipecat_output import PipecatOutputMuxProcessor
+from arch.voice.profiles import VoiceProfile
+from arch.voice.qwen_clone import CloneSynthesize, QwenCloneTTSService
 from arch.voice.websocket import BrowserPCMSerializer
 
 LAN_VAD_PARAMS = VADParams(confidence=0.6, min_volume=0.25)
@@ -43,6 +46,8 @@ def create_pipeline_worker(
     retriever: Retriever | None = None,
     tool_gateway: ToolGateway | None = None,
     on_agent_processor: Callable[[PipecatAgentProcessor], None] | None = None,
+    clone_profile: VoiceProfile | None = None,
+    clone_synthesize: CloneSynthesize | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
     transport = SmallWebRTCTransport(
@@ -56,7 +61,7 @@ def create_pipeline_worker(
     )
     return _create_pipeline_worker(
         transport, connection.send_app_message, paths, llama_endpoint, memory_store, retriever,
-        tool_gateway, on_agent_processor,
+        tool_gateway, on_agent_processor, clone_profile, clone_synthesize,
     )
 
 
@@ -69,6 +74,8 @@ def create_websocket_pipeline_worker(
     retriever: Retriever | None = None,
     tool_gateway: ToolGateway | None = None,
     on_agent_processor: Callable[[PipecatAgentProcessor], None] | None = None,
+    clone_profile: VoiceProfile | None = None,
+    clone_synthesize: CloneSynthesize | None = None,
 ) -> PipelineWorker:
     """Build the same worker over authenticated same-origin PCM WebSocket media."""
     transport = FastAPIWebsocketTransport(
@@ -84,7 +91,7 @@ def create_websocket_pipeline_worker(
     )
     return _create_pipeline_worker(
         transport, send_event, paths, llama_endpoint, memory_store, retriever, tool_gateway,
-        on_agent_processor,
+        on_agent_processor, clone_profile, clone_synthesize,
     )
 
 
@@ -97,6 +104,8 @@ def _create_pipeline_worker(
     retriever: Retriever | None,
     tool_gateway: ToolGateway | None,
     on_agent_processor: Callable[[PipecatAgentProcessor], None] | None,
+    clone_profile: VoiceProfile | None,
+    clone_synthesize: CloneSynthesize | None,
 ) -> PipelineWorker:
     """Assemble processors independent of the authenticated browser transport."""
     paths.require_ready()
@@ -121,11 +130,17 @@ def _create_pipeline_worker(
     )
     if on_agent_processor is not None:
         on_agent_processor(agent)
-    tts = KokoroTTSService(
-        model_path=str(paths.tts_model),
-        voices_path=str(paths.tts_voices),
-        settings=KokoroTTSService.Settings(voice="zf_001", language=Language.ZH, speed=1.0),
-    )
+    tts: TTSService
+    if clone_profile is not None:
+        if clone_synthesize is None:
+            raise RuntimeError("Selected Qwen clone profile has no running synthesis worker.")
+        tts = QwenCloneTTSService(clone_profile, clone_synthesize)
+    else:
+        tts = KokoroTTSService(
+            model_path=str(paths.tts_model),
+            voices_path=str(paths.tts_voices),
+            settings=KokoroTTSService.Settings(voice="zf_001", language=Language.ZH, speed=1.0),
+        )
     user_events = VoiceEventProcessor(send_event)
     assistant_events = VoiceEventProcessor(send_event)
     output_events = VoiceEventProcessor(send_event)

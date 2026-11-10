@@ -75,6 +75,8 @@ def create_app(
                 database_path=settings.database_path,
                 rag_model_path=settings.rag_model_path,
                 tool_gateway=app.state.tool_gateway,
+                voice_profile_store=app.state.voice_profile_store,
+                data_dir=settings.data_dir,
             )
             app.state.voice_session = voice_session
             app.state.signaling_service = WebRTCSignalingService(
