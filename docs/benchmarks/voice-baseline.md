@@ -63,3 +63,24 @@ uv run --directory backend python spikes/kokoro_benchmark.py \
 `kokoro-onnx` 0.6.1 需要包含全部中文声线的聚合 `voices-v1.1-zh.bin`；单独下载的 `zf_001.bin` 与该版本的 `numpy.load` 调用不兼容。ONNX Runtime 会报告若干 `Reciprocal` 常量折叠警告，但在 20 次运行中未导致失败。
 
 这是低延迟的句子级 CPU 基线，尚非 token/PCM 流式输出，也未证明浏览器首音或插话时间。端到端 speech-end 到浏览器首音只能在 Milestone 2 的真实媒体流水线中确认。
+
+## 可选 Qwen 克隆 TTS
+
+2026-11-10 在同一主机上准备 `Qwen/Qwen3-TTS-12Hz-0.6B-Base` revision
+`c27fe8aa05b732b1376d0f6a1e522fbccb84abbd` 后，隔离 worker 使用一个本地合成的 1 秒
+24 kHz 静音 WAV 和对应测试文本完成一次 warm-up，再合成固定中文输入“你好，这是本地 Qwen 声音克隆
+组件基准测试。”20 次。计时从本机 Unix socket 请求发出到收到完整 24 kHz PCM；它包含 Qwen 生成和
+IPC 编解码，不包含 worker 模型加载、浏览器、网络、扬声器或可听时间。该测试不使用人类声音，也不测试
+声音相似度。
+
+| 指标 | 结果 |
+| --- | ---: |
+| 完整 PCM 可用 p50 | 3213.2 ms |
+| 完整 PCM 可用 p95 | 4937.5 ms |
+| 最大值 | 8300.8 ms |
+| 返回 PCM 字节数 | 349440 |
+
+该 Base 模型路径当前返回完整音频而非流式首段 PCM，p95 明显高于普通轮次 1.5 秒首音目标。因此它保持为
+显式选择的可选克隆路径，Kokoro 继续作为默认低延迟声音。该组件数据不证明浏览器可听首音、插话停止、
+用户许可充分性、真实音色相似度或第二台设备体验。测试结束后已删除合成 profile、worker socket 和 GPU
+分配。
