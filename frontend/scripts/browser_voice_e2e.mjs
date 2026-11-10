@@ -189,8 +189,10 @@ try {
   console.log('browser-e2e: assistant transcript and audio latency observed')
 
   if (configuration.assertBargeIn) {
-    await waitFor('browser interruption', async () => (await client.evaluate("document.body.innerText.includes('播放停止')")), configuration.timeoutSeconds * 1000)
-    console.log('browser-e2e: browser interruption observed')
+    await waitFor('browser interruption after playback', async () => (await client.evaluate(
+      "[...document.querySelectorAll('.latency span')].some((stage) => stage.textContent?.trim() === '播放停止')",
+    )), configuration.timeoutSeconds * 1000)
+    console.log('browser-e2e: browser interruption after playback observed')
   }
 
   await client.evaluate(`(() => {

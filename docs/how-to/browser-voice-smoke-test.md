@@ -25,6 +25,19 @@
 
 该命令会在 `data/e2e/<随机目录>` 创建一次性 Argon2id 管理员凭据和 SQLite 状态。它通过 `ARCH_ARTIFACT_DIR=data` 从已有制品读取固定模型和 llama.cpp 路径，不会把共享 `models` 或 `runtime` 软链接进测试目录。后端和 HTTPS 网关各使用一个随机 loopback 端口；Chrome 使用独立 profile 和进程组，将固定中文 WAV 注入伪麦克风。测试密码只经标准输入传给 Chrome 驱动，不进入命令行或日志。
 
+## 检查自动插话
+
+在正常路径通过后，可运行：
+
+    make browser-e2e-barge-in
+
+该命令会把固定语音片段与一秒静音边界交替注入四次，使至少一次新的语音开始有机会发生在助手播报期间。页面保留最近八条服务器阶段事件，Chrome 驱动要求其中包含“播放停止”；该事件只会在已发送首段音频的回答被后续语音打断时产生。成功时会输出：
+
+    browser-e2e: browser interruption after playback observed
+    browser-e2e: passed
+
+这证明合成浏览器路径收到了一次中断事件。它不测量扬声器停止时间，不能证明真实麦克风、设备扬声器或 250 ms 的人工插话 p95。
+
 ## 验证清理与排查
 
 成功后，`data/e2e/` 不应保留该次随机目录，`docker ps` 不应出现 `arch-e2e-` 容器，`ps` 不应显示测试启动的 `llama-server` 或 Chrome profile 进程。失败时可保留临时资料：

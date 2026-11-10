@@ -76,4 +76,4 @@ def test_create_barge_in_fixture_repeats_the_fixed_pcm_segment(tmp_path: Path) -
 
     with wave.open(str(destination), "rb") as output_file:
         assert output_file.getparams()[:3] == (1, 2, 16_000)
-        assert output_file.getnframes() == 112_000
+        assert output_file.getnframes() == 240_000

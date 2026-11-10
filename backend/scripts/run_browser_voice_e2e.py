@@ -25,6 +25,7 @@ FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 NODE_DRIVER = PROJECT_ROOT / "frontend" / "scripts" / "browser_voice_e2e.mjs"
 SAMPLE_WAV = DATA_ROOT / "benchmarks" / "samples" / "fleurs_cmn_hans_cn_0000.wav"
 E2E_HOST = "arch-e2e.local"
+BARGE_IN_ATTEMPTS = 4
 
 
 @dataclass(frozen=True)
@@ -159,7 +160,7 @@ def require_file(path: Path, description: str) -> None:
 
 
 def create_barge_in_fixture(source: Path, destination: Path) -> Path:
-    """Create two spoken segments separated by one second for interruption acceptance."""
+    """Repeat spoken segments with VAD-reset pauses until one overlaps playback."""
     with wave.open(str(source), "rb") as input_file:
         if input_file.getcomptype() != "NONE":
             raise ValueError("browser-e2e: barge-in source WAV must be uncompressed PCM")
@@ -172,9 +173,12 @@ def create_barge_in_fixture(source: Path, destination: Path) -> Path:
     if not spoken:
         raise ValueError("browser-e2e: source WAV has no usable barge-in speech segment")
     silence = bytes(parameters.framerate * frame_size)
+    segments = [spoken]
+    for _ in range(BARGE_IN_ATTEMPTS - 1):
+        segments.extend((silence, spoken))
     with wave.open(str(destination), "wb") as output_file:
         output_file.setparams(parameters)
-        output_file.writeframes(spoken + silence + spoken)
+        output_file.writeframes(b"".join(segments))
     return destination
 
 

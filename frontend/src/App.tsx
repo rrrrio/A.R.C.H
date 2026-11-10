@@ -19,10 +19,11 @@ type ConversationState = {
   activity: VoiceActivity
   userText: string
   assistantText: string
-  latency: { stage: LatencyStage; elapsedMs: number } | null
+  latency: { stage: LatencyStage; elapsedMs: number }[]
 }
 
-const initialConversation: ConversationState = { activity: 'listening', userText: '', assistantText: '', latency: null }
+const initialConversation: ConversationState = { activity: 'listening', userText: '', assistantText: '', latency: [] }
+const latencyHistoryLimit = 8
 
 const activityLabels: Record<VoiceActivity, string> = {
   'user-speaking': '正在聆听',
@@ -198,7 +199,8 @@ function App() {
     }
     setConversation((current) => {
       if (event.type === 'latency') {
-        return { ...current, latency: { stage: event.stage, elapsedMs: event.elapsed_ms } }
+        const latency = [...current.latency, { stage: event.stage, elapsedMs: event.elapsed_ms }]
+        return { ...current, latency: latency.slice(-latencyHistoryLimit) }
       }
       if (event.type === 'voice_state') return { ...current, activity: event.state }
       if (event.role === 'user') {
@@ -280,7 +282,11 @@ function App() {
             <div className="transcript" aria-live="polite">
               <p><span>你</span>{conversation.userText || '...'}</p>
               <p><span>助手</span>{conversation.assistantText || '...'}</p>
-              {conversation.latency ? <p className="latency"><span>{latencyLabels[conversation.latency.stage]}</span>{conversation.latency.elapsedMs} ms</p> : null}
+              {conversation.latency.map((sample, index) => (
+                <p className="latency" key={`${sample.stage}-${sample.elapsedMs}-${index}`}>
+                  <span>{latencyLabels[sample.stage]}</span>{sample.elapsedMs} ms
+                </p>
+              ))}
             </div>
           ) : null}
           <section className="memory-review" aria-labelledby="memory-title">
