@@ -77,6 +77,18 @@
 
 归档只在本机 `data/backups/` 中创建，必须复制到受控的离机位置才构成独立备份。恢复、校验和替换保护步骤见[备份和恢复本地数据](how-to/backup-and-restore.md)。
 
+## 升级
+
+先停止后端和 Caddy，再预览升级动作：
+
+    make upgrade-dry-run
+
+确认后执行：
+
+    make upgrade APPLY=1
+
+该命令先创建完整数据库和 inbox 归档，再只应用待处理的 SQLite 向前 migration。当前没有自动 down migration；每个 migration 独立提交，失败时之前已成功的版本可能仍保留。若迁移失败或需要回退，停止服务并按[备份和恢复本地数据](how-to/backup-and-restore.md)从该归档恢复，再切回与归档兼容的代码版本。升级后运行 `make rag-index`，然后启动服务并检查登录、记忆和知识库状态。
+
 ## 当前验收边界
 
 自动化测试覆盖应用逻辑、归档校验和隔离浏览器媒体路径。当前尚未完成主机重启恢复、第二台 LAN 设备完整语音通话、真实可听首音或人工插话延迟的设备验收。不要把 HTTP 健康响应或隔离 Chrome 结果当作这些验收的替代品。

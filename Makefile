@@ -5,10 +5,10 @@ BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 COMPOSE := docker compose -f deploy/compose.yaml
 
-.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts
+.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts
 
 help:
-	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts'
+	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare rag-prepare rag-index benchmark-tts'
 
 bootstrap:
 	uv sync --directory $(BACKEND_DIR) --all-groups
@@ -39,6 +39,13 @@ dev:
 
 migrate:
 	uv run --directory $(BACKEND_DIR) python scripts/migrate.py
+
+upgrade-dry-run:
+	uv run --no-sync --directory $(BACKEND_DIR) python scripts/upgrade.py
+
+upgrade:
+	@test "$(APPLY)" = "1" || (printf '%s\n' 'Set APPLY=1 after reviewing make upgrade-dry-run.' >&2; exit 2)
+	uv run --no-sync --directory $(BACKEND_DIR) python scripts/upgrade.py --apply
 
 backup:
 	uv run --no-sync --directory $(BACKEND_DIR) python scripts/backup.py
