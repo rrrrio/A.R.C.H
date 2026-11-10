@@ -23,7 +23,7 @@
                                                            \
                                                             -> future avatar
 
-当前输入与输出分别为 16 kHz 和 24 kHz。ASR 使用本地 Faster-Whisper；会话创建时启动受后端拥有的 loopback llama.cpp；TTS 使用 Kokoro 中文声线。Qwen3 请求与 llama.cpp 服务均关闭 reasoning，避免推理内容占满实时工具调用的输出预算。
+当前输入与输出分别为 16 kHz 和 24 kHz。ASR 使用本地 Faster-Whisper；会话创建时启动受后端拥有的 loopback llama.cpp；未选择声音参考时 TTS 使用 Kokoro 中文声线，选择有效 profile 后使用隔离 Qwen worker。Qwen3 请求与 llama.cpp 服务均关闭 reasoning，避免推理内容占满实时工具调用的输出预算。
 
 当 WebRTC 信令成功但服务器没有收到麦克风媒体时，浏览器会释放 WebRTC，并通过同一 HTTPS origin 建立受认证的 WSS PCM 通道。回退通道输入为 16 kHz PCM16、输出为 24 kHz PCM16，后续仍进入同一条 Pipecat 流水线。服务器确认收到第一帧输入后，正常 LAN 连接继续使用 WebRTC；只有未确认输入的连接才会自动回退。
 
@@ -47,4 +47,4 @@
 
 ## 为音色克隆和数字人保留的接口
 
-`OutputMux` 在 `direct_audio` 与未来 `avatar_av` 输出模式间保持互斥。现阶段浏览器直接播放 Kokoro TTS 音频。已登录管理员可以保存经确认授权的短 WAV 参考并选择未来克隆 profile；它们不改变当前 Kokoro 输出，直到独立 Qwen 运行时完成准备和验收。代码已有一个仅接受 24 kHz PCM 的 Pipecat Qwen adapter 契约：运行时缺失或格式错误会报告失败，绝不替换为 Kokoro。该 adapter 尚未连接持久 Qwen worker 或会话选择。后续数字人适配器可以消费带时间戳的 PCM、音量、口型和受限情绪事件，并在 `avatar_av` 模式拥有最终音频，避免重音或口型漂移。音色克隆运行时、语气、情绪和真实数字人后端尚未接入；它们是后续里程碑，不应被当作已部署功能。
+`OutputMux` 在 `direct_audio` 与未来 `avatar_av` 输出模式间保持互斥。浏览器直接播放 Kokoro 或已选择 profile 的 Qwen 24 kHz PCM。Qwen worker 只在会话启动时有有效选择才进入隔离环境，通过 Unix socket 接收不含路径的 profile ID；缺少制品、启动失败或格式错误会使会话失败，绝不替换为 Kokoro。一次本地合成 WAV smoke 已观察到 worker 输出 PCM，但尚未证明浏览器可听音色、首音或插话指标。后续数字人适配器可以消费带时间戳的 PCM、音量、口型和受限情绪事件，并在 `avatar_av` 模式拥有最终音频，避免重音或口型漂移。语气、情绪和真实数字人后端尚未接入；它们是后续里程碑，不应被当作已部署功能。
