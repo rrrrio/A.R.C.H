@@ -10,13 +10,13 @@ from pathlib import Path
 
 import httpx
 
-from local_voice_agent.agent.core import ToolRequest
-from local_voice_agent.memory.migrations import MigrationRunner
-from local_voice_agent.tools.approvals import ApprovalStore, ToolApproval
-from local_voice_agent.tools.gateway import ToolGateway, ToolOutcome
-from local_voice_agent.tools.policy import TerminalToolPolicy, ToolPolicy
-from local_voice_agent.tools.search import SearxngSearchClient
-from local_voice_agent.tools.terminal import TerminalExecutor
+from arch.agent.core import ToolRequest
+from arch.memory.migrations import MigrationRunner
+from arch.tools.approvals import ApprovalStore, ToolApproval
+from arch.tools.gateway import ToolGateway, ToolOutcome
+from arch.tools.policy import TerminalToolPolicy, ToolPolicy
+from arch.tools.search import SearxngSearchClient
+from arch.tools.terminal import TerminalExecutor
 
 
 def _request(argv: list[str], cwd: str = ".") -> ToolRequest:

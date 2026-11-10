@@ -5,7 +5,7 @@ import json
 
 import httpx
 
-from local_voice_agent.agent.core import (
+from arch.agent.core import (
     AgentRequest,
     AgentResponseEvent,
     AgentResponseKind,
@@ -13,8 +13,8 @@ from local_voice_agent.agent.core import (
     ToolRequest,
     ToolResult,
 )
-from local_voice_agent.agent.llama import LlamaCppAgentCore
-from local_voice_agent.memory.context import MAX_MEMORY_CANDIDATE_CHARS
+from arch.agent.llama import LlamaCppAgentCore
+from arch.memory.context import MAX_MEMORY_CANDIDATE_CHARS
 
 
 def test_llama_agent_streams_only_text_and_uses_prior_history() -> None:

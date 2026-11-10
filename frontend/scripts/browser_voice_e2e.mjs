@@ -129,7 +129,7 @@ const chromeArguments = [
   '--use-fake-device-for-media-stream',
   '--disable-features=WebRtcHideLocalIpsWithMdns',
   `--use-file-for-fake-audio-capture=${configuration.audio}`,
-  `--host-resolver-rules=MAP local-voice-agent-e2e.local 127.0.0.1`,
+  `--host-resolver-rules=MAP arch-e2e.local 127.0.0.1`,
   `--user-data-dir=${configuration.profileDir}`,
   `--remote-debugging-port=${configuration.debugPort}`,
 ]

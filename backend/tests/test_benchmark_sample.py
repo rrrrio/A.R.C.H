@@ -3,7 +3,7 @@
 import hashlib
 from pathlib import Path
 
-from local_voice_agent.benchmarks.samples import sha256_file
+from arch.benchmarks.samples import sha256_file
 
 
 def test_sha256_file_matches_known_content(tmp_path: Path) -> None:

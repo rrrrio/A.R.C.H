@@ -15,10 +15,10 @@ from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCRequest,
 )
 
-from local_voice_agent.auth.credentials import provision_credentials
-from local_voice_agent.auth.service import AuthService
-from local_voice_agent.main import create_app
-from local_voice_agent.voice.webrtc import WebRTCSignalingService
+from arch.auth.credentials import provision_credentials
+from arch.auth.service import AuthService
+from arch.main import create_app
+from arch.voice.webrtc import WebRTCSignalingService
 
 PUBLIC_ORIGIN = "https://voice.test:8443"
 
@@ -170,12 +170,12 @@ def test_voice_websocket_requires_authenticated_same_origin_csrf_session(tmp_pat
             "/api/auth/login", headers=headers, json={"password": "correct-horse-battery-staple"}
         )
         csrf_token = login.json()["csrf_token"]
-        session_cookie = client.cookies.get("lva_session")
-        websocket_headers = {**headers, "Cookie": f"lva_session={session_cookie}"}
+        session_cookie = client.cookies.get("arch_session")
+        websocket_headers = {**headers, "Cookie": f"arch_session={session_cookie}"}
         with client.websocket_connect(
             "/api/voice/stream",
             headers=websocket_headers,
-            subprotocols=[f"lva-csrf.{csrf_token}"],
+        subprotocols=[f"arch-csrf.{csrf_token}"],
         ) as socket:
             assert socket.receive_text() == '{"type":"voice_ready"}'
 

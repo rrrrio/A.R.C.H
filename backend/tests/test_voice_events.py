@@ -8,7 +8,7 @@ from pipecat.frames.frames import (
     VADUserStartedSpeakingFrame,
 )
 
-from local_voice_agent.voice.events import event_from_frame
+from arch.voice.events import event_from_frame
 
 
 def test_voice_event_mapping_covers_status_and_captions() -> None:

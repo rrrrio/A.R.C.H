@@ -17,14 +17,14 @@ import wave
 from dataclasses import dataclass
 from pathlib import Path
 
-from local_voice_agent.auth.credentials import provision_credentials
+from arch.auth.credentials import provision_credentials
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = PROJECT_ROOT / "data"
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 NODE_DRIVER = PROJECT_ROOT / "frontend" / "scripts" / "browser_voice_e2e.mjs"
 SAMPLE_WAV = DATA_ROOT / "benchmarks" / "samples" / "fleurs_cmn_hans_cn_0000.wav"
-E2E_HOST = "local-voice-agent-e2e.local"
+E2E_HOST = "arch-e2e.local"
 
 
 @dataclass(frozen=True)
@@ -194,15 +194,15 @@ def main() -> None:
         audio = create_barge_in_fixture(args.audio, layout.root / "barge-in.wav")
     backend_port = reserve_port()
     https_port = reserve_port()
-    caddy_name = f"local-voice-agent-e2e-{layout.root.name}"
+    caddy_name = f"arch-e2e-{layout.root.name}"
     backend: subprocess.Popen[bytes] | None = None
     caddy_started = False
     try:
         write_caddyfile(layout.caddyfile, backend_port=backend_port, https_port=https_port)
         environment = os.environ | {
-            "LVA_DATA_DIR": str(layout.root),
-            "LVA_ARTIFACT_DIR": str(DATA_ROOT),
-            "LVA_PUBLIC_ORIGIN": f"https://{E2E_HOST}:{https_port}",
+            "ARCH_DATA_DIR": str(layout.root),
+            "ARCH_ARTIFACT_DIR": str(DATA_ROOT),
+            "ARCH_PUBLIC_ORIGIN": f"https://{E2E_HOST}:{https_port}",
         }
         with layout.backend_log.open("wb") as log_file:
             backend = subprocess.Popen(
@@ -210,7 +210,7 @@ def main() -> None:
                     sys.executable,
                     "-m",
                     "uvicorn",
-                    "local_voice_agent.main:app",
+                    "arch.main:app",
                     "--host",
                     "127.0.0.1",
                     "--port",

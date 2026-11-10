@@ -21,7 +21,7 @@ def _load_script() -> ModuleType:
 def test_prepare_rag_model_uses_the_configured_data_directory(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-    """A non-default LVA_DATA_DIR keeps the model and provenance under its own root."""
+    """A non-default ARCH_DATA_DIR keeps the model and provenance under its own root."""
     module = _load_script()
     model_path = tmp_path / "isolated-data/models/bge-m3/revision"
 

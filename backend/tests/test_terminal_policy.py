@@ -4,9 +4,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from local_voice_agent.agent.core import ToolRequest
-from local_voice_agent.tools.policy import PolicyDecision, TerminalToolPolicy
-from local_voice_agent.tools.terminal import TerminalExecutor
+from arch.agent.core import ToolRequest
+from arch.tools.policy import PolicyDecision, TerminalToolPolicy
+from arch.tools.terminal import TerminalExecutor
 
 
 def _request(argv: list[str], cwd: str = ".") -> ToolRequest:
@@ -124,9 +124,9 @@ def test_gateway_approved_adapters_create_and_read_confined_files_without_follow
     outside = tmp_path / "outside.txt"
     outside.write_text("private")
     (workspace / "escape.txt").symlink_to(outside)
-    from local_voice_agent.memory.migrations import MigrationRunner
-    from local_voice_agent.tools.approvals import ApprovalStore
-    from local_voice_agent.tools.gateway import ToolGateway, ToolOutcome
+    from arch.memory.migrations import MigrationRunner
+    from arch.tools.approvals import ApprovalStore
+    from arch.tools.gateway import ToolGateway, ToolOutcome
 
     database_path = tmp_path / "voice.sqlite3"
     MigrationRunner(database_path).migrate()

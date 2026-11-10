@@ -2,7 +2,7 @@
 
 import pytest
 
-from local_voice_agent.benchmarks.metrics import summarize_seconds
+from arch.benchmarks.metrics import summarize_seconds
 
 
 def test_summary_uses_nearest_rank_for_p95() -> None:

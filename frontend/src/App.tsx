@@ -265,7 +265,7 @@ function App() {
   return (
     <main className="workspace-shell">
       <header className="topbar">
-        <span className="product-name">Local Voice Agent</span>
+        <span className="product-name">A.R.C.H.</span>
         <span className={`connection-state connection-state--${session.kind}`} aria-live="polite">
           {session.kind === 'authenticated' ? '已登录' : '未登录'}
         </span>

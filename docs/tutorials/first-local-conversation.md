@@ -2,7 +2,7 @@
 
 本教程带你在服务主机本机完成首次登录和浏览器语音会话。完成后，浏览器会显示实时字幕和状态，并能从麦克风向本机模型发送语音。请先阅读 [配置参考](../reference/configuration.md)，确认机器具备 NVIDIA GPU、Docker、Python 3.12、Node.js 与 `uv`。
 
-本教程假定仓库位于 `/home/rrrrio/custom_chat/local_voice_agent`，使用默认域名 `local-voice-agent.local` 和端口 `8443`。
+本教程假定仓库位于 `/home/rrrrio/custom_chat/arch`，使用默认域名 `arch.local` 和端口 `8443`。
 
 ## 1. 初始化依赖与本地配置
 
@@ -39,12 +39,12 @@
 
 在第一个终端启动后端：
 
-    cd /home/rrrrio/custom_chat/local_voice_agent/backend
-    uv run uvicorn local_voice_agent.main:app --host 127.0.0.1 --port 8000
+    cd /home/rrrrio/custom_chat/arch/backend
+    uv run uvicorn arch.main:app --host 127.0.0.1 --port 8000
 
 在第二个终端启动网关：
 
-    cd /home/rrrrio/custom_chat/local_voice_agent
+    cd /home/rrrrio/custom_chat/arch
     make gateway-up
 
 确认后端可用：
@@ -59,19 +59,19 @@
 
 为避免访问进入公司或系统代理，在本机 hosts 文件添加一行：
 
-    127.0.0.1 local-voice-agent.local
+    127.0.0.1 arch.local
 
-系统代理的绕过列表还必须包含 `local-voice-agent.local`。Caddy 首次运行会生成本地 CA；导出其公有根证书：
+系统代理的绕过列表还必须包含 `arch.local`。Caddy 首次运行会生成本地 CA；导出其公有根证书：
 
-    docker cp local-voice-agent-caddy-1:/data/caddy/pki/authorities/local/root.crt /tmp/local-voice-agent-root.crt
+    docker cp arch-caddy-1:/data/caddy/pki/authorities/local/root.crt /tmp/arch-root.crt
 
-在浏览器的“证书颁发机构”中导入 `/tmp/local-voice-agent-root.crt`，并只勾选“信任该 CA 以标识网站”。不要复制 `deploy/caddy-data/` 或其中的私钥。
+在浏览器的“证书颁发机构”中导入 `/tmp/arch-root.crt`，并只勾选“信任该 CA 以标识网站”。不要复制 `deploy/caddy-data/` 或其中的私钥。
 
 ## 6. 登录并开始说话
 
 打开：
 
-    https://local-voice-agent.local:8443
+    https://arch.local:8443
 
 使用第 3 步设置的密码登录，选择麦克风，然后点击连接。浏览器请求麦克风权限时选择允许。成功后，页面会从“等待连接”变为“等待说话”；说话后可看到用户字幕、助手字幕和阶段延迟。
 
@@ -79,9 +79,9 @@
 
 服务可用时，以下命令应返回 `HTTP 200`：
 
-    curl --cacert /tmp/local-voice-agent-root.crt \
-      --resolve local-voice-agent.local:8443:127.0.0.1 \
-      https://local-voice-agent.local:8443/api/health
+    curl --cacert /tmp/arch-root.crt \
+      --resolve arch.local:8443:127.0.0.1 \
+      https://arch.local:8443/api/health
 
 如果页面显示“管理员密码尚未初始化”，重新执行第 3 步。若显示 `PR_END_OF_FILE_ERROR`，确认 hosts 与代理绕过项已设置；这通常表示浏览器将本地域名送进了上游代理，而不是证书文件本身失效。
 

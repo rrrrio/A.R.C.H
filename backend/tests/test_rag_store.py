@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from local_voice_agent.rag.store import KnowledgeStore
+from arch.rag.store import KnowledgeStore
 
 
 def test_knowledge_store_replaces_sources_searches_vectors_and_removes_missing_paths(

@@ -2,9 +2,9 @@
 
 import asyncio
 
-from local_voice_agent.avatar.adapter import AvatarCall, MockAvatarAdapter
-from local_voice_agent.voice.cancellation import CancellationController
-from local_voice_agent.voice.output_mux import OutputMode, OutputMux
+from arch.avatar.adapter import AvatarCall, MockAvatarAdapter
+from arch.voice.cancellation import CancellationController
+from arch.voice.output_mux import OutputMode, OutputMux
 
 
 def test_cancelled_utterance_cannot_emit_late_direct_audio_or_events() -> None:

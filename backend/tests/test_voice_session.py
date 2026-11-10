@@ -6,9 +6,9 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
-from local_voice_agent.voice import session as session_module
-from local_voice_agent.voice.models import VoiceModelPaths
-from local_voice_agent.voice.session import LocalVoiceSession
+from arch.voice import session as session_module
+from arch.voice.models import VoiceModelPaths
+from arch.voice.session import LocalVoiceSession
 
 type ReadyHandler = Callable[["FakeWorkerRunner"], Awaitable[None]]
 

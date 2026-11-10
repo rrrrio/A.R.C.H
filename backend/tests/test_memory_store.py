@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from local_voice_agent.memory.context import MAX_MEMORY_CANDIDATE_CHARS
-from local_voice_agent.memory.migrations import MIGRATIONS, Migration, MigrationRunner
-from local_voice_agent.memory.store import MemoryStore
+from arch.memory.context import MAX_MEMORY_CANDIDATE_CHARS
+from arch.memory.migrations import MIGRATIONS, Migration, MigrationRunner
+from arch.memory.store import MemoryStore
 
 
 def test_migrations_are_idempotent_and_backup_before_a_later_schema_change(tmp_path: Path) -> None:

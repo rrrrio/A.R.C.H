@@ -3,7 +3,7 @@
 	auto_https disable_redirects
 }
 
-https://{$LVA_LAN_HOST:local-voice-agent.local}:{$LVA_HTTPS_PORT:8443} {
+https://{$ARCH_LAN_HOST:arch.local}:{$ARCH_HTTPS_PORT:8443} {
 	tls internal
 
 	@api path /api/*

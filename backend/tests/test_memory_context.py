@@ -1,6 +1,6 @@
 """Tests for bounded approved-memory prompt context."""
 
-from local_voice_agent.memory.context import (
+from arch.memory.context import (
     MAX_APPROVED_MEMORY_CONTEXT_CHARS,
     MAX_APPROVED_MEMORY_COUNT,
     MAX_MEMORY_CANDIDATE_CHARS,

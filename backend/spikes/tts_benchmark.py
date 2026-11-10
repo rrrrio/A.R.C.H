@@ -8,8 +8,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from local_voice_agent.benchmarks.metrics import summary_dict
-from local_voice_agent.benchmarks.reporting import write_json_report
+from arch.benchmarks.metrics import summary_dict
+from arch.benchmarks.reporting import write_json_report
 
 
 def parse_args() -> argparse.Namespace:

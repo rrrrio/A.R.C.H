@@ -1,4 +1,4 @@
-name: local-voice-agent
+name: arch
 
 services:
   ollama:
@@ -27,8 +27,8 @@ services:
     profiles: ["gateway"]
     network_mode: host
     environment:
-      LVA_LAN_HOST: ${LVA_LAN_HOST:-local-voice-agent.local}
-      LVA_HTTPS_PORT: ${LVA_HTTPS_PORT:-8443}
+      ARCH_LAN_HOST: ${ARCH_LAN_HOST:-${LVA_LAN_HOST:-arch.local}}
+      ARCH_HTTPS_PORT: ${ARCH_HTTPS_PORT:-${LVA_HTTPS_PORT:-8443}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ../frontend/dist:/srv:ro

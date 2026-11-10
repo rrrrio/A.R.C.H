@@ -34,7 +34,7 @@ compose-config:
 	$(COMPOSE) config --quiet
 
 dev:
-	@printf '%s\n' 'Start the backend with: cd backend && uv run uvicorn local_voice_agent.main:app --host 127.0.0.1 --port 8000'
+	@printf '%s\n' 'Start the backend with: cd backend && uv run uvicorn arch.main:app --host 127.0.0.1 --port 8000'
 	@printf '%s\n' 'Start the frontend with: cd frontend && npm run dev'
 
 migrate:

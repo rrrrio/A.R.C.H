@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from local_voice_agent.agent.core import ToolRequest
-from local_voice_agent.memory.migrations import MigrationRunner
-from local_voice_agent.tools.approvals import ApprovalStore
-from local_voice_agent.tools.policy import TerminalToolPolicy
+from arch.agent.core import ToolRequest
+from arch.memory.migrations import MigrationRunner
+from arch.tools.approvals import ApprovalStore
+from arch.tools.policy import TerminalToolPolicy
 
 
 class _Clock:

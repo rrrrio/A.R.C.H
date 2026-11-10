@@ -1,6 +1,6 @@
 """Tests for the browser voice media pipeline defaults."""
 
-from local_voice_agent.voice.pipeline import LAN_VAD_PARAMS
+from arch.voice.pipeline import LAN_VAD_PARAMS
 
 
 def test_lan_vad_accepts_quieter_microphones() -> None:

@@ -11,8 +11,8 @@ import soundfile as sf
 from kokoro_onnx import Kokoro
 from misaki import zh
 
-from local_voice_agent.benchmarks.metrics import summary_dict
-from local_voice_agent.benchmarks.reporting import write_json_report
+from arch.benchmarks.metrics import summary_dict
+from arch.benchmarks.reporting import write_json_report
 
 
 def main() -> None:

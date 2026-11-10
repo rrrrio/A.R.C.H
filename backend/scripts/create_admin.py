@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import getpass
 
-from local_voice_agent.auth.credentials import provision_credentials
-from local_voice_agent.settings import get_settings
+from arch.auth.credentials import provision_credentials
+from arch.settings import get_settings
 
 
 def main() -> None:

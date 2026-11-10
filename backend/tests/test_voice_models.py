@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from local_voice_agent.voice.llama import LlamaCppServer
-from local_voice_agent.voice.models import VoiceModelPaths
+from arch.voice.llama import LlamaCppServer
+from arch.voice.models import VoiceModelPaths
 
 
 def test_voice_model_paths_report_every_missing_required_artifact(tmp_path: Path) -> None:

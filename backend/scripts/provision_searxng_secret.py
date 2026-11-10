@@ -7,7 +7,7 @@ import secrets
 import stat
 from pathlib import Path
 
-from local_voice_agent.settings import get_settings
+from arch.settings import get_settings
 
 ENVIRONMENT_VARIABLE = "SEARXNG_SECRET"
 MINIMUM_SECRET_LENGTH = 32

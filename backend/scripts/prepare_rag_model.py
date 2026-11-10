@@ -6,7 +6,7 @@ import json
 
 from huggingface_hub import snapshot_download
 
-from local_voice_agent.settings import get_settings
+from arch.settings import get_settings
 
 MODEL_REPO = "BAAI/bge-m3"
 MODEL_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"

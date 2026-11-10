@@ -5,7 +5,7 @@ import json
 
 import httpx
 
-from local_voice_agent.memory.extractor import LlamaCppMemoryCandidateExtractor
+from arch.memory.extractor import LlamaCppMemoryCandidateExtractor
 
 
 def test_local_extractor_accepts_only_bounded_json_candidates() -> None:

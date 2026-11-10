@@ -4,7 +4,7 @@
 
 浏览器需要安全上下文才能采集麦克风，且登录 cookie、CSRF 和 WebRTC 信令必须共享同一 origin。因此 Caddy 是唯一面向 LAN 的服务：它在 `8443` 提供静态前端，并把 `/api/*` 转发给仅监听 `127.0.0.1:8000` 的 FastAPI 后端。模型、搜索和数据库不直接暴露给局域网。
 
-`local-voice-agent.local` 不是可选显示名，而是当前 TLS 证书、Caddy 站点和 `LVA_PUBLIC_ORIGIN` 的共同标识。用 IP 地址替代它会改变 TLS SNI 和浏览器 origin，导致证书或请求校验失败。局域网部署应让 DNS 或客户端 hosts 把该名称解析到服务主机，而不应改用裸 IP。
+`arch.local` 不是可选显示名，而是当前 TLS 证书、Caddy 站点和 `ARCH_PUBLIC_ORIGIN` 的共同标识。用 IP 地址替代它会改变 TLS SNI 和浏览器 origin，导致证书或请求校验失败。局域网部署应让 DNS 或客户端 hosts 把该名称解析到服务主机，而不应改用裸 IP。
 
 ## 实时语音路径
 

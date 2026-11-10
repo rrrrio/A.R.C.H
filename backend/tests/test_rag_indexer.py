@@ -3,8 +3,8 @@
 from collections.abc import Sequence
 from pathlib import Path
 
-from local_voice_agent.rag.indexer import KnowledgeIndexer
-from local_voice_agent.rag.store import KnowledgeStore
+from arch.rag.indexer import KnowledgeIndexer
+from arch.rag.store import KnowledgeStore
 
 
 class FakeEmbedder:

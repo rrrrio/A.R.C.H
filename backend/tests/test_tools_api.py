@@ -9,16 +9,16 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from local_voice_agent.agent.core import ToolRequest
-from local_voice_agent.auth.credentials import provision_credentials
-from local_voice_agent.auth.service import AuthService
-from local_voice_agent.main import create_app
-from local_voice_agent.memory.store import MemoryStore
-from local_voice_agent.tools.approvals import ApprovalStore
-from local_voice_agent.tools.gateway import ToolGateway, ToolOutcome
-from local_voice_agent.tools.policy import TerminalToolPolicy
-from local_voice_agent.tools.terminal import TerminalExecutor
-from local_voice_agent.voice.webrtc import WebRTCSignalingService
+from arch.agent.core import ToolRequest
+from arch.auth.credentials import provision_credentials
+from arch.auth.service import AuthService
+from arch.main import create_app
+from arch.memory.store import MemoryStore
+from arch.tools.approvals import ApprovalStore
+from arch.tools.gateway import ToolGateway, ToolOutcome
+from arch.tools.policy import TerminalToolPolicy
+from arch.tools.terminal import TerminalExecutor
+from arch.voice.webrtc import WebRTCSignalingService
 
 PUBLIC_ORIGIN = "https://voice.test:8443"
 

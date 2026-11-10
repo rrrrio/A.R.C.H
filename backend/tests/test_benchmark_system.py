@@ -1,6 +1,6 @@
 """Tests for host-observation parsing without requiring an NVIDIA GPU."""
 
-from local_voice_agent.benchmarks.system import parse_memory_mib
+from arch.benchmarks.system import parse_memory_mib
 
 
 def test_parse_memory_mib_accepts_one_integer_value() -> None:

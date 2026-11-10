@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from local_voice_agent.rag.embeddings import SentenceTransformerEmbedder
-from local_voice_agent.rag.indexer import KnowledgeIndexer
-from local_voice_agent.rag.store import KnowledgeStore
-from local_voice_agent.settings import get_settings
+from arch.rag.embeddings import SentenceTransformerEmbedder
+from arch.rag.indexer import KnowledgeIndexer
+from arch.rag.store import KnowledgeStore
+from arch.settings import get_settings
 
 
 def main() -> None:

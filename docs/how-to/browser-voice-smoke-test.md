@@ -23,11 +23,11 @@
     browser-e2e: assistant transcript and audio latency observed
     browser-e2e: passed
 
-该命令会在 `data/e2e/<随机目录>` 创建一次性 Argon2id 管理员凭据和 SQLite 状态。它通过 `LVA_ARTIFACT_DIR=data` 从已有制品读取固定模型和 llama.cpp 路径，不会把共享 `models` 或 `runtime` 软链接进测试目录。后端和 HTTPS 网关各使用一个随机 loopback 端口；Chrome 使用独立 profile 和进程组，将固定中文 WAV 注入伪麦克风。测试密码只经标准输入传给 Chrome 驱动，不进入命令行或日志。
+该命令会在 `data/e2e/<随机目录>` 创建一次性 Argon2id 管理员凭据和 SQLite 状态。它通过 `ARCH_ARTIFACT_DIR=data` 从已有制品读取固定模型和 llama.cpp 路径，不会把共享 `models` 或 `runtime` 软链接进测试目录。后端和 HTTPS 网关各使用一个随机 loopback 端口；Chrome 使用独立 profile 和进程组，将固定中文 WAV 注入伪麦克风。测试密码只经标准输入传给 Chrome 驱动，不进入命令行或日志。
 
 ## 验证清理与排查
 
-成功后，`data/e2e/` 不应保留该次随机目录，`docker ps` 不应出现 `local-voice-agent-e2e-` 容器，`ps` 不应显示测试启动的 `llama-server` 或 Chrome profile 进程。失败时可保留临时资料：
+成功后，`data/e2e/` 不应保留该次随机目录，`docker ps` 不应出现 `arch-e2e-` 容器，`ps` 不应显示测试启动的 `llama-server` 或 Chrome profile 进程。失败时可保留临时资料：
 
     uv run --no-sync --directory backend python scripts/run_browser_voice_e2e.py --keep-artifacts
 

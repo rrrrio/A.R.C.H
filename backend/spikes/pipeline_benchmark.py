@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from local_voice_agent.benchmarks.reporting import write_json_report
+from arch.benchmarks.reporting import write_json_report
 
 
 def parse_args() -> argparse.Namespace:

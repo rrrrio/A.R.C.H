@@ -13,7 +13,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 
-from local_voice_agent.agent.core import (
+from arch.agent.core import (
     AgentCore,
     AgentRequest,
     AgentResponseEvent,
@@ -21,12 +21,12 @@ from local_voice_agent.agent.core import (
     ToolRequest,
     ToolResult,
 )
-from local_voice_agent.memory.extractor import MemoryCandidateExtractor
-from local_voice_agent.memory.store import MemoryStore
-from local_voice_agent.rag.retriever import Retriever
-from local_voice_agent.tools.gateway import ToolOutcome
-from local_voice_agent.tools.terminal import TerminalResult
-from local_voice_agent.voice.agent_processor import PipecatAgentProcessor, ToolDispatcher
+from arch.memory.extractor import MemoryCandidateExtractor
+from arch.memory.store import MemoryStore
+from arch.rag.retriever import Retriever
+from arch.tools.gateway import ToolOutcome
+from arch.tools.terminal import TerminalResult
+from arch.voice.agent_processor import PipecatAgentProcessor, ToolDispatcher
 
 
 class FakeAgent:

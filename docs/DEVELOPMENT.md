@@ -20,7 +20,7 @@
 后端只绑定回环地址：
 
     cd backend
-    uv run uvicorn local_voice_agent.main:app --host 127.0.0.1 --port 8000
+    uv run uvicorn arch.main:app --host 127.0.0.1 --port 8000
 
 前端开发服务器可单独运行：
 
@@ -53,6 +53,6 @@
 
 ## 文档同步要求
 
-每次改变用户可见行为、部署步骤、网络/安全边界、配置参数、数据格式或验收状态时，必须在同一变更中更新相应 `docs/` 页面和 `execplan/local-voice-agent.md`。选择一个与读者任务匹配的 Diataxis 类型：新手线性路径写入 `docs/tutorials/`，具体操作写入 `docs/how-to/`，事实与参数写入 `docs/reference/`，设计取舍写入 `docs/explanation/`。不要把多个类型重新堆回本页。
+每次改变用户可见行为、部署步骤、网络/安全边界、配置参数、数据格式或验收状态时，必须在同一变更中更新相应 `docs/` 页面和 `execplan/arch.md`。选择一个与读者任务匹配的 Diataxis 类型：新手线性路径写入 `docs/tutorials/`，具体操作写入 `docs/how-to/`，事实与参数写入 `docs/reference/`，设计取舍写入 `docs/explanation/`。不要把多个类型重新堆回本页。
 
 文档评审至少检查：命令是否存在、默认值是否与 `.env.example` 和代码一致、网络地址是否与 Caddy 和后端实际监听一致、未完成能力是否明确标注，以及新增或变更页面是否在 `docs/README.md` 中可找到。涉及多组件数据流时，使用简洁、证据可追溯的 ASCII 图。

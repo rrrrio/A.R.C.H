@@ -899,7 +899,7 @@ wheels = [
 ]
 
 [[package]]
-name = "local-voice-agent"
+name = "arch"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

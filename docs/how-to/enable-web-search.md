@@ -23,8 +23,8 @@
 
 编辑 `.env`，设置：
 
-    LVA_SEARCH_ENABLED=true
-    LVA_SEARXNG_ENDPOINT=http://127.0.0.1:8080
+    ARCH_SEARCH_ENABLED=true
+    ARCH_SEARXNG_ENDPOINT=http://127.0.0.1:8080
 
 重启运行在 `127.0.0.1:8000` 的后端，使其重新读取配置。应用拒绝非回环、带路径、查询、用户名或密码的搜索端点。
 
@@ -36,7 +36,7 @@
 
     make search-down
 
-关闭功能时，把 `.env` 改回 `LVA_SEARCH_ENABLED=false` 并重启后端。保留密钥文件不会启用搜索；只有设置变量并运行容器后，应用才会创建搜索客户端。
+关闭功能时，把 `.env` 改回 `ARCH_SEARCH_ENABLED=false` 并重启后端。保留密钥文件不会启用搜索；只有设置变量并运行容器后，应用才会创建搜索客户端。
 
 ## 排查
 

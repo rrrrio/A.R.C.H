@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from local_voice_agent.rag.ingest import MAX_SOURCE_BYTES, chunk_text, scan_inbox
+from arch.rag.ingest import MAX_SOURCE_BYTES, chunk_text, scan_inbox
 
 
 def test_scan_inbox_accepts_only_bounded_regular_supported_files(tmp_path: Path) -> None:

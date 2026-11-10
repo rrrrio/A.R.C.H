@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 
-from pipecat.frames.frames import InputAudioRawFrame, OutputAudioRawFrame, OutputTransportMessageFrame
+from pipecat.frames.frames import (
+    InputAudioRawFrame,
+    OutputAudioRawFrame,
+    OutputTransportMessageFrame,
+)
 
-from local_voice_agent.voice.websocket import BrowserPCMSerializer
+from arch.voice.websocket import BrowserPCMSerializer
 
 
 def test_serializer_decodes_only_valid_pcm16_microphone_bytes() -> None:

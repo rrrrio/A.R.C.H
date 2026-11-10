@@ -1,7 +1,7 @@
-"""Apply the local Voice Agent's versioned SQLite migrations."""
+"""Apply the A.R.C.H.'s versioned SQLite migrations."""
 
-from local_voice_agent.memory.store import MemoryStore
-from local_voice_agent.settings import get_settings
+from arch.memory.store import MemoryStore
+from arch.settings import get_settings
 
 
 def main() -> None:

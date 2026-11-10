@@ -7,8 +7,8 @@ from pipecat.frames.frames import (
     TTSAudioRawFrame,
 )
 
-from local_voice_agent.observability.metrics import LatencyStage, LatencyTracker
-from local_voice_agent.voice.metrics import VoiceLatencyProcessor
+from arch.observability.metrics import LatencyStage, LatencyTracker
+from arch.voice.metrics import VoiceLatencyProcessor
 
 
 class ManualClock:

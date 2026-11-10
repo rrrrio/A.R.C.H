@@ -12,7 +12,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 
-from local_voice_agent.voice.pipecat_output import PipecatOutputMuxProcessor
+from arch.voice.pipecat_output import PipecatOutputMuxProcessor
 
 
 class InspectingOutputMuxProcessor(PipecatOutputMuxProcessor):

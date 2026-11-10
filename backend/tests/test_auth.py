@@ -4,13 +4,13 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from local_voice_agent.auth.credentials import (
+from arch.auth.credentials import (
     load_credentials,
     provision_credentials,
     verify_password,
 )
-from local_voice_agent.auth.service import SESSION_COOKIE_NAME, AuthService
-from local_voice_agent.main import create_app
+from arch.auth.service import SESSION_COOKIE_NAME, AuthService
+from arch.main import create_app
 
 PUBLIC_ORIGIN = "https://voice.test:8443"
 

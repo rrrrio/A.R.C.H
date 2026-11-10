@@ -42,7 +42,7 @@ def test_write_caddyfile_uses_the_isolated_origin_and_backend_port(tmp_path: Pat
     module.write_caddyfile(destination, backend_port=18002, https_port=19443)
 
     content = destination.read_text(encoding="utf-8")
-    assert "https://local-voice-agent-e2e.local:19443" in content
+    assert "https://arch-e2e.local:19443" in content
     assert "bind 127.0.0.1" in content
     assert "reverse_proxy 127.0.0.1:18002" in content
     assert "root * /srv" in content

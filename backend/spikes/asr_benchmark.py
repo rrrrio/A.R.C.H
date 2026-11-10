@@ -6,9 +6,9 @@ import argparse
 import time
 from pathlib import Path
 
-from local_voice_agent.benchmarks.metrics import summary_dict
-from local_voice_agent.benchmarks.reporting import write_json_report
-from local_voice_agent.benchmarks.system import gpu_memory_used_mib
+from arch.benchmarks.metrics import summary_dict
+from arch.benchmarks.reporting import write_json_report
+from arch.benchmarks.system import gpu_memory_used_mib
 
 
 def parse_args() -> argparse.Namespace:

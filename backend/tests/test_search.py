@@ -5,7 +5,7 @@ import asyncio
 import httpx
 import pytest
 
-from local_voice_agent.tools.search import SearchUnavailableError, SearxngSearchClient
+from arch.tools.search import SearchUnavailableError, SearxngSearchClient
 
 
 def test_search_client_uses_bounded_loopback_json_request_and_sanitizes_results() -> None:

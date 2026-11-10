@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from local_voice_agent.main import app
+from arch.main import app
 
 
 def test_health_reports_service_status() -> None:
