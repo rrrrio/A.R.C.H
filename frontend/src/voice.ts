@@ -8,6 +8,7 @@ export type LatencyStage = 'speech-start' | 'speech-end' | 'asr-final' | 'llm-fi
 export type VoiceEvent =
   | { type: 'voice_ready' }
   | { type: 'voice_input_ready' }
+  | { type: 'memory_candidates_ready' }
   | { type: 'voice_state'; state: VoiceActivity }
   | { type: 'transcript'; state: VoiceActivity; role: 'user' | 'assistant'; phase: 'final' | 'start' | 'delta' | 'end'; text: string }
   | { type: 'latency'; utterance_id: string; stage: LatencyStage; elapsed_ms: number }
@@ -376,7 +377,7 @@ export function isVoiceEvent(value: unknown): value is VoiceEvent {
   if (value.type === 'voice_state') {
     return 'state' in value && isVoiceActivity(value.state)
   }
-  if (value.type === 'voice_ready' || value.type === 'voice_input_ready') return Object.keys(value).length === 1
+  if (value.type === 'voice_ready' || value.type === 'voice_input_ready' || value.type === 'memory_candidates_ready') return Object.keys(value).length === 1
   if (value.type === 'latency') {
     return 'utterance_id' in value &&
       typeof value.utterance_id === 'string' &&

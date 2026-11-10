@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -64,6 +65,7 @@ class PipecatAgentProcessor(FrameProcessor):
         history_limit: int = 20,
         memory_store: MemoryStore | None = None,
         candidate_extractor: MemoryCandidateExtractor | None = None,
+        on_memory_candidates_ready: Callable[[], None] | None = None,
         retriever: Retriever | None = None,
         tool_gateway: ToolDispatcher | None = None,
     ) -> None:
@@ -74,6 +76,7 @@ class PipecatAgentProcessor(FrameProcessor):
         self._active_utterance_id: str | None = None
         self._memory_store = memory_store
         self._candidate_extractor = candidate_extractor
+        self._on_memory_candidates_ready = on_memory_candidates_ready
         self._retriever = retriever
         self._tool_gateway = tool_gateway
         self._candidate_task: asyncio.Task[None] | None = None
@@ -378,8 +381,16 @@ class PipecatAgentProcessor(FrameProcessor):
             return
         try:
             candidates = await self._candidate_extractor.extract(message.content, language)
+            created_candidate = False
             for content in candidates:
                 await asyncio.to_thread(self._memory_store.create_candidate, message.id, content)
+                created_candidate = True
+            if created_candidate and self._on_memory_candidates_ready is not None:
+                try:
+                    self._on_memory_candidates_ready()
+                except Exception:
+                    # The candidate is durable even if its transient browser notification is lost.
+                    pass
         except asyncio.CancelledError:
             raise
         except Exception:

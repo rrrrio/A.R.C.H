@@ -1,7 +1,7 @@
 """Tests for the Pipecat media-to-Agent Core bridge."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from pipecat.frames.frames import (
@@ -59,6 +59,7 @@ class InspectingAgentProcessor(PipecatAgentProcessor):
         agent: AgentCore,
         memory_store: MemoryStore | None = None,
         candidate_extractor: MemoryCandidateExtractor | None = None,
+        on_memory_candidates_ready: Callable[[], None] | None = None,
         retriever: Retriever | None = None,
         tool_gateway: ToolDispatcher | None = None,
     ) -> None:
@@ -66,6 +67,7 @@ class InspectingAgentProcessor(PipecatAgentProcessor):
             agent,
             memory_store=memory_store,
             candidate_extractor=candidate_extractor,
+            on_memory_candidates_ready=on_memory_candidates_ready,
             retriever=retriever,
             tool_gateway=tool_gateway,
         )
@@ -170,11 +172,15 @@ class FakeCandidateExtractor:
 
 
 def test_agent_processor_extracts_pending_memory_after_a_completed_answer(tmp_path: Path) -> None:
-    """Candidate extraction is background work and never inserts an approved memory directly."""
+    """A durable pending candidate notifies its current browser without auto-approval."""
     store = MemoryStore(tmp_path / "voice.sqlite3")
     store.migrate()
+    notifications: list[str] = []
     processor = InspectingAgentProcessor(
-        FakeAgent(), memory_store=store, candidate_extractor=FakeCandidateExtractor()
+        FakeAgent(),
+        memory_store=store,
+        candidate_extractor=FakeCandidateExtractor(),
+        on_memory_candidates_ready=lambda: notifications.append("ready"),
     )
 
     async def exercise() -> None:
@@ -190,6 +196,7 @@ def test_agent_processor_extracts_pending_memory_after_a_completed_answer(tmp_pa
     assert [(candidate.content, candidate.status) for candidate in candidates] == [
         ("用户偏好简洁回答", "pending")
     ]
+    assert notifications == ["ready"]
 
 
 class BlockingCandidateExtractor:

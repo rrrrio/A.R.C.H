@@ -9,6 +9,7 @@
 - [通过已有穿透网络访问](how-to/routed-network-access.md)：让已经能到达 LAN 的远程浏览器使用同一语音页面。
 - [启用或关闭联网搜索](how-to/enable-web-search.md)：启动本地 SearXNG，并保持它不暴露到局域网。
 - [管理本地知识库](how-to/manage-knowledge.md)：放入资料、建立索引、确认删除生效。
+- [管理审批记忆](how-to/manage-memory.md)：审阅、批准、验证和删除本机长期偏好与事实。
 - [管理本地声音参考](how-to/manage-voice-profiles.md)：保存经确认授权的短 WAV 参考，并了解当前克隆运行时边界。
 - [准备可选 Qwen 声音克隆运行时](how-to/prepare-qwen-tts.md)：先审阅无写入计划，再明确下载、校验和隔离可选制品。
 - [备份和恢复本地数据](how-to/backup-and-restore.md)：创建经校验的数据库和知识资料归档，并安全恢复。

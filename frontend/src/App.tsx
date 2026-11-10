@@ -224,6 +224,10 @@ function App() {
 
   function handleVoiceEvent(event: VoiceEvent) {
     if (event.type === 'voice_input_ready') clearInputReadyTimer()
+    if (event.type === 'memory_candidates_ready') {
+      void refreshMemoryCandidates()
+      return
+    }
     if (event.type === 'voice_ready' || event.type === 'voice_input_ready') {
       setVoiceState((current) => current === 'idle' || current === 'error' ? current : 'ready')
       return

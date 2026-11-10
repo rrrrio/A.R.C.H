@@ -128,6 +128,7 @@ def _create_pipeline_worker(
         LlamaCppAgentCore(llama_endpoint),
         memory_store=memory_store,
         candidate_extractor=LlamaCppMemoryCandidateExtractor(llama_endpoint),
+        on_memory_candidates_ready=lambda: send_event({"type": "memory_candidates_ready"}),
         retriever=retriever,
         tool_gateway=tool_gateway,
     )
