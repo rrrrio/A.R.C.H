@@ -13,6 +13,7 @@
 - [准备可选 Qwen 声音克隆运行时](how-to/prepare-qwen-tts.md)：先审阅无写入计划，再明确下载、校验和隔离可选制品。
 - [备份和恢复本地数据](how-to/backup-and-restore.md)：创建经校验的数据库和知识资料归档，并安全恢复。
 - [运行浏览器语音冒烟验收](how-to/browser-voice-smoke-test.md)：用固定本地 WAV 验证完整浏览器语音链路。
+- [测量目标设备语音验收](how-to/measure-device-voice-acceptance.md)：在第二台 LAN 设备上记录可听首音和人工插话的 20 轮 p95。
 - [运行操作](OPERATIONS.md)：当前服务的启动、停止、检查和恢复边界。
 - [卸载](UNINSTALL.md)：预览并删除生成物，默认保留用户数据。
 - [安全边界](SECURITY.md)：网络、凭据、数据、工具与当前运行限制。
