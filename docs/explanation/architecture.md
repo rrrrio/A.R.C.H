@@ -12,7 +12,7 @@
 
     Browser microphone
            |
-      HTTPS + WebRTC
+      HTTPS + WebRTC（优先）
            v
     Caddy -> FastAPI signaling -> Pipecat worker
                                    |
@@ -24,6 +24,8 @@
                                                             -> future avatar
 
 当前输入与输出分别为 16 kHz 和 24 kHz。ASR 使用本地 Faster-Whisper；会话创建时启动受后端拥有的 loopback llama.cpp；TTS 使用 Kokoro 中文声线。Qwen3 请求与 llama.cpp 服务均关闭 reasoning，避免推理内容占满实时工具调用的输出预算。
+
+当 WebRTC 信令成功但服务器没有收到麦克风媒体时，浏览器会释放 WebRTC，并通过同一 HTTPS origin 建立受认证的 WSS PCM 通道。回退通道输入为 16 kHz PCM16、输出为 24 kHz PCM16，后续仍进入同一条 Pipecat 流水线。服务器确认收到第一帧输入后，正常 LAN 连接继续使用 WebRTC；只有未确认输入的连接才会自动回退。
 
 ## 取消与单会话约束
 
