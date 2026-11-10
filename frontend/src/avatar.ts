@@ -16,7 +16,7 @@ export function boundAvatarEnergy(value: number): number {
 export class BrowserAvatar {
   private readonly scene = new THREE.Scene()
   private readonly camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100)
-  private readonly clock = new THREE.Clock()
+  private readonly timer = new THREE.Timer()
   private readonly fallback = new THREE.Group()
   private readonly fallbackMouth: THREE.Mesh
   private host: HTMLElement | null = null
@@ -49,27 +49,22 @@ export class BrowserAvatar {
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(host)
     this.resize()
-    this.render()
+    this.render(performance.now())
   }
 
   async load(file: File): Promise<void> {
     if (!isVrmFile(file)) throw new Error('请选择 .vrm 文件。')
-    const url = URL.createObjectURL(file)
-    try {
-      const loader = new GLTFLoader()
-      loader.register((parser) => new VRMLoaderPlugin(parser))
-      const gltf = await loader.loadAsync(url)
-      const vrm = gltf.userData.vrm
-      if (!vrm) throw new Error('该文件不是可加载的 VRM 模型。')
-      this.unloadVrm()
-      VRMUtils.rotateVRM0(vrm)
-      vrm.scene.position.set(0, -1.22, 0)
-      this.scene.add(vrm.scene)
-      this.vrm = vrm
-      this.fallback.visible = false
-    } finally {
-      URL.revokeObjectURL(url)
-    }
+    const loader = new GLTFLoader()
+    loader.register((parser) => new VRMLoaderPlugin(parser))
+    const gltf = await loader.parseAsync(await file.arrayBuffer(), '')
+    const vrm = gltf.userData.vrm
+    if (!vrm) throw new Error('该文件不是可加载的 VRM 模型。')
+    this.unloadVrm()
+    VRMUtils.rotateVRM0(vrm)
+    this.frameVrm(vrm)
+    this.scene.add(vrm.scene)
+    this.vrm = vrm
+    this.fallback.visible = false
   }
 
   setEnergy(value: number): void {
@@ -100,10 +95,11 @@ export class BrowserAvatar {
     return mouth
   }
 
-  private render = (): void => {
+  private render = (timestamp: number): void => {
     const renderer = this.renderer
     if (!renderer) return
-    const delta = this.clock.getDelta()
+    this.timer.update(timestamp)
+    const delta = this.timer.getDelta()
     const mouthOpen = 0.22 + this.energy * 1.55
     this.fallbackMouth.scale.y = mouthOpen
     this.vrm?.expressionManager?.setValue('aa', this.energy)
@@ -129,12 +125,26 @@ export class BrowserAvatar {
     this.fallback.visible = true
   }
 
+  private frameVrm(vrm: VRM): void {
+    const bounds = new THREE.Box3().setFromObject(vrm.scene)
+    const size = bounds.getSize(new THREE.Vector3())
+    if (size.y <= 0) return
+    const targetHeight = 2.5
+    vrm.scene.scale.setScalar(targetHeight / size.y)
+    bounds.setFromObject(vrm.scene)
+    const center = bounds.getCenter(new THREE.Vector3())
+    vrm.scene.position.x -= center.x
+    vrm.scene.position.z -= center.z
+    vrm.scene.position.y += -1.62 - bounds.min.y
+  }
+
   private disposeRenderer(): void {
     if (this.frameId !== null) cancelAnimationFrame(this.frameId)
     this.frameId = null
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
     this.renderer?.dispose()
+    this.timer.dispose()
     this.renderer?.domElement.remove()
     this.renderer = null
     this.host = null
