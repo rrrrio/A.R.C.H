@@ -17,6 +17,7 @@ from arch.voice.qwen_clone import (
     QwenCloneTTSService,
     QwenCloneUnavailable,
     _read_message,
+    split_clone_text,
 )
 
 
@@ -44,6 +45,35 @@ def test_qwen_clone_service_emits_profile_bound_24khz_pcm() -> None:
     assert isinstance(frames[0], TTSAudioRawFrame)
     assert frames[0].sample_rate == 24000
     assert frames[0].context_id == "turn-1"
+
+
+def test_qwen_clone_service_emits_each_completed_sentence_before_synthesizing_the_next() -> None:
+    """A slow clone worker cannot hold later sentence PCM behind a full response."""
+    received: list[str] = []
+
+    async def synthesize(text: str, _: VoiceProfile) -> tuple[bytes, int]:
+        received.append(text)
+        return bytes([len(received), 0]), 24000
+
+    async def exercise() -> list[object]:
+        service = QwenCloneTTSService(_profile(), synthesize)
+        return [frame async for frame in service.run_tts("第一句。第二句！尾句", "turn-1")]
+
+    frames = asyncio.run(exercise())
+
+    assert received == ["第一句。", "第二句！", "尾句"]
+    assert [frame.audio for frame in frames if isinstance(frame, TTSAudioRawFrame)] == [
+        b"\x01\x00",
+        b"\x02\x00",
+        b"\x03\x00",
+    ]
+
+
+def test_split_clone_text_bounds_punctuation_free_input() -> None:
+    """A long model response without terminal punctuation still has finite worker requests."""
+    assert split_clone_text("甲" * 5, maximum_chars=2) == ("甲甲", "甲甲", "甲")
+    with pytest.raises(ValueError, match="positive"):
+        split_clone_text("文本", maximum_chars=0)
 
 
 def test_qwen_clone_service_does_not_hide_unavailable_or_wrong_format_runtime() -> None:

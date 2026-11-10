@@ -20,12 +20,33 @@ from arch.voice.profiles import VoiceProfile
 QWEN_OUTPUT_SAMPLE_RATE = 24000
 QWEN_MODEL_REVISION = "c27fe8aa05b732b1376d0f6a1e522fbccb84abbd"
 MAX_QWEN_MESSAGE_BYTES = 32 * 1024 * 1024
+MAX_QWEN_SENTENCE_CHARS = 120
+_SENTENCE_ENDINGS = frozenset("。！？!?；;")
 type CloneSynthesize = Callable[[str, VoiceProfile], Awaitable[tuple[bytes, int]]]
 type CloneCancel = Callable[[], Awaitable[None]]
 
 
 class QwenCloneUnavailable(RuntimeError):
     """Indicate that an explicitly selected clone mode cannot be started safely."""
+
+
+def split_clone_text(text: str, maximum_chars: int = MAX_QWEN_SENTENCE_CHARS) -> tuple[str, ...]:
+    """Split clone input on terminal punctuation while bounding each synthesis request."""
+    if maximum_chars < 1:
+        raise ValueError("Qwen clone sentence length must be positive.")
+    chunks: list[str] = []
+    current: list[str] = []
+    for character in text.strip():
+        current.append(character)
+        if character in _SENTENCE_ENDINGS or len(current) >= maximum_chars:
+            chunk = "".join(current).strip()
+            if chunk:
+                chunks.append(chunk)
+            current.clear()
+    remaining = "".join(current).strip()
+    if remaining:
+        chunks.append(remaining)
+    return tuple(chunks)
 
 
 class QwenCloneRuntime:
@@ -159,24 +180,31 @@ class QwenCloneTTSService(TTSService):
 
     @traced_tts
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
-        """Synthesize one profile-bound utterance and reject incompatible PCM formats."""
+        """Synthesize bounded sentences and release each valid PCM result immediately."""
         try:
             await self.start_tts_usage_metrics(text)
-            audio, sample_rate = await self._synthesize(text, self._profile)
-            if sample_rate != QWEN_OUTPUT_SAMPLE_RATE:
-                raise QwenCloneUnavailable(
-                    "Qwen clone runtime returned "
-                    f"{sample_rate} Hz instead of {QWEN_OUTPUT_SAMPLE_RATE} Hz."
+            chunks = split_clone_text(text)
+            if not chunks:
+                raise QwenCloneUnavailable("Qwen clone synthesis text is empty.")
+            first_chunk = True
+            for chunk in chunks:
+                audio, sample_rate = await self._synthesize(chunk, self._profile)
+                if sample_rate != QWEN_OUTPUT_SAMPLE_RATE:
+                    raise QwenCloneUnavailable(
+                        "Qwen clone runtime returned "
+                        f"{sample_rate} Hz instead of {QWEN_OUTPUT_SAMPLE_RATE} Hz."
+                    )
+                if not audio or len(audio) % 2:
+                    raise QwenCloneUnavailable("Qwen clone runtime returned invalid PCM audio.")
+                if first_chunk:
+                    await self.stop_ttfb_metrics()
+                    first_chunk = False
+                yield TTSAudioRawFrame(
+                    audio=audio,
+                    sample_rate=QWEN_OUTPUT_SAMPLE_RATE,
+                    num_channels=1,
+                    context_id=context_id,
                 )
-            if not audio or len(audio) % 2:
-                raise QwenCloneUnavailable("Qwen clone runtime returned invalid PCM audio.")
-            await self.stop_ttfb_metrics()
-            yield TTSAudioRawFrame(
-                audio=audio,
-                sample_rate=QWEN_OUTPUT_SAMPLE_RATE,
-                num_channels=1,
-                context_id=context_id,
-            )
         except QwenCloneUnavailable as error:
             yield ErrorFrame(error=f"Qwen clone mode unavailable: {error}")
         except asyncio.CancelledError:
