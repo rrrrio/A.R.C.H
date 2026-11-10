@@ -104,6 +104,9 @@ class FakeCloneRuntime:
     async def synthesize(self, _: str, __: VoiceProfile) -> tuple[bytes, int]:
         return b"\x00\x00", 24000
 
+    async def cancel(self) -> None:
+        self.stopped = True
+
 
 def test_session_announces_voice_ready_after_its_worker_is_ready(monkeypatch: Any) -> None:
     """The browser receives its speaking permission only after the worker is usable."""
@@ -145,7 +148,8 @@ def test_selected_profile_starts_and_stops_qwen_runtime_without_kokoro_fallback(
 
     async def exercise() -> None:
         await session.start(connection)  # type: ignore[arg-type]
-        assert captured[0][-2] == FakeProfileStore.profile
+        assert captured[0][-3] == FakeProfileStore.profile
+        assert callable(captured[0][-2])
         assert callable(captured[0][-1])
         await session.stop()
 

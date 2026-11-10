@@ -74,6 +74,7 @@ class LocalVoiceSession:
                 self._set_agent_processor,
                 profile,
                 self._clone_runtime.synthesize if self._clone_runtime is not None else None,
+                self._clone_runtime.cancel if self._clone_runtime is not None else None,
             )
             runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
             ready = asyncio.Event()
@@ -119,6 +120,7 @@ class LocalVoiceSession:
                 self._set_agent_processor,
                 profile,
                 self._clone_runtime.synthesize if self._clone_runtime is not None else None,
+                self._clone_runtime.cancel if self._clone_runtime is not None else None,
             )
             runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
             ready = asyncio.Event()

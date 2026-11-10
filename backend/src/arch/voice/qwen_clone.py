@@ -21,6 +21,7 @@ QWEN_OUTPUT_SAMPLE_RATE = 24000
 QWEN_MODEL_REVISION = "c27fe8aa05b732b1376d0f6a1e522fbccb84abbd"
 MAX_QWEN_MESSAGE_BYTES = 32 * 1024 * 1024
 type CloneSynthesize = Callable[[str, VoiceProfile], Awaitable[tuple[bytes, int]]]
+type CloneCancel = Callable[[], Awaitable[None]]
 
 
 class QwenCloneUnavailable(RuntimeError):
@@ -137,9 +138,12 @@ async def _read_message(reader: asyncio.StreamReader) -> dict[str, object]:
 class QwenCloneTTSService(TTSService):
     """Adapt a selected local Qwen profile runtime to Pipecat's normal TTS frames."""
 
-    def __init__(self, profile: VoiceProfile, synthesize: CloneSynthesize) -> None:
+    def __init__(
+        self, profile: VoiceProfile, synthesize: CloneSynthesize, cancel: CloneCancel | None = None
+    ) -> None:
         self._profile = profile
         self._synthesize = synthesize
+        self._cancel_runtime = cancel
         super().__init__(
             push_start_frame=True,
             push_stop_frames=True,
@@ -175,6 +179,10 @@ class QwenCloneTTSService(TTSService):
             )
         except QwenCloneUnavailable as error:
             yield ErrorFrame(error=f"Qwen clone mode unavailable: {error}")
+        except asyncio.CancelledError:
+            if self._cancel_runtime is not None:
+                await self._cancel_runtime()
+            raise
         except Exception:
             yield ErrorFrame(error="Qwen clone synthesis failed.")
         finally:

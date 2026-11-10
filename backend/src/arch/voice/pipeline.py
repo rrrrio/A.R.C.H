@@ -32,7 +32,7 @@ from arch.voice.metrics import VoiceLatencyProcessor
 from arch.voice.models import VoiceModelPaths
 from arch.voice.pipecat_output import PipecatOutputMuxProcessor
 from arch.voice.profiles import VoiceProfile
-from arch.voice.qwen_clone import CloneSynthesize, QwenCloneTTSService
+from arch.voice.qwen_clone import CloneCancel, CloneSynthesize, QwenCloneTTSService
 from arch.voice.websocket import BrowserPCMSerializer
 
 LAN_VAD_PARAMS = VADParams(confidence=0.6, min_volume=0.25)
@@ -48,6 +48,7 @@ def create_pipeline_worker(
     on_agent_processor: Callable[[PipecatAgentProcessor], None] | None = None,
     clone_profile: VoiceProfile | None = None,
     clone_synthesize: CloneSynthesize | None = None,
+    clone_cancel: CloneCancel | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
     transport = SmallWebRTCTransport(
@@ -61,7 +62,7 @@ def create_pipeline_worker(
     )
     return _create_pipeline_worker(
         transport, connection.send_app_message, paths, llama_endpoint, memory_store, retriever,
-        tool_gateway, on_agent_processor, clone_profile, clone_synthesize,
+        tool_gateway, on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
     )
 
 
@@ -76,6 +77,7 @@ def create_websocket_pipeline_worker(
     on_agent_processor: Callable[[PipecatAgentProcessor], None] | None = None,
     clone_profile: VoiceProfile | None = None,
     clone_synthesize: CloneSynthesize | None = None,
+    clone_cancel: CloneCancel | None = None,
 ) -> PipelineWorker:
     """Build the same worker over authenticated same-origin PCM WebSocket media."""
     transport = FastAPIWebsocketTransport(
@@ -91,7 +93,7 @@ def create_websocket_pipeline_worker(
     )
     return _create_pipeline_worker(
         transport, send_event, paths, llama_endpoint, memory_store, retriever, tool_gateway,
-        on_agent_processor, clone_profile, clone_synthesize,
+        on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
     )
 
 
@@ -106,6 +108,7 @@ def _create_pipeline_worker(
     on_agent_processor: Callable[[PipecatAgentProcessor], None] | None,
     clone_profile: VoiceProfile | None,
     clone_synthesize: CloneSynthesize | None,
+    clone_cancel: CloneCancel | None,
 ) -> PipelineWorker:
     """Assemble processors independent of the authenticated browser transport."""
     paths.require_ready()
@@ -134,7 +137,7 @@ def _create_pipeline_worker(
     if clone_profile is not None:
         if clone_synthesize is None:
             raise RuntimeError("Selected Qwen clone profile has no running synthesis worker.")
-        tts = QwenCloneTTSService(clone_profile, clone_synthesize)
+        tts = QwenCloneTTSService(clone_profile, clone_synthesize, clone_cancel)
     else:
         tts = KokoroTTSService(
             model_path=str(paths.tts_model),

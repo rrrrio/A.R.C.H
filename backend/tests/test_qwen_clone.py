@@ -86,3 +86,34 @@ def test_runtime_reads_bounded_local_pcm_response() -> None:
     response = asyncio.run(exercise())
 
     assert response["sample_rate"] == 24000
+
+
+def test_qwen_clone_service_cancels_its_runtime_when_pipecat_cancels_synthesis() -> None:
+    """An interruption terminates the active isolated worker rather than only dropping PCM."""
+
+    async def exercise() -> bool:
+        started = asyncio.Event()
+        cancelled = False
+
+        async def synthesize(_: str, __: VoiceProfile) -> tuple[bytes, int]:
+            started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async def cancel() -> None:
+            nonlocal cancelled
+            cancelled = True
+
+        service = QwenCloneTTSService(_profile(), synthesize, cancel)
+
+        async def consume() -> list[object]:
+            return [frame async for frame in service.run_tts("测试", "turn-3")]
+
+        task = asyncio.create_task(consume())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return cancelled
+
+    assert asyncio.run(exercise())
