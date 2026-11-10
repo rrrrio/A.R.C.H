@@ -80,10 +80,10 @@ export class VoiceClient {
   }
 
   async connect(): Promise<void> {
-    const audio: MediaTrackConstraints | boolean = this.audioDeviceId
-      ? { deviceId: { exact: this.audioDeviceId } }
-      : true
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: voiceCaptureConstraints(this.audioDeviceId),
+      video: false,
+    })
     this.dataChannel = this.connection.createDataChannel('messages')
     this.dataChannel.onmessage = (message) => {
       if (typeof message.data !== 'string') return
@@ -210,11 +210,18 @@ export class WebSocketVoiceClient implements VoiceConnection {
   private source: MediaStreamAudioSourceNode | null = null
   private processor: ScriptProcessorNode | null = null
   private gain: GainNode | null = null
+  private captureSink: GainNode | null = null
   private nextPlaybackTime = 0
   private closing = false
   private readonly onOutputEnergy: OutputEnergyHandler
 
-  constructor(csrfToken: string, onEvent: (event: VoiceEvent) => void, audioDeviceId?: string, onConnectionClosed: () => void = () => undefined, onOutputEnergy: OutputEnergyHandler = () => undefined) {
+  constructor(
+    csrfToken: string,
+    onEvent: (event: VoiceEvent) => void,
+    audioDeviceId?: string,
+    onConnectionClosed: () => void = () => undefined,
+    onOutputEnergy: OutputEnergyHandler = () => undefined,
+  ) {
     this.csrfToken = csrfToken
     this.onEvent = onEvent
     this.audioDeviceId = audioDeviceId
@@ -238,12 +245,15 @@ export class WebSocketVoiceClient implements VoiceConnection {
     socket.onclose = () => {
       if (!this.closing) this.onConnectionClosed()
     }
-    const audio: MediaTrackConstraints | boolean = this.audioDeviceId ? { deviceId: { exact: this.audioDeviceId } } : true
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: voiceCaptureConstraints(this.audioDeviceId),
+      video: false,
+    })
     this.context = new AudioContext()
     await this.context.resume()
     this.gain = this.context.createGain()
     this.gain.connect(this.context.destination)
+    this.captureSink = createMutedCaptureSink(this.context)
     this.source = this.context.createMediaStreamSource(this.stream)
     this.processor = this.context.createScriptProcessor(2048, 1, 1)
     this.processor.onaudioprocess = (event) => {
@@ -251,7 +261,7 @@ export class WebSocketVoiceClient implements VoiceConnection {
       socket.send(floatToPCM16(resample(event.inputBuffer.getChannelData(0), this.context?.sampleRate ?? 16000, 16000)))
     }
     this.source.connect(this.processor)
-    this.processor.connect(this.context.destination)
+    this.processor.connect(this.captureSink)
   }
 
   async close(): Promise<void> {
@@ -261,9 +271,11 @@ export class WebSocketVoiceClient implements VoiceConnection {
     this.processor?.disconnect()
     this.source?.disconnect()
     this.gain?.disconnect()
+    this.captureSink?.disconnect()
     this.processor = null
     this.source = null
     this.gain = null
+    this.captureSink = null
     await this.context?.close()
     this.context = null
     this.socket?.close()
@@ -280,7 +292,9 @@ export class WebSocketVoiceClient implements VoiceConnection {
       } catch { /* Ignore invalid server messages. */ }
       return
     }
-    if (message.data instanceof ArrayBuffer) this.playPCM(message.data)
+    if (message.data instanceof ArrayBuffer) {
+      this.playPCM(message.data)
+    }
   }
 
   private playPCM(payload: ArrayBuffer) {
@@ -317,6 +331,26 @@ export function pcmEnergy(input: Int16Array): number {
   let squared = 0
   for (const sample of input) squared += (sample / 32768) ** 2
   return Math.min(1, Math.sqrt(squared / input.length) * 2.5)
+}
+
+/** Keep microphone processing active without monitoring it through the browser speakers. */
+export function createMutedCaptureSink(
+  context: Pick<AudioContext, 'createGain' | 'destination'>,
+): GainNode {
+  const sink = context.createGain()
+  sink.gain.value = 0
+  sink.connect(context.destination)
+  return sink
+}
+
+/** Request browser-side voice processing while retaining an explicitly chosen microphone. */
+export function voiceCaptureConstraints(audioDeviceId?: string): MediaTrackConstraints {
+  return {
+    ...(audioDeviceId ? { deviceId: { exact: audioDeviceId } } : {}),
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  }
 }
 
 function resample(input: Float32Array, inputRate: number, outputRate: number): Float32Array {

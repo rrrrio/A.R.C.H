@@ -37,7 +37,7 @@ LLM 使用固定中文提示：“用一句中文说明本机语音助手已启�
 
 ## TTS
 
-运行时是 `kokoro-onnx` 0.6.1、Misaki 0.9.6 和 CPU ONNX Runtime 1.31.1。模型为 `onnx-community/Kokoro-82M-v1.1-zh-ONNX` revision `6cc0f0d2ebe369a68b0df87c2b65c1af8c0ac3e3`，`onnx/model_fp16.onnx` SHA-256 为 `d59cb626c885c91acb7ecf7250f26f9915ad0af99b770572000d90b598c3dfbc`。语音包为项目发布的 `voices-v1.1-zh.bin`，SHA-256 为 `14cb6186c99e4f6016871405f62046c5df863ae27465cbdc4ee08be7dd703acd`，使用 `zf_001` 声线。模型和语音包采用 Apache-2.0；Python 包本身采用 MIT。
+运行时是 `kokoro-onnx` 0.6.1、Misaki 0.9.6 和 CPU ONNX Runtime 1.31.1。模型为官方 `model-files-v1.1` 发布的 `kokoro-v1.1-zh.fp16.onnx`，SHA-256 为 `a628ea5d6fbde96d1a85f691a6a00847829937f9e488021ba2c5359bc6ea08b5`。语音包为项目发布的 `voices-v1.1-zh.bin`，SHA-256 为 `14cb6186c99e4f6016871405f62046c5df863ae27465cbdc4ee08be7dd703acd`，使用 `zf_001` 声线。模型和语音包采用 Apache-2.0；Python 包本身采用 MIT。
 
 固定输入为“你好，这是本地语音基准测试。”，输出为 24 kHz PCM。模型与中文 G2P 常驻后先 warm-up 一次，再运行 20 次。计时分别记录 ONNX 合成，以及把结果编码为内存 PCM WAV 后的可用时间；不包含磁盘写入、网络传输、浏览器抖动缓冲或播放。
 
@@ -45,24 +45,20 @@ LLM 使用固定中文提示：“用一句中文说明本机语音助手已启�
 
 ```bash
 uv run --directory backend python spikes/kokoro_benchmark.py \
-  --model ../data/models/kokoro-zh/6cc0f0d2ebe369a68b0df87c2b65c1af8c0ac3e3/onnx/model_fp16.onnx \
+  --model ../data/models/kokoro-zh/a628ea5d6fbde96d1a85f691a6a00847829937f9e488021ba2c5359bc6ea08b5/onnx/model_fp16.onnx \
   --voice-file ../data/models/kokoro-zh/6cc0f0d2ebe369a68b0df87c2b65c1af8c0ac3e3/voices-v1.1-zh.bin \
   --runs 20 --output ../data/benchmarks/results/tts-kokoro-zh.json
 ```
 
 | 指标 | 结果 |
 | --- | ---: |
-| 合成 p50 | 50.6 ms |
-| 合成 p95 | 54.0 ms |
-| 内存 WAV 可用 p50 | 50.8 ms |
-| 内存 WAV 可用 p95 | 54.3 ms |
-| 合成 RTF p50 | 0.168 |
-| 合成 RTF p95 | 0.180 |
-| 合成音频时长 | 300.7 ms |
+| 离线短句时长 | 0.919 s |
+| 离线普通句时长 | 2.188 s |
+| 离线绕口令片段时长 | 3.821 s |
 
 `kokoro-onnx` 0.6.1 需要包含全部中文声线的聚合 `voices-v1.1-zh.bin`；单独下载的 `zf_001.bin` 与该版本的 `numpy.load` 调用不兼容。ONNX Runtime 会报告若干 `Reciprocal` 常量折叠警告，但在 20 次运行中未导致失败。
 
-这是低延迟的句子级 CPU 基线，尚非 token/PCM 流式输出，也未证明浏览器首音或插话时间。端到端 speech-end 到浏览器首音只能在 Milestone 2 的真实媒体流水线中确认。
+旧制品的 20 次性能数字不适用于替换模型，且其约 300ms 的整句输出未经过可听质量验收。替换模型已在真实浏览器完成一次完整回答播放：服务端产生 6 帧/911360 字节，浏览器接收 476 包/913920 字节且全部音源结束，文本与语音内容一致。中文发音仍不标准，因此该结果只验证完整传输与可懂内容，不构成声音自然度、首音或插话验收。
 
 ## 可选 Qwen 克隆 TTS
 

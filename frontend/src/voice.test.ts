@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { isOfferResponse, isVoiceEvent, listAudioInputs, normalizeAudioLevel, pcmEnergy, VoiceClient } from './voice'
+import { createMutedCaptureSink, isOfferResponse, isVoiceEvent, listAudioInputs, normalizeAudioLevel, pcmEnergy, VoiceClient, voiceCaptureConstraints } from './voice'
 
 describe('isOfferResponse', () => {
   it('accepts a complete server answer', () => {
@@ -40,6 +40,27 @@ describe('output energy helpers', () => {
     expect(normalizeAudioLevel('0.4')).toBe(0)
     expect(pcmEnergy(new Int16Array())).toBe(0)
     expect(pcmEnergy(new Int16Array([32767, -32768]))).toBe(1)
+  })
+
+  it('keeps fallback microphone processing silent at the browser destination', () => {
+    const connect = vi.fn()
+    const sink = { gain: { value: 1 }, connect } as unknown as GainNode
+    const destination = {} as AudioDestinationNode
+
+    expect(createMutedCaptureSink({ createGain: () => sink, destination })).toBe(sink)
+    expect(sink.gain.value).toBe(0)
+    expect(connect).toHaveBeenCalledWith(destination)
+  })
+})
+
+describe('voice capture constraints', () => {
+  it('requests browser echo protection without replacing a chosen microphone', () => {
+    expect(voiceCaptureConstraints('usb-mic')).toEqual({
+      deviceId: { exact: 'usb-mic' },
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    })
   })
 })
 
@@ -190,7 +211,15 @@ describe('VoiceClient', () => {
     )
     await client.connect()
 
-    expect(getUserMedia).toHaveBeenCalledWith({ audio: { deviceId: { exact: 'usb-mic' } }, video: false })
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: {
+        deviceId: { exact: 'usb-mic' },
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    })
     dataChannel.onmessage?.({ data: JSON.stringify({ type: 'voice_state', state: 'user-speaking' }) } as MessageEvent)
 
     expect((client as unknown as { audio: HTMLAudioElement }).audio.muted).toBe(true)

@@ -10,7 +10,6 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
-from pipecat.services.kokoro.tts import KokoroTTSService
 from pipecat.services.tts_service import TTSService
 from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.transcriptions.language import Language
@@ -28,6 +27,7 @@ from arch.tools.gateway import ToolGateway
 from arch.voice.agent_processor import PipecatAgentProcessor
 from arch.voice.events import VoiceEventProcessor
 from arch.voice.input_ready import InputReadyProcessor
+from arch.voice.kokoro_zh import ChineseKokoroTTSService
 from arch.voice.metrics import VoiceLatencyProcessor
 from arch.voice.models import VoiceModelPaths
 from arch.voice.pipecat_output import PipecatOutputMuxProcessor
@@ -140,10 +140,12 @@ def _create_pipeline_worker(
             raise RuntimeError("Selected Qwen clone profile has no running synthesis worker.")
         tts = QwenCloneTTSService(clone_profile, clone_synthesize, clone_cancel)
     else:
-        tts = KokoroTTSService(
+        tts = ChineseKokoroTTSService(
             model_path=str(paths.tts_model),
             voices_path=str(paths.tts_voices),
-            settings=KokoroTTSService.Settings(voice="zf_001", language=Language.ZH, speed=1.0),
+            settings=ChineseKokoroTTSService.Settings(
+                voice="zf_001", language=Language.ZH, speed=1.0
+            ),
         )
     user_events = VoiceEventProcessor(send_event)
     assistant_events = VoiceEventProcessor(send_event)

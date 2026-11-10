@@ -31,7 +31,9 @@ class VoiceModelPaths:
             llama_server=data_dir / "runtime/llama-cpp/b12110/llama-server",
             tts_model=(
                 data_dir
-                / "models/kokoro-zh/6cc0f0d2ebe369a68b0df87c2b65c1af8c0ac3e3/onnx/model_fp16.onnx"
+                / "models/kokoro-zh"
+                / "a628ea5d6fbde96d1a85f691a6a00847829937f9e488021ba2c5359bc6ea08b5"
+                / "onnx/model_fp16.onnx"
             ),
             tts_voices=(
                 data_dir
