@@ -107,3 +107,9 @@ app = create_app()
 def health(settings: Annotated[Settings, Depends(get_settings)]) -> dict[str, str]:
     """Report that the HTTP service is alive without exposing local paths."""
     return {"status": "ok", "environment": settings.environment}
+
+
+@app.get("/api/ready")
+def ready() -> dict[str, str]:
+    """Report that application startup, migrations, and local stores completed."""
+    return {"status": "ready"}

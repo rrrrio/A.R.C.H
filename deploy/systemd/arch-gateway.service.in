@@ -2,14 +2,19 @@
 Description=A.R.C.H. Caddy gateway
 After=network-online.target
 Wants=network-online.target
+After=arch-backend.service
+Wants=arch-backend.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=@WORKING_DIRECTORY@
-ExecStart=@DOCKER_BIN@ compose -f deploy/compose.yaml --profile gateway up -d caddy
+ExecStart=@DOCKER_BIN@ compose -f deploy/compose.yaml --profile gateway up -d --wait caddy
+ExecStartPost=@UV_BIN@ run --no-sync --directory backend python scripts/check_service_readiness.py --target gateway
 ExecStop=@DOCKER_BIN@ compose -f deploy/compose.yaml --profile gateway stop caddy
 TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target

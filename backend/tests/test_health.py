@@ -12,3 +12,12 @@ def test_health_reports_service_status() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "environment": "development"}
+
+
+def test_ready_reports_completed_application_startup() -> None:
+    """The readiness route is a stable, non-sensitive gate for local service managers."""
+    with TestClient(app) as client:
+        response = client.get("/api/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}

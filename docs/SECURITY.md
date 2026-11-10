@@ -20,4 +20,8 @@ Caddy 是唯一允许面向局域网的浏览器入口，默认使用 `https://a
 
 ## 运行限制
 
-当前仓库尚未提供 systemd 单元、统一服务健康检查、容器 healthcheck、日志轮转、资源限制或重启后的设备验收。`/api/health` 只表明后端 HTTP 路由响应。运维启动和恢复边界见[运行操作](OPERATIONS.md)。
+后端 user unit 使用 `CPUQuota`、`MemoryHigh`、`MemoryMax`、`TasksMax` 和 `LimitNOFILE`；其默认值
+位于 `.env.example`，安装器只接受受限格式的覆盖值。Caddy、SearXNG 和可选 Ollama 使用 Compose
+CPU/内存上限与 Docker `local` 日志轮转。后端、网关和容器 healthcheck 只确认启动边界，不表示
+模型、登录、浏览器媒体、真实扬声器或人工插话已验收。用户 journal 的保留策略由主机管理员配置，
+本仓库不会修改全局 journald 配置。运维启动和恢复边界见[运行操作](OPERATIONS.md)。

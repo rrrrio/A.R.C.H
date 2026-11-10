@@ -20,6 +20,19 @@ services:
       - ../data/models:/models:ro
       - ./ollama:/modelfiles:ro
     gpus: all
+    mem_limit: ${ARCH_OLLAMA_MEMORY_MAX:-12g}
+    cpus: ${ARCH_OLLAMA_CPU_LIMIT:-8.0}
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "/bin/ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   caddy:
@@ -34,6 +47,19 @@ services:
       - ../frontend/dist:/srv:ro
       - ./caddy-data:/data
       - ./caddy-config:/config
+    mem_limit: ${ARCH_CADDY_MEMORY_MAX:-512m}
+    cpus: ${ARCH_CADDY_CPU_LIMIT:-1.0}
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:2019/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
 
   searxng:
     image: searxng/searxng@sha256:c750ee1d859b26d3aeae51c07f6a48c3a0bfbaa9195d71a18b258862d88c4c3c
@@ -56,4 +82,17 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./searxng:/etc/searxng:rw
+    mem_limit: ${ARCH_SEARXNG_MEMORY_MAX:-1g}
+    cpus: ${ARCH_SEARXNG_CPU_LIMIT:-2.0}
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped

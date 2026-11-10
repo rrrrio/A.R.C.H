@@ -6,11 +6,19 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=@WORKING_DIRECTORY@
-Environment=PATH=@EXECUTION_PATH@
+Environment=@EXECUTION_PATH@
 ExecStart=@UV_BIN@ run --directory backend uvicorn arch.main:app --host 127.0.0.1 --port 8000
+ExecStartPost=@UV_BIN@ run --no-sync --directory backend python scripts/check_service_readiness.py --target backend
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
+CPUQuota=@BACKEND_CPU_QUOTA@
+MemoryHigh=@BACKEND_MEMORY_HIGH@
+MemoryMax=@BACKEND_MEMORY_MAX@
+TasksMax=@BACKEND_TASKS_MAX@
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 

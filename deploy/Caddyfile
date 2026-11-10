@@ -3,6 +3,11 @@
 	auto_https disable_redirects
 }
 
+http://127.0.0.1:2019 {
+	bind 127.0.0.1
+	respond /healthz 200
+}
+
 https://{$ARCH_LAN_HOST:arch.local}:{$ARCH_HTTPS_PORT:8443} {
 	tls internal
 

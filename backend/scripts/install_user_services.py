@@ -4,12 +4,25 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIRECTORY = PROJECT_ROOT / "deploy" / "systemd"
 UNIT_NAMES = ("arch-backend.service", "arch-gateway.service")
+RESOURCE_DEFAULTS = {
+    "ARCH_BACKEND_CPU_QUOTA": "800%",
+    "ARCH_BACKEND_MEMORY_HIGH": "10G",
+    "ARCH_BACKEND_MEMORY_MAX": "12G",
+    "ARCH_BACKEND_TASKS_MAX": "512",
+}
+RESOURCE_PATTERNS = {
+    "ARCH_BACKEND_CPU_QUOTA": re.compile(r"[1-9][0-9]*%"),
+    "ARCH_BACKEND_MEMORY_HIGH": re.compile(r"[1-9][0-9]*[KMGT]"),
+    "ARCH_BACKEND_MEMORY_MAX": re.compile(r"[1-9][0-9]*[KMGT]"),
+    "ARCH_BACKEND_TASKS_MAX": re.compile(r"[1-9][0-9]*"),
+}
 
 
 def _quote(value: str) -> str:
@@ -20,15 +33,49 @@ def _escape_unit_path(value: str) -> str:
     return value.replace("%", "%%").replace("\\", "\\x5c").replace(" ", "\\x20")
 
 
+def _resource_values(project_root: Path) -> dict[str, str]:
+    """Read narrowly validated resource overrides without evaluating shell syntax."""
+    file_values: dict[str, str] = {}
+    environment_file = project_root / ".env"
+    if environment_file.is_file():
+        for line in environment_file.read_text(encoding="utf-8").splitlines():
+            name, separator, value = line.partition("=")
+            if separator and name in RESOURCE_DEFAULTS:
+                file_values[name] = value.strip()
+    values = {
+        name: os.environ.get(name, file_values.get(name, default))
+        for name, default in RESOURCE_DEFAULTS.items()
+    }
+    for name, value in values.items():
+        if RESOURCE_PATTERNS[name].fullmatch(value) is None:
+            raise ValueError(f"{name} has an invalid resource value: {value!r}")
+    if _memory_bytes(values["ARCH_BACKEND_MEMORY_HIGH"]) > _memory_bytes(
+        values["ARCH_BACKEND_MEMORY_MAX"]
+    ):
+        raise ValueError("ARCH_BACKEND_MEMORY_HIGH must not exceed ARCH_BACKEND_MEMORY_MAX")
+    return values
+
+
+def _memory_bytes(value: str) -> int:
+    """Convert the intentionally small accepted systemd memory syntax to bytes."""
+    multipliers = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+    return int(value[:-1]) * multipliers[value[-1]]
+
+
 def render_units(project_root: Path, uv_binary: Path, docker_binary: Path) -> dict[str, str]:
     """Render unit templates with paths known to the local checkout."""
     execution_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    resource_values = _resource_values(project_root)
     replacements = {
         "@WORKING_DIRECTORY@": _escape_unit_path(str(project_root.resolve())),
         "@PROJECT_ROOT@": _quote(str(project_root.resolve())),
         "@UV_BIN@": _quote(str(uv_binary.resolve())),
         "@DOCKER_BIN@": _quote(str(docker_binary.resolve())),
         "@EXECUTION_PATH@": _quote(f"PATH={execution_path}"),
+        "@BACKEND_CPU_QUOTA@": resource_values["ARCH_BACKEND_CPU_QUOTA"],
+        "@BACKEND_MEMORY_HIGH@": resource_values["ARCH_BACKEND_MEMORY_HIGH"],
+        "@BACKEND_MEMORY_MAX@": resource_values["ARCH_BACKEND_MEMORY_MAX"],
+        "@BACKEND_TASKS_MAX@": resource_values["ARCH_BACKEND_TASKS_MAX"],
     }
     rendered: dict[str, str] = {}
     for name in UNIT_NAMES:

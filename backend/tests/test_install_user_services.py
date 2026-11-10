@@ -42,6 +42,47 @@ def test_rendered_units_use_the_checkout_and_uv_paths(
     assert "/test/path" in rendered["arch-gateway.service"]
 
 
+def test_rendered_backend_unit_uses_validated_resource_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script()
+    monkeypatch.setenv("ARCH_BACKEND_CPU_QUOTA", "600%")
+    monkeypatch.setenv("ARCH_BACKEND_MEMORY_HIGH", "8G")
+    monkeypatch.setenv("ARCH_BACKEND_MEMORY_MAX", "10G")
+    monkeypatch.setenv("ARCH_BACKEND_TASKS_MAX", "256")
+
+    rendered = module.render_units(tmp_path, tmp_path / "uv", tmp_path / "docker")
+
+    backend = rendered["arch-backend.service"]
+    assert "CPUQuota=600%" in backend
+    assert "MemoryHigh=8G" in backend
+    assert "MemoryMax=10G" in backend
+    assert "TasksMax=256" in backend
+    assert "check_service_readiness.py --target backend" in backend
+    assert "check_service_readiness.py --target gateway" in rendered["arch-gateway.service"]
+
+
+def test_rendering_rejects_unsafe_resource_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script()
+    monkeypatch.setenv("ARCH_BACKEND_MEMORY_MAX", "12G\nExecStart=/bin/false")
+
+    with pytest.raises(ValueError, match="ARCH_BACKEND_MEMORY_MAX"):
+        module.render_units(tmp_path, tmp_path / "uv", tmp_path / "docker")
+
+
+def test_rendering_rejects_a_memory_pressure_threshold_above_its_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script()
+    monkeypatch.setenv("ARCH_BACKEND_MEMORY_HIGH", "14G")
+    monkeypatch.setenv("ARCH_BACKEND_MEMORY_MAX", "12G")
+
+    with pytest.raises(ValueError, match="must not exceed"):
+        module.render_units(tmp_path, tmp_path / "uv", tmp_path / "docker")
+
+
 def test_install_units_refuses_existing_files_without_replace(tmp_path: Path) -> None:
     module = _load_script()
     units = {name: f"[{name}]\n" for name in module.UNIT_NAMES}

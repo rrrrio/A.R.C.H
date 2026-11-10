@@ -1,11 +1,11 @@
 # 运行操作
 
-本页说明当前 A.R.C.H. 部署中实际可用的启动、停止、检查和恢复命令。仓库可生成后端和 Caddy 的用户级 systemd unit，但不会自动安装或启用它们；SearXNG 和 Ollama 仍是按需 Compose profile。统一的全服务启动、容器 healthcheck、资源限制和日志轮转尚未提供。
+本页说明当前 A.R.C.H. 部署中实际可用的启动、停止、检查和恢复命令。仓库可生成后端和 Caddy 的用户级 systemd unit，但不会自动安装或启用它们；SearXNG 和 Ollama 仍是按需 Compose profile。后端、网关和可选容器现在都有就绪或健康检查，并提供针对目标 32 GiB / RTX 4090 主机的可覆盖资源与容器日志上限；这些默认值尚未通过真实设备或重启验收。
 
 当前服务的依赖关系如下。`/api/health` 只证明后端 HTTP 路由可响应，不检查模型、数据库、Caddy 或搜索服务是否就绪。
 
 ```text
-[manual backend: 127.0.0.1:8000] <-- Caddy --> [browser: LAN HTTPS :8443]
+[backend /api/ready: 127.0.0.1:8000] <-- Caddy --> [browser: LAN HTTPS :8443]
           ^                                  |
           |                                  +--> frontend/dist
           |
@@ -13,6 +13,24 @@
 
 [SearXNG: 127.0.0.1:8080] <-- optional web_search
 [Ollama: 127.0.0.1:11434]  <-- optional model adapter
+```
+
+systemd 的就绪门槛如下。后端已完成本地目录、SQLite migration 和应用存储初始化后才回答
+`/api/ready`；Caddy 容器健康后，网关 unit 还会通过 HTTPS 入口请求同一后端路由。可选
+Ollama 和 SearXNG 不阻塞后端就绪，因为它们不是每次语音会话的必需依赖。
+
+```text
+[arch-backend.service] --> [/api/ready]
+          |                     |
+          v                     v
+      restart on failure   [arch-gateway.service]
+                                  |
+                          compose up --wait caddy
+                                  |
+                                  v
+                       HTTPS loopback /api/ready
+
+[SearXNG /healthz] and [ollama list] are optional container health checks.
 ```
 
 ## 启动浏览器入口
@@ -31,9 +49,10 @@
 
     make gateway-up
 
-检查后端 HTTP 路由：
+检查后端存活和已完成启动的就绪状态：
 
     curl http://127.0.0.1:8000/api/health
+    curl http://127.0.0.1:8000/api/ready
 
 检查 HTTPS 入口时，使用 Caddy 本地 CA 和配置的域名；详见[首次在本机完成一次语音对话](tutorials/first-local-conversation.md)。局域网客户端的名称解析、CA 信任和代理绕过步骤见[让局域网设备访问](how-to/lan-access.md)。
 
@@ -67,7 +86,29 @@
     systemctl --user daemon-reload
     systemctl --user enable --now arch-backend.service arch-gateway.service
 
-安装器默认拒绝覆盖现有 unit。确认本机修改后的 unit 需要替换时，使用 `SYSTEMD_FLAGS=--replace`。`arch-backend.service` 在失败时重启；`arch-gateway.service` 只保持 Caddy Compose 服务处于启动状态。它们均不启动搜索或 Ollama。
+安装器默认拒绝覆盖现有 unit。确认本机修改后的 unit 需要替换时，使用 `SYSTEMD_FLAGS=--replace`。`arch-backend.service` 在失败时重启，并在 `/api/ready` 成功前视为未启动；`arch-gateway.service` 等待 Caddy 容器健康，再检查 HTTPS 到后端的同一路径。它们均不启动搜索或 Ollama。
+
+后端日志进入用户 journal：
+
+    journalctl --user -u arch-backend.service -n 100 --no-pager
+
+Compose 容器使用 Docker `local` 日志驱动，每个容器最多保留三个 10 MiB 文件。Caddy 的
+`127.0.0.1:2019/healthz` 仅供容器健康检查使用，不是局域网入口，也不应转发或暴露给浏览器。
+
+## 资源与容器健康
+
+`.env.example` 为目标 32 GiB / RTX 4090 主机提供初始资源上限：后端为 800% CPU、10 GiB
+`MemoryHigh`、12 GiB `MemoryMax` 和 512 个任务；可选 Ollama 为 8 CPU / 12 GiB，SearXNG
+为 2 CPU / 1 GiB，Caddy 为 1 CPU / 512 MiB。请在启用 systemd 或 Compose 前，根据实际
+模型加载、并发和可用内存调整 `.env` 的 `ARCH_*_CPU_*` 与 `ARCH_*_MEMORY_*` 值，再重新渲染
+unit（必要时 `SYSTEMD_FLAGS=--replace`）。安装器拒绝包含换行或非单位格式的后端资源值。
+
+容器健康可查看：
+
+    docker compose -f deploy/compose.yaml ps
+
+`healthy` 只证明相应服务能回答其本地探针；它不替代浏览器登录、模型加载、麦克风、可听首音
+或人工插话验收。
 
 ## 备份与恢复
 

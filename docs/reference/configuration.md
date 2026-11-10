@@ -67,6 +67,13 @@ gateway:
 | `ARCH_HTTPS_PORT` | `int` / `8443` | 有效 TCP 端口 | Caddy 的 HTTPS 监听端口。 |
 | `ARCH_SEARCH_ENABLED` | `bool` / `false` | 布尔值 | 是否创建本地 SearXNG 搜索客户端。 |
 | `ARCH_SEARXNG_ENDPOINT` | `str` / `http://127.0.0.1:8080` | 仅 `127.0.0.1`、`localhost` 或 `::1`；不得含路径、查询或凭据 | 本地 SearXNG JSON 服务。 |
+| `ARCH_BACKEND_CPU_QUOTA` | `str` / `800%` | 正整数加 `%`；由 systemd 安装器渲染 | 后端 user unit 的 CPU 上限。 |
+| `ARCH_BACKEND_MEMORY_HIGH` | `str` / `10G` | 正整数加 `K`、`M`、`G` 或 `T`；不得高于 `ARCH_BACKEND_MEMORY_MAX` | 后端开始回收内存的 systemd 阈值。 |
+| `ARCH_BACKEND_MEMORY_MAX` | `str` / `12G` | 正整数加 `K`、`M`、`G` 或 `T` | 后端 user unit 的硬内存上限。 |
+| `ARCH_BACKEND_TASKS_MAX` | `int` / `512` | 正整数 | 后端 user unit 可创建的最大任务数。 |
+| `ARCH_OLLAMA_CPU_LIMIT` / `ARCH_OLLAMA_MEMORY_MAX` | `str` / `8.0`、`12g` | Docker Compose 可接受的 CPU / 内存值 | 可选 Ollama 容器上限。 |
+| `ARCH_CADDY_CPU_LIMIT` / `ARCH_CADDY_MEMORY_MAX` | `str` / `1.0`、`512m` | Docker Compose 可接受的 CPU / 内存值 | Caddy 容器上限。 |
+| `ARCH_SEARXNG_CPU_LIMIT` / `ARCH_SEARXNG_MEMORY_MAX` | `str` / `2.0`、`1g` | Docker Compose 可接受的 CPU / 内存值 | 可选 SearXNG 容器上限。 |
 
 旧部署中的 `LVA_*` 变量与上述 `ARCH_*` 变量一一对应。若同一字段同时设置两种名称，使用 `ARCH_*` 值。
 
@@ -79,6 +86,7 @@ gateway:
 | llama.cpp | `127.0.0.1:8081` | 否 | 会话启动时由后端拥有的本地 LLM 服务。 |
 | SearXNG | `127.0.0.1:8080` | 否 | 可选本地搜索聚合服务。 |
 | Ollama | `127.0.0.1:11434` | 否 | 保留的本地模型适配器，不是当前语音会话默认 LLM。 |
+| Caddy 容器健康 | `127.0.0.1:2019` | 否 | 仅 Caddy 容器的 loopback `/healthz` 探针；不供浏览器或 LAN 客户端使用。 |
 
 ## 数据目录
 
