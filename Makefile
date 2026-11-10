@@ -5,10 +5,10 @@ BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 COMPOSE := docker compose -f deploy/compose.yaml
 
-.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts
+.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts
 
 help:
-	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio models-baseline benchmark-components benchmark-pipeline ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts'
+	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts'
 
 bootstrap:
 	uv sync --directory $(BACKEND_DIR) --all-groups
@@ -145,3 +145,7 @@ benchmark-components:
 
 benchmark-pipeline:
 	@printf '%s\n' 'Run backend/spikes/pipeline_benchmark.py with three existing component JSON reports.'
+
+benchmark-voice-clone:
+	@test -n "$(VOICE_PROFILE_ID)" || (printf '%s\n' 'Set VOICE_PROFILE_ID to a consented local voice profile.' >&2; exit 2)
+	uv run --no-sync --directory $(BACKEND_DIR) python scripts/benchmark_qwen_clone.py --profile-id "$(VOICE_PROFILE_ID)" --output ../data/benchmarks/results/qwen-clone.json

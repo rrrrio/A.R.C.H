@@ -84,3 +84,11 @@ IPC 编解码，不包含 worker 模型加载、浏览器、网络、扬声器�
 显式选择的可选克隆路径，Kokoro 继续作为默认低延迟声音。该组件数据不证明浏览器可听首音、插话停止、
 用户许可充分性、真实音色相似度或第二台设备体验。测试结束后已删除合成 profile、worker socket 和 GPU
 分配。
+
+当前可对一个明确指定且已授权的 profile 复跑 timing-only 基准：
+
+```bash
+make benchmark-voice-clone VOICE_PROFILE_ID=<profile-uuid>
+```
+
+该命令报告首句 PCM 和完整回答 PCM 的时间，便于评估按句输出是否改善首个本地 PCM 边界。它不会复用当前选中的 profile、也不会在结果中记录音频、profile 元数据或文本。结果仍不能代替浏览器或设备级首音验收。

@@ -113,3 +113,18 @@ def test_prepare_does_not_write_provenance_when_a_digest_fails(
         module.prepare(settings)
 
     assert not (module.model_root(settings) / "arch-provenance.json").exists()
+
+
+def test_clone_benchmark_requires_an_explicit_existing_profile(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """The clone benchmark cannot silently use a selected or arbitrary voice reference."""
+    path = Path(__file__).parents[1] / "scripts" / "benchmark_qwen_clone.py"
+    specification = importlib.util.spec_from_file_location("benchmark_qwen_clone", path)
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+
+    assert module.split_clone_text("甲。乙") == ("甲。", "乙")
+    with pytest.raises(ValueError, match="--profile-id"):
+        module.require_profile(tmp_path, "00000000-0000-0000-0000-000000000000")

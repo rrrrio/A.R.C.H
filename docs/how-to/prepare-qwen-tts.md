@@ -31,3 +31,13 @@ make qwen-tts-prepare APPLY=1
 准备成功会让独立 Python 环境能够启动仅监听 Unix socket 的本地 Qwen worker；它不暴露 TCP 端口，参考文件也只由 profile ID 在本机解析。Qwen 适配器会按句号、问号、感叹号和分号切分回答，并在每个句子完成 24 kHz PCM 后立即交给既有播放路径；没有终止标点的文本每 120 个字符强制切分。插话仍会终止 worker 并丢弃未播放的后续句子。
 
 已使用本地合成 WAV 完成一次 worker 启动和 24 kHz PCM 输出检查，但这不证明声音相似度、授权充分性、GPU 余量、可听首音、插话取消或第二台设备体验。继续保留 Kokoro 作为可用基线，直到目标设备上的克隆路径完成测量。
+
+## 测量已授权的克隆 profile
+
+创建并确认一个本地声音参考后，使用该 profile 的 UUID 运行 20 次本地 worker 基准：
+
+```bash
+make benchmark-voice-clone VOICE_PROFILE_ID=<profile-uuid>
+```
+
+命令不会创建、选择、修改或删除 profile。它只使用明确提供的现有 UUID，并将 timing-only JSON 写入受 Git 忽略的 `data/benchmarks/results/qwen-clone.json`。报告包含第一句 PCM 和完整回答 PCM 的 p50/p95/max，但不记录参考音频、profile 元数据、参考文本或请求文本。它不测量浏览器、网络、扬声器、声音相似度或人工可听延迟。
