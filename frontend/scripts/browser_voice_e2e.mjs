@@ -167,6 +167,11 @@ try {
   console.log('browser-e2e: authenticated')
 
   await client.evaluate(`(() => {
+    window.__archE2ELatency = []
+    document.addEventListener('arch:latency', (event) => window.__archE2ELatency.push(event.detail))
+  })()`)
+
+  await client.evaluate(`(() => {
     const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === '连接语音')
     if (!button) throw new Error('voice connection control is missing')
     button.click()
@@ -195,6 +200,8 @@ try {
     console.log('browser-e2e: browser interruption after playback observed')
   }
 
+  const latency = await client.evaluate('JSON.stringify(window.__archE2ELatency)')
+
   await client.evaluate(`(() => {
     const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === '断开')
     if (!button) throw new Error('voice disconnect control is missing')
@@ -202,6 +209,7 @@ try {
   })()`)
   await waitFor('browser disconnect', async () => (await client.evaluate("document.body.innerText.includes('连接语音')")), configuration.timeoutSeconds * 1000)
   console.log('browser-e2e: disconnected')
+  console.log(`browser-e2e: result ${JSON.stringify({ barge_in: Boolean(configuration.assertBargeIn), latency: JSON.parse(latency) })}`)
   console.log('browser-e2e: passed')
 } finally {
   if (client) {

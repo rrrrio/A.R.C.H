@@ -228,9 +228,17 @@ function App() {
       setVoiceState((current) => current === 'idle' || current === 'error' ? current : 'ready')
       return
     }
+    if (event.type === 'latency') {
+      document.dispatchEvent(
+        new CustomEvent('arch:latency', {
+          detail: { stage: event.stage, elapsed_ms: event.elapsed_ms },
+        }),
+      )
+    }
     setConversation((current) => {
       if (event.type === 'latency') {
-        const latency = [...current.latency, { stage: event.stage, elapsedMs: event.elapsed_ms }]
+        const sample = { stage: event.stage, elapsedMs: event.elapsed_ms }
+        const latency = [...current.latency, sample]
         return { ...current, latency: latency.slice(-latencyHistoryLimit) }
       }
       if (event.type === 'voice_state') return { ...current, activity: event.state }
@@ -369,7 +377,12 @@ function App() {
               <p><span>你</span>{conversation.userText || '...'}</p>
               <p><span>助手</span>{conversation.assistantText || '...'}</p>
               {conversation.latency.map((sample, index) => (
-                <p className="latency" key={`${sample.stage}-${sample.elapsedMs}-${index}`}>
+                <p
+                  className="latency"
+                  data-elapsed-ms={sample.elapsedMs}
+                  data-latency-stage={sample.stage}
+                  key={`${sample.stage}-${sample.elapsedMs}-${index}`}
+                >
                   <span>{latencyLabels[sample.stage]}</span>{sample.elapsedMs} ms
                 </p>
               ))}

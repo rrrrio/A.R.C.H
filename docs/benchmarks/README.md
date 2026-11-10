@@ -1,5 +1,7 @@
 # Milestone 1 Benchmarks
 
+For repeatable browser-path acceptance evidence, see [browser voice acceptance](acceptance.md). It is separate from component baselines and does not establish audible device latency.
+
 The first model combination is a measured baseline, not a product default. The selected candidate configuration is in `config/benchmark-baseline.json`.
 
 `models-baseline` is the only command that may download the approved benchmark sample. `llm-prepare`, `llamacpp-prepare`, `asr-prepare`, and `tts-prepare` are separate, explicit commands for the pinned Qwen3 GGUF, CUDA llama.cpp runtime, Faster-Whisper model, and Kokoro Chinese ONNX model plus voice pack. `ollama-import` and `ollama-pull` remain available for diagnostics and later adapters. Model weights must remain under `data/models/`, and every accepted result must record an exact source revision and SHA256. Normal lint, test, build, and development commands never download a model or a sample.

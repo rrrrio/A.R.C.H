@@ -77,3 +77,26 @@ def test_create_barge_in_fixture_repeats_the_fixed_pcm_segment(tmp_path: Path) -
     with wave.open(str(destination), "rb") as output_file:
         assert output_file.getparams()[:3] == (1, 2, 16_000)
         assert output_file.getnframes() == 240_000
+
+
+def test_acceptance_result_requires_one_valid_payload_per_driver_output() -> None:
+    summary_path = Path(__file__).parents[1] / "scripts" / "summarize_browser_voice_acceptance.py"
+    specification = importlib.util.spec_from_file_location(
+        "summarize_browser_voice_acceptance", summary_path
+    )
+    assert specification is not None and specification.loader is not None
+    summary_module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = summary_module
+    specification.loader.exec_module(summary_module)
+
+    result = (
+        'browser-e2e: result {"barge_in":false,'
+        '"latency":[{"stage":"playback-first-audio","elapsed_ms":812}]}\n'
+    )
+    observation = summary_module.parse_driver_result(result)
+
+    assert observation["latency"][0]["elapsed_ms"] == 812
+    summary = summary_module.summarize([observation] * 20, "playback-first-audio")
+    assert summary["p95_seconds"] == 0.812
+    with pytest.raises(ValueError, match="exactly one structured"):
+        summary_module.parse_driver_result("browser-e2e: passed\n")

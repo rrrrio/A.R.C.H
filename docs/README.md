@@ -21,7 +21,7 @@
 - [架构与安全边界](explanation/architecture.md)：实时路径、审批、取消、记忆、RAG 与未来数字人的设计理由。
 - [使用浏览器数字人预览](how-to/use-browser-avatar.md)：在不上传 VRM 模型的前提下启用本地浏览器预览。
 - [开发环境](DEVELOPMENT.md)：运行测试、启动开发服务和维护文档。
-- [组件基准](benchmarks/README.md)：当前 ASR、LLM 和 TTS 基线及其复跑方式。
+- [组件基准](benchmarks/README.md)：当前 ASR、LLM 和 TTS 基线及其复跑方式，以及浏览器语音验收证据的边界。
 
 ## 当前运行边界
 
