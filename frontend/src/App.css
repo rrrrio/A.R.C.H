@@ -215,6 +215,24 @@ button:disabled {
   font-weight: 650;
 }
 
+.voice-profiles {
+  margin-top: 20px;
+  border-top: 1px solid #d7dde2;
+  padding-top: 20px;
+}
+
+.voice-profiles h2 { margin: 0; font-size: 16px; font-weight: 650; }
+.voice-profiles > p { color: #4d5965; font-size: 14px; line-height: 1.5; }
+.voice-profile-list { display: grid; gap: 10px; margin-top: 12px; }
+.voice-profile { display: grid; gap: 7px; border-left: 3px solid #6c8ebf; padding-left: 10px; }
+.voice-profile p { margin: 0; color: #33414d; overflow-wrap: anywhere; }
+.voice-profile-form { display: grid; gap: 9px; margin-top: 16px; }
+.voice-profile-form label { color: #4d5965; font-size: 14px; }
+.voice-profile-form input:not([type='checkbox']), .voice-profile-form textarea { min-height: 40px; border: 1px solid #aeb8c1; border-radius: 4px; padding: 8px 10px; color: inherit; font: inherit; }
+.voice-profile-form textarea { min-height: 68px; resize: vertical; }
+.consent-row { display: flex; align-items: flex-start; gap: 8px; line-height: 1.4; }
+.form-error { color: #9b2c2c !important; }
+
 .tool-approval-list {
   display: grid;
   gap: 12px;

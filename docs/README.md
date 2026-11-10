@@ -1,6 +1,6 @@
 # 文档导航
 
-本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。音色克隆、情绪控制和数字人仍在后续里程碑中，不能视为当前功能。
+本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。当前可管理经确认授权的本地声音参考，但 Qwen 克隆运行时、情绪控制和数字人仍在后续里程碑中，不能视为当前功能。
 
 ## 按任务阅读
 
@@ -9,6 +9,7 @@
 - [通过已有穿透网络访问](how-to/routed-network-access.md)：让已经能到达 LAN 的远程浏览器使用同一语音页面。
 - [启用或关闭联网搜索](how-to/enable-web-search.md)：启动本地 SearXNG，并保持它不暴露到局域网。
 - [管理本地知识库](how-to/manage-knowledge.md)：放入资料、建立索引、确认删除生效。
+- [管理本地声音参考](how-to/manage-voice-profiles.md)：保存经确认授权的短 WAV 参考，并了解当前克隆运行时边界。
 - [备份和恢复本地数据](how-to/backup-and-restore.md)：创建经校验的数据库和知识资料归档，并安全恢复。
 - [运行浏览器语音冒烟验收](how-to/browser-voice-smoke-test.md)：用固定本地 WAV 验证完整浏览器语音链路。
 - [运行操作](OPERATIONS.md)：当前服务的启动、停止、检查和恢复边界。

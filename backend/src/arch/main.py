@@ -13,6 +13,7 @@ from arch.api.knowledge import router as knowledge_router
 from arch.api.memory import router as memory_router
 from arch.api.tools import router as tools_router
 from arch.api.voice import router as voice_router
+from arch.api.voices import router as voices_router
 from arch.auth.service import AuthService
 from arch.memory.store import MemoryStore
 from arch.rag.store import KnowledgeStore
@@ -23,6 +24,7 @@ from arch.tools.policy import TerminalToolPolicy
 from arch.tools.search import SearxngSearchClient
 from arch.tools.terminal import TerminalExecutor
 from arch.voice.models import VoiceModelPaths
+from arch.voice.profiles import VoiceProfileStore
 from arch.voice.session import LocalVoiceSession
 from arch.voice.webrtc import WebRTCSignalingService
 
@@ -34,6 +36,7 @@ def create_app(
     knowledge_store: KnowledgeStore | None = None,
     approval_store: ApprovalStore | None = None,
     tool_gateway: ToolGateway | None = None,
+    voice_profile_store: VoiceProfileStore | None = None,
 ) -> FastAPI:
     """Create the HTTP application, allowing isolated authentication tests."""
 
@@ -61,6 +64,8 @@ def create_app(
                     else None
                 ),
             )
+        if not hasattr(app.state, "voice_profile_store"):
+            app.state.voice_profile_store = VoiceProfileStore(settings.data_dir)
         if not hasattr(app.state, "auth_service"):
             app.state.auth_service = AuthService(settings.credential_path, settings.public_origin)
         if not hasattr(app.state, "signaling_service"):
@@ -92,11 +97,14 @@ def create_app(
         application.state.approval_store = approval_store
     if tool_gateway is not None:
         application.state.tool_gateway = tool_gateway
+    if voice_profile_store is not None:
+        application.state.voice_profile_store = voice_profile_store
     application.include_router(auth_router)
     application.include_router(knowledge_router)
     application.include_router(memory_router)
     application.include_router(tools_router)
     application.include_router(voice_router)
+    application.include_router(voices_router)
     return application
 
 

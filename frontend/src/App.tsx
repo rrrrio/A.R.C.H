@@ -5,6 +5,7 @@ import { fetchKnowledgeStatus, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
 import { decideToolApproval, fetchToolApprovals, type ToolApproval } from './tools'
 import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceConnection, type VoiceEvent, VoiceClient, WebSocketVoiceClient } from './voice'
+import { createVoiceProfile, deleteVoiceProfile, fetchVoiceProfiles, selectVoiceProfile, type VoiceProfile } from './voices'
 import './App.css'
 
 type SessionState =
@@ -57,6 +58,14 @@ function App() {
   const [candidateActionId, setCandidateActionId] = useState<string | null>(null)
   const [toolApprovals, setToolApprovals] = useState<ToolApproval[]>([])
   const [toolActionId, setToolActionId] = useState<string | null>(null)
+  const [voiceProfiles, setVoiceProfiles] = useState<VoiceProfile[]>([])
+  const [selectedVoiceProfileId, setSelectedVoiceProfileId] = useState<string | null>(null)
+  const [profileName, setProfileName] = useState('')
+  const [profileTranscript, setProfileTranscript] = useState('')
+  const [profileReference, setProfileReference] = useState<File | null>(null)
+  const [profileOwnershipConfirmed, setProfileOwnershipConfirmed] = useState(false)
+  const [profileBusy, setProfileBusy] = useState(false)
+  const [profileError, setProfileError] = useState(false)
   const voiceClient = useRef<VoiceConnection | null>(null)
   const inputReadyTimer = useRef<number | null>(null)
 
@@ -91,6 +100,17 @@ function App() {
     }
   }
 
+  async function refreshVoiceProfiles() {
+    try {
+      const profiles = await fetchVoiceProfiles()
+      setVoiceProfiles(profiles.profiles)
+      setSelectedVoiceProfileId(profiles.selected_id)
+    } catch {
+      setVoiceProfiles([])
+      setSelectedVoiceProfileId(null)
+    }
+  }
+
   async function refreshSession() {
     try {
       const status = await fetchAuthStatus()
@@ -102,6 +122,7 @@ function App() {
         void refreshMemoryCandidates()
         void refreshKnowledgeStatus()
         void refreshToolApprovals()
+        void refreshVoiceProfiles()
       } else {
         setSession({ kind: 'anonymous' })
       }
@@ -132,6 +153,7 @@ function App() {
       void refreshMemoryCandidates()
       void refreshKnowledgeStatus()
       void refreshToolApprovals()
+      void refreshVoiceProfiles()
       setPassword('')
     } catch {
       setSession({ kind: 'anonymous' })
@@ -148,6 +170,8 @@ function App() {
     setKnowledgeStatus(null)
     setCandidateDrafts({})
     setToolApprovals([])
+    setVoiceProfiles([])
+    setSelectedVoiceProfileId(null)
   }
 
   async function connectVoice() {
@@ -264,6 +288,60 @@ function App() {
     }
   }
 
+  async function createProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (session.kind !== 'authenticated' || profileReference === null) return
+    setProfileBusy(true)
+    setProfileError(false)
+    try {
+      const referenceWavBase64 = bytesToBase64(await profileReference.arrayBuffer())
+      await createVoiceProfile(session.csrfToken, {
+        name: profileName,
+        transcript: profileTranscript,
+        referenceWavBase64,
+        ownershipConfirmed: profileOwnershipConfirmed,
+      })
+      setProfileName('')
+      setProfileTranscript('')
+      setProfileReference(null)
+      setProfileOwnershipConfirmed(false)
+      await refreshVoiceProfiles()
+    } catch {
+      setProfileError(true)
+    } finally {
+      setProfileBusy(false)
+    }
+  }
+
+  async function chooseProfile(profileId: string | null) {
+    if (session.kind !== 'authenticated') return
+    setProfileBusy(true)
+    setProfileError(false)
+    try {
+      const profiles = await selectVoiceProfile(session.csrfToken, profileId)
+      setVoiceProfiles(profiles.profiles)
+      setSelectedVoiceProfileId(profiles.selected_id)
+    } catch {
+      setProfileError(true)
+    } finally {
+      setProfileBusy(false)
+    }
+  }
+
+  async function removeProfile(profileId: string) {
+    if (session.kind !== 'authenticated') return
+    setProfileBusy(true)
+    setProfileError(false)
+    try {
+      await deleteVoiceProfile(session.csrfToken, profileId)
+      await refreshVoiceProfiles()
+    } catch {
+      setProfileError(true)
+    } finally {
+      setProfileBusy(false)
+    }
+  }
+
   return (
     <main className="workspace-shell">
       <header className="topbar">
@@ -370,6 +448,32 @@ function App() {
             ) : <p className="memory-empty">暂无待确认工具操作。</p>}
             <button type="button" className="secondary-button" onClick={() => void refreshToolApprovals()}>刷新操作</button>
           </section>
+          <section className="voice-profiles" aria-labelledby="voice-profiles-title">
+            <h2 id="voice-profiles-title">克隆声音参考</h2>
+            <p>当前会话仍使用 Kokoro 基线。保存的参考仅在 Qwen 克隆运行时安装并完成设备验收后启用。</p>
+            {profileError ? <p className="form-error">无法保存或更新声音参考。请确认 WAV 格式、时长和授权确认。</p> : null}
+            <div className="voice-profile-list">
+              <button type="button" className="secondary-button" disabled={profileBusy || selectedVoiceProfileId === null} onClick={() => void chooseProfile(null)}>使用 Kokoro 基线</button>
+              {voiceProfiles.map((profile) => <div className="voice-profile" key={profile.id}>
+                <p><strong>{profile.name}</strong> {profile.duration_ms} ms / {profile.sample_rate} Hz</p>
+                <p>{profile.transcript}</p>
+                <div className="candidate-actions">
+                  <button type="button" className="secondary-button" disabled={profileBusy || selectedVoiceProfileId === profile.id} onClick={() => void chooseProfile(profile.id)}>{selectedVoiceProfileId === profile.id ? '已选作克隆参考' : '选择克隆参考'}</button>
+                  <button type="button" className="secondary-button" disabled={profileBusy} onClick={() => void removeProfile(profile.id)}>删除</button>
+                </div>
+              </div>)}
+            </div>
+            <form className="voice-profile-form" onSubmit={createProfile}>
+              <label htmlFor="profile-name">名称</label>
+              <input id="profile-name" value={profileName} onChange={(event) => setProfileName(event.target.value)} required maxLength={80} />
+              <label htmlFor="profile-transcript">参考音频文本</label>
+              <textarea id="profile-transcript" value={profileTranscript} onChange={(event) => setProfileTranscript(event.target.value)} required maxLength={1000} />
+              <label htmlFor="profile-reference">参考 WAV</label>
+              <input id="profile-reference" type="file" accept="audio/wav,.wav" required onChange={(event) => setProfileReference(event.target.files?.[0] ?? null)} />
+              <label className="consent-row"><input type="checkbox" checked={profileOwnershipConfirmed} onChange={(event) => setProfileOwnershipConfirmed(event.target.checked)} required />我确认有权使用此参考声音。</label>
+              <button type="submit" disabled={profileBusy || profileReference === null}>{profileBusy ? '正在保存' : '保存参考'}</button>
+            </form>
+          </section>
           <div className="audio-input-row">
             <label htmlFor="audio-input">麦克风</label>
             <select
@@ -437,6 +541,13 @@ function formatTimestamp(value: string): string {
   const timestamp = new Date(value)
   if (Number.isNaN(timestamp.getTime())) return value
   return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' }).format(timestamp)
+}
+
+function bytesToBase64(payload: ArrayBuffer): string {
+  const bytes = new Uint8Array(payload)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
 }
 
 function voiceHeading(

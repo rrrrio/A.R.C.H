@@ -1,0 +1,75 @@
+"""Tests for bounded local reference-voice profile storage."""
+
+from __future__ import annotations
+
+import json
+import wave
+from io import BytesIO
+from pathlib import Path
+
+import pytest
+
+from arch.voice.profiles import VoiceProfileStore
+
+
+def _wav(seconds: int = 1, sample_rate: int = 8000) -> bytes:
+    payload = BytesIO()
+    with wave.open(payload, "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(sample_rate)
+        output.writeframes(b"\x00\x00" * seconds * sample_rate)
+    return payload.getvalue()
+
+
+def test_profile_store_requires_consent_and_valid_bounded_wav(tmp_path: Path) -> None:
+    """Profiles reject unconsented, malformed, and overlong reference inputs."""
+    store = VoiceProfileStore(tmp_path)
+
+    with pytest.raises(ValueError, match="permission"):
+        store.create("我的声音", "这是参考文本", _wav(), ownership_confirmed=False)
+    with pytest.raises(ValueError, match="valid WAV"):
+        store.create("我的声音", "这是参考文本", b"not audio", ownership_confirmed=True)
+    with pytest.raises(ValueError, match="at most"):
+        store.create("我的声音", "这是参考文本", _wav(seconds=11), ownership_confirmed=True)
+
+
+def test_profile_store_keeps_audio_local_and_resets_selected_profile_on_delete(
+    tmp_path: Path,
+) -> None:
+    """Listed metadata omits paths and deleting a selected profile restores the baseline."""
+    store = VoiceProfileStore(tmp_path)
+    profile = store.create("我的声音", "这是参考文本", _wav(), ownership_confirmed=True)
+
+    assert store.list() == (profile,)
+    assert store.select(profile.id) == profile.id
+    assert store.selected_id() == profile.id
+
+    store.delete(profile.id)
+
+    assert store.list() == ()
+    assert store.selected_id() is None
+    assert not (tmp_path / "voices" / "profiles" / profile.id).exists()
+
+
+def test_profile_store_rejects_symbolic_linked_storage(tmp_path: Path) -> None:
+    """A local link cannot redirect a browser upload outside the bounded data directory."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "voices").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        VoiceProfileStore(tmp_path).list()
+
+
+def test_profile_store_ignores_metadata_that_does_not_match_its_directory(tmp_path: Path) -> None:
+    """Corrupted metadata cannot make one profile alias another local directory."""
+    store = VoiceProfileStore(tmp_path)
+    profile = store.create("我的声音", "这是参考文本", _wav(), ownership_confirmed=True)
+    metadata = tmp_path / "voices" / "profiles" / profile.id / "profile.json"
+    payload = json.loads(metadata.read_text(encoding="utf-8"))
+    payload["id"] = "00000000-0000-0000-0000-000000000000"
+    metadata.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert store.get(profile.id) is None
+    assert store.list() == ()
