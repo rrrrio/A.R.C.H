@@ -1,0 +1,53 @@
+"""Tests for the profile-bound Qwen Pipecat TTS adapter."""
+
+from __future__ import annotations
+
+import asyncio
+
+from pipecat.frames.frames import ErrorFrame, TTSAudioRawFrame
+
+from arch.voice.profiles import VoiceProfile
+from arch.voice.qwen_clone import QwenCloneTTSService
+
+
+def _profile() -> VoiceProfile:
+    return VoiceProfile(
+        "00000000-0000-0000-0000-000000000000", "授权声音", "参考文本", 24000, 1000, "now"
+    )
+
+
+def test_qwen_clone_service_emits_profile_bound_24khz_pcm() -> None:
+    """The adapter preserves Pipecat's ordinary PCM transport contract."""
+
+    async def synthesize(text: str, profile: VoiceProfile) -> tuple[bytes, int]:
+        assert text == "测试回答"
+        assert profile == _profile()
+        return b"\x01\x00", 24000
+
+    async def exercise() -> list[object]:
+        service = QwenCloneTTSService(_profile(), synthesize)
+        return [frame async for frame in service.run_tts("测试回答", "turn-1")]
+
+    frames = asyncio.run(exercise())
+
+    assert len(frames) == 1
+    assert isinstance(frames[0], TTSAudioRawFrame)
+    assert frames[0].sample_rate == 24000
+    assert frames[0].context_id == "turn-1"
+
+
+def test_qwen_clone_service_does_not_hide_unavailable_or_wrong_format_runtime() -> None:
+    """Bad clone output becomes an explicit error rather than a Kokoro fallback."""
+
+    async def synthesize(_: str, __: VoiceProfile) -> tuple[bytes, int]:
+        return b"\x01", 22050
+
+    async def exercise() -> list[object]:
+        service = QwenCloneTTSService(_profile(), synthesize)
+        return [frame async for frame in service.run_tts("测试", "turn-2")]
+
+    frames = asyncio.run(exercise())
+
+    assert len(frames) == 1
+    assert isinstance(frames[0], ErrorFrame)
+    assert "unavailable" in frames[0].error
