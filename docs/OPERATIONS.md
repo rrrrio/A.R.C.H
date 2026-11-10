@@ -1,6 +1,6 @@
 # 运行操作
 
-本页说明当前 A.R.C.H. 部署中实际可用的启动、停止、检查和恢复命令。后端仍由操作者在终端启动；仓库尚未提供 systemd 单元、统一的全服务启动命令、开机恢复流程、容器 healthcheck、资源限制或日志轮转。
+本页说明当前 A.R.C.H. 部署中实际可用的启动、停止、检查和恢复命令。仓库可生成后端和 Caddy 的用户级 systemd unit，但不会自动安装或启用它们；SearXNG 和 Ollama 仍是按需 Compose profile。统一的全服务启动、容器 healthcheck、资源限制和日志轮转尚未提供。
 
 当前服务的依赖关系如下。`/api/health` 只证明后端 HTTP 路由可响应，不检查模型、数据库、Caddy 或搜索服务是否就绪。
 
@@ -54,6 +54,20 @@
 仓库没有对应的 `make` 停止目标；确认不再需要它后，可运行：
 
     docker compose -f deploy/compose.yaml --profile models stop ollama
+
+## 用户级 systemd
+
+先查看将要写入的 unit：
+
+    make systemd-dry-run
+
+确认后安装到当前用户的 `~/.config/systemd/user/`：
+
+    make systemd-install APPLY=1
+    systemctl --user daemon-reload
+    systemctl --user enable --now arch-backend.service arch-gateway.service
+
+安装器默认拒绝覆盖现有 unit。确认本机修改后的 unit 需要替换时，使用 `SYSTEMD_FLAGS=--replace`。`arch-backend.service` 在失败时重启；`arch-gateway.service` 只保持 Caddy Compose 服务处于启动状态。它们均不启动搜索或 Ollama。
 
 ## 备份与恢复
 

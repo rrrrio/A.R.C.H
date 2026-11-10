@@ -1,0 +1,15 @@
+[Unit]
+Description=A.R.C.H. Caddy gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=@WORKING_DIRECTORY@
+ExecStart=@DOCKER_BIN@ compose -f deploy/compose.yaml --profile gateway up -d caddy
+ExecStop=@DOCKER_BIN@ compose -f deploy/compose.yaml --profile gateway stop caddy
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
