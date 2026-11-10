@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { isOfferResponse, isVoiceEvent, listAudioInputs, VoiceClient } from './voice'
+import { isOfferResponse, isVoiceEvent, listAudioInputs, normalizeAudioLevel, pcmEnergy, VoiceClient } from './voice'
 
 describe('isOfferResponse', () => {
   it('accepts a complete server answer', () => {
@@ -27,6 +27,17 @@ describe('isVoiceEvent', () => {
     expect(isVoiceEvent({ type: 'transcript', state: 'thinking', role: 'assistant', phase: 'chunk', text: '你好' })).toBe(false)
     expect(isVoiceEvent({ type: 'latency', utterance_id: 'turn-1', stage: 'unknown', elapsed_ms: 42 })).toBe(false)
     expect(isVoiceEvent({ type: 'latency', utterance_id: 'turn-1', stage: 'asr-final', elapsed_ms: -1 })).toBe(false)
+  })
+})
+
+describe('output energy helpers', () => {
+  it('bounds transport data before it reaches the local renderer', () => {
+    expect(normalizeAudioLevel(0.4)).toBe(0.4)
+    expect(normalizeAudioLevel(2)).toBe(1)
+    expect(normalizeAudioLevel(-1)).toBe(0)
+    expect(normalizeAudioLevel('0.4')).toBe(0)
+    expect(pcmEnergy(new Int16Array())).toBe(0)
+    expect(pcmEnergy(new Int16Array([32767, -32768]))).toBe(1)
   })
 })
 
@@ -122,6 +133,7 @@ describe('VoiceClient', () => {
     const track = { stop: vi.fn() } as unknown as MediaStreamTrack
     const stream = { getAudioTracks: () => [track], getTracks: () => [track] } as unknown as MediaStream
     const receivedEvents: unknown[] = []
+    const outputEnergy: number[] = []
     const dataChannel = { close() {}, onmessage: null as ((event: MessageEvent) => void) | null }
     const getUserMedia = vi.fn().mockResolvedValue(stream)
 
@@ -167,13 +179,20 @@ describe('VoiceClient', () => {
       },
     )
 
-    const client = new VoiceClient('csrf-token', (event) => receivedEvents.push(event), 'usb-mic')
+    const client = new VoiceClient(
+      'csrf-token',
+      (event) => receivedEvents.push(event),
+      'usb-mic',
+      () => undefined,
+      (energy) => outputEnergy.push(energy),
+    )
     await client.connect()
 
     expect(getUserMedia).toHaveBeenCalledWith({ audio: { deviceId: { exact: 'usb-mic' } }, video: false })
     dataChannel.onmessage?.({ data: JSON.stringify({ type: 'voice_state', state: 'user-speaking' }) } as MessageEvent)
 
     expect((client as unknown as { audio: HTMLAudioElement }).audio.muted).toBe(true)
+    expect(outputEnergy).toEqual([0])
     dataChannel.onmessage?.({ data: JSON.stringify({ type: 'voice_state', state: 'speaking' }) } as MessageEvent)
 
     expect((client as unknown as { audio: HTMLAudioElement }).audio.muted).toBe(false)

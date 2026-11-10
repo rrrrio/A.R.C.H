@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
+import { AvatarPreview } from './AvatarPreview'
 import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
 import { fetchKnowledgeStatus, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
@@ -68,6 +69,11 @@ function App() {
   const [profileError, setProfileError] = useState(false)
   const voiceClient = useRef<VoiceConnection | null>(null)
   const inputReadyTimer = useRef<number | null>(null)
+  const avatarEnergySink = useRef<(energy: number) => void>(() => undefined)
+
+  const setAvatarEnergySink = useCallback((sink: (energy: number) => void) => {
+    avatarEnergySink.current = sink
+  }, [])
 
   async function refreshMemoryCandidates() {
     try {
@@ -186,6 +192,7 @@ function App() {
         },
         audioDeviceId || undefined,
         () => handleVoiceDisconnect(client),
+        (energy) => avatarEnergySink.current(energy),
       )
       voiceClient.current = client
       await client.connect()
@@ -253,6 +260,7 @@ function App() {
       (event) => { if (voiceClient.current === client) handleVoiceEvent(event) },
       audioDeviceId || undefined,
       () => handleVoiceDisconnect(client),
+      (energy) => avatarEnergySink.current(energy),
     )
     voiceClient.current = client
     try {
@@ -367,6 +375,7 @@ function App() {
               ))}
             </div>
           ) : null}
+          <AvatarPreview setEnergySink={setAvatarEnergySink} />
           <section className="memory-review" aria-labelledby="memory-title">
             <h2 id="memory-title">待确认记忆</h2>
             {pendingCandidates.length ? (

@@ -50,3 +50,5 @@
 `OutputMux` 在 `direct_audio` 与未来 `avatar_av` 输出模式间保持互斥。浏览器直接播放 Kokoro 或已选择 profile 的 Qwen 24 kHz PCM。Qwen worker 只在会话启动时有有效选择才进入隔离环境，通过 Unix socket 接收不含路径的 profile ID；缺少制品、启动失败或格式错误会使会话失败，绝不替换为 Kokoro。Pipecat 取消正在合成的 Qwen 请求时会终止对应隔离 worker，防止旧生成继续占用资源或重新输出。一次本地合成 WAV smoke 已观察到 worker 输出 PCM，但尚未证明浏览器可听音色、首音或插话指标。
 
 Agent Core 可以为下一段 TTS 输出提供 `neutral`、`warm`、`calm` 或 `urgent` 中的一个受限标签。媒体边界会把其他值归一为 `neutral`，并在用户插话时重置为 `neutral`。该标签只传入 `OutputMux.begin`，供未来数字人或兼容 TTS 适配器使用；它不是 Qwen Base 的任意风格参数，当前直接浏览器音频也不会向客户端暴露表达事件。后续数字人适配器可以消费带时间戳的 PCM、音量、口型和该受限标签，并在 `avatar_av` 模式拥有最终音频，避免重音或口型漂移。真实数字人后端、浏览器表达渲染和设备级验收仍未完成。
+
+浏览器数字人预览是独立于 `avatar_av` 的第一条实现路径。它使用浏览器本地选择的 VRM 文件和 WebGL 渲染；模型不经过 API、不写入 `data/`，也不进入备份。WebRTC 路径从已接收的音频统计读取能量，WebSocket PCM 路径从收到的 PCM 计算能量，两者都不会增加音频 destination 或第二路播放。该能量只驱动本地预览的基础嘴部开合；当前没有服务器视频轨、浏览器表达事件或可接受的设备帧率/音画同步证据。直接音频仍是唯一输出所有者。

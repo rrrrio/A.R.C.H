@@ -13,6 +13,7 @@ export type VoiceEvent =
   | { type: 'latency'; utterance_id: string; stage: LatencyStage; elapsed_ms: number }
 
 export type AudioInput = { deviceId: string; label: string }
+export type OutputEnergyHandler = (energy: number) => void
 
 export interface VoiceConnection {
   connect(): Promise<void>
@@ -26,6 +27,7 @@ export class VoiceClient {
   private readonly onEvent: (event: VoiceEvent) => void
   private readonly audioDeviceId: string | undefined
   private readonly onConnectionClosed: () => void
+  private readonly onOutputEnergy: OutputEnergyHandler
   private dataChannel: RTCDataChannel | null = null
   private pcId: string | null = null
   private pendingCandidates: Candidate[] = []
@@ -33,21 +35,27 @@ export class VoiceClient {
   private serverSessionMayExist = false
   private closing = false
   private connectionClosedNotified = false
+  private outputEnergyTimer: number | null = null
+  private outputEnergyPolling = false
+  private outputEnergySuppressed = false
 
   constructor(
     csrfToken: string,
     onEvent: (event: VoiceEvent) => void,
     audioDeviceId?: string,
     onConnectionClosed: () => void = () => undefined,
+    onOutputEnergy: OutputEnergyHandler = () => undefined,
   ) {
     this.csrfToken = csrfToken
     this.onEvent = onEvent
     this.audioDeviceId = audioDeviceId
     this.onConnectionClosed = onConnectionClosed
+    this.onOutputEnergy = onOutputEnergy
     this.audio.autoplay = true
     this.connection.ontrack = (event) => {
       this.audio.srcObject = event.streams[0] ?? new MediaStream([event.track])
       void this.audio.play().catch(() => undefined)
+      this.startOutputEnergyMeter()
     }
     this.connection.onicecandidate = (event) => {
       if (!event.candidate) return
@@ -83,9 +91,12 @@ export class VoiceClient {
         if (isVoiceEvent(event)) {
           if (event.type === 'voice_state' && event.state === 'user-speaking') {
             this.audio.muted = true
+            this.outputEnergySuppressed = true
+            this.onOutputEnergy(0)
           }
           if (event.type === 'voice_state' && event.state === 'speaking') {
             this.audio.muted = false
+            this.outputEnergySuppressed = false
           }
           this.onEvent(event)
         }
@@ -116,6 +127,7 @@ export class VoiceClient {
     this.dataChannel?.close()
     this.dataChannel = null
     this.connection.close()
+    this.stopOutputEnergyMeter()
     if (this.serverSessionMayExist) {
       await fetch('/api/voice/session', {
         method: 'DELETE',
@@ -151,6 +163,39 @@ export class VoiceClient {
     })
     if (!response.ok) throw new Error('Voice ICE negotiation failed.')
   }
+
+  private startOutputEnergyMeter() {
+    this.stopOutputEnergyMeter()
+    this.outputEnergyTimer = window.setInterval(() => void this.reportOutputEnergy(), 80)
+  }
+
+  private stopOutputEnergyMeter() {
+    if (this.outputEnergyTimer !== null) window.clearInterval(this.outputEnergyTimer)
+    this.outputEnergyTimer = null
+    this.onOutputEnergy(0)
+  }
+
+  private async reportOutputEnergy() {
+    if (this.outputEnergySuppressed) {
+      this.onOutputEnergy(0)
+      return
+    }
+    if (this.outputEnergyPolling || typeof this.connection.getStats !== 'function') return
+    this.outputEnergyPolling = true
+    try {
+      const reports = await this.connection.getStats()
+      for (const report of reports.values()) {
+        if (report.type !== 'inbound-rtp') continue
+        const candidate = report as RTCStats & { kind?: unknown; mediaType?: unknown; audioLevel?: unknown }
+        if (candidate.kind !== 'audio' && candidate.mediaType !== 'audio') continue
+        this.onOutputEnergy(normalizeAudioLevel(candidate.audioLevel))
+        return
+      }
+      this.onOutputEnergy(0)
+    } finally {
+      this.outputEnergyPolling = false
+    }
+  }
 }
 
 export class WebSocketVoiceClient implements VoiceConnection {
@@ -166,12 +211,14 @@ export class WebSocketVoiceClient implements VoiceConnection {
   private gain: GainNode | null = null
   private nextPlaybackTime = 0
   private closing = false
+  private readonly onOutputEnergy: OutputEnergyHandler
 
-  constructor(csrfToken: string, onEvent: (event: VoiceEvent) => void, audioDeviceId?: string, onConnectionClosed: () => void = () => undefined) {
+  constructor(csrfToken: string, onEvent: (event: VoiceEvent) => void, audioDeviceId?: string, onConnectionClosed: () => void = () => undefined, onOutputEnergy: OutputEnergyHandler = () => undefined) {
     this.csrfToken = csrfToken
     this.onEvent = onEvent
     this.audioDeviceId = audioDeviceId
     this.onConnectionClosed = onConnectionClosed
+    this.onOutputEnergy = onOutputEnergy
   }
 
   async connect(): Promise<void> {
@@ -220,6 +267,7 @@ export class WebSocketVoiceClient implements VoiceConnection {
     this.context = null
     this.socket?.close()
     this.socket = null
+    this.onOutputEnergy(0)
   }
 
   private handleMessage(message: MessageEvent) {
@@ -237,6 +285,7 @@ export class WebSocketVoiceClient implements VoiceConnection {
   private playPCM(payload: ArrayBuffer) {
     if (!this.context || !this.gain) return
     const input = new Int16Array(payload)
+    this.onOutputEnergy(pcmEnergy(input))
     const buffer = this.context.createBuffer(1, input.length, 24000)
     const samples = buffer.getChannelData(0)
     for (let index = 0; index < input.length; index += 1) samples[index] = input[index] / 32768
@@ -254,7 +303,19 @@ export class WebSocketVoiceClient implements VoiceConnection {
     this.gain = this.context.createGain()
     this.gain.connect(this.context.destination)
     this.nextPlaybackTime = this.context.currentTime
+    this.onOutputEnergy(0)
   }
+}
+
+export function normalizeAudioLevel(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0
+}
+
+export function pcmEnergy(input: Int16Array): number {
+  if (input.length === 0) return 0
+  let squared = 0
+  for (const sample of input) squared += (sample / 32768) ** 2
+  return Math.min(1, Math.sqrt(squared / input.length) * 2.5)
 }
 
 function resample(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
