@@ -87,6 +87,7 @@ gateway:
 | `data/auth/admin.json` | 管理员 Argon2id 密码哈希 | 受 Git 忽略；不要复制或提交。 |
 | `data/db/arch.sqlite3` | 会话、记忆、审批和知识索引 | 受 Git 忽略；备份前先停止写入或使用一致性备份流程。新文件不存在时，应用继续使用旧部署的 `data/db/local-voice-agent.sqlite3`。若两者都存在，优先使用 `arch.sqlite3`。 |
 | `data/knowledge/inbox/` | 用户可索引资料 | 唯一允许的 RAG 源目录。 |
+| `data/backups/` | `make backup` 创建的压缩归档 | 归档含 SQLite 一致性副本和知识资料 inbox，不含管理员凭据、模型或本地 CA；应复制到受控的离机位置。 |
 | `data/models/` | 固定模型、声线和嵌入模型 | 受 Git 忽略；运行时按固定路径验证。 |
 | `data/runtime/` | llama.cpp 和 SearXNG 运行时状态 | 受 Git 忽略；`searxng.env` 必须为 `0600`。 |
 | `data/workspace/` | 受限终端工具的唯一工作根目录 | 工具策略拒绝其外部路径。 |
