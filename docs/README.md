@@ -14,6 +14,7 @@
 - [运行操作](OPERATIONS.md)：当前服务的启动、停止、检查和恢复边界。
 - [卸载](UNINSTALL.md)：预览并删除生成物，默认保留用户数据。
 - [安全边界](SECURITY.md)：网络、凭据、数据、工具与当前运行限制。
+- [模型与许可证](MODELS_AND_LICENSES.md)：固定模型来源、准备命令、许可证证据与可复现边界。
 - [配置参考](reference/configuration.md)：环境变量、端口、持久化目录和支持的文件格式。
 - [架构与安全边界](explanation/architecture.md)：实时路径、审批、取消、记忆、RAG 与未来数字人的设计理由。
 - [开发环境](DEVELOPMENT.md)：运行测试、启动开发服务和维护文档。

@@ -6,7 +6,7 @@ import hashlib
 import json
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.request import urlopen
 
 from huggingface_hub import hf_hub_download
@@ -45,13 +45,19 @@ def main() -> None:
     baseline: Any = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     tts = baseline.get("tts", {}) if isinstance(baseline, dict) else {}
     values = (
-        tts.get("model"), tts.get("revision"), tts.get("model_filename"),
-        tts.get("model_sha256"), tts.get("voice_filename"), tts.get("voice_url"),
+        tts.get("model"),
+        tts.get("revision"),
+        tts.get("model_filename"),
+        tts.get("model_sha256"),
+        tts.get("voice_filename"),
+        tts.get("voice_url"),
         tts.get("voice_sha256"),
     )
     if not all(isinstance(value, str) for value in values):
         raise SystemExit("The TTS baseline config is incomplete.")
-    repo, revision, model_name, model_hash, voice_name, voice_url, voice_hash = values
+    repo, revision, model_name, model_hash, voice_name, voice_url, voice_hash = cast(
+        tuple[str, str, str, str, str, str, str], values
+    )
     destination = MODEL_ROOT / revision
     destination.mkdir(parents=True, exist_ok=True)
     model_path = Path(
@@ -65,6 +71,22 @@ def main() -> None:
     if sha256_file(model_path) != model_hash:
         raise SystemExit(f"TTS artifact digest mismatch: {model_name}")
     download_voice_pack(voice_url, destination / voice_name, voice_hash)
+    (destination / "lva-provenance.json").write_text(
+        json.dumps(
+            {
+                "source_repo": repo,
+                "revision": revision,
+                "model_filename": model_name,
+                "model_sha256": model_hash,
+                "voice_filename": voice_name,
+                "voice_url": voice_url,
+                "voice_sha256": voice_hash,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     print(destination)
 
 
