@@ -27,6 +27,7 @@ from arch.rag.retriever import Retriever
 from arch.tools.gateway import ToolOutcome
 from arch.tools.terminal import TerminalResult
 from arch.voice.agent_processor import PipecatAgentProcessor, ToolDispatcher
+from arch.voice.emotion import EmotionFrame
 
 
 class FakeAgent:
@@ -37,6 +38,15 @@ class FakeAgent:
 
     async def respond(self, request: AgentRequest) -> AsyncIterator[AgentResponseEvent]:
         self.requests.append(request)
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.TEXT, "回答")
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+
+class EmotionAgent:
+    """Emit an expression request before text for the media bridge test."""
+
+    async def respond(self, request: AgentRequest) -> AsyncIterator[AgentResponseEvent]:
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.EMOTION, "WARM")
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.TEXT, "回答")
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
 
@@ -97,6 +107,20 @@ def test_agent_processor_converts_transcription_to_response_frames_and_history()
         ("user", "你好"),
         ("assistant", "回答"),
     ]
+
+
+def test_agent_processor_converts_bounded_emotion_events_to_typed_frames() -> None:
+    """Agent expression metadata stays typed and separate from spoken response history."""
+    processor = InspectingAgentProcessor(EmotionAgent())
+
+    asyncio.run(
+        processor.process_frame(
+            TranscriptionFrame("你好", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+    )
+
+    emotion_frames = [frame for frame in processor.forwarded if isinstance(frame, EmotionFrame)]
+    assert [frame.emotion for frame in emotion_frames] == ["warm"]
 
 
 def test_agent_processor_accepts_a_runtime_string_language_code() -> None:
@@ -321,6 +345,18 @@ class ContinuingToolAgent:
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
 
 
+class EmotionContinuationAgent(ContinuingToolAgent):
+    """Emit bounded expression metadata with a post-approval answer."""
+
+    async def respond_to_tool_result(
+        self, request: AgentRequest, result: ToolResult
+    ) -> AsyncIterator[AgentResponseEvent]:
+        self.results.append(result)
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.EMOTION, "calm")
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.TEXT, "操作已完成。")
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+
 class SilentContinuationAgent(ContinuingToolAgent):
     """Finish a tool continuation without text to exercise the browser-only fallback."""
 
@@ -439,6 +475,28 @@ def test_agent_processor_continues_once_after_browser_approval(tmp_path: Path) -
         ("user", "创建文件"),
         ("assistant", "当前目录已确认。"),
     ]
+
+
+def test_agent_processor_routes_emotion_from_a_completed_tool_continuation() -> None:
+    """Approved tool results use the same bounded expression path as ordinary answers."""
+    gateway = FakeToolGateway(ToolOutcome("approval_required", "review", approval_id="approval-1"))
+    processor = InspectingAgentProcessor(EmotionContinuationAgent(), tool_gateway=gateway)
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("创建文件", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+        assert await processor.continue_after_approved_tool(
+            "approval-1", ToolOutcome("completed", "done")
+        )
+        response_task = processor._response_task
+        assert response_task is not None
+        await response_task
+
+    asyncio.run(exercise())
+
+    emotion_frames = [frame for frame in processor.forwarded if isinstance(frame, EmotionFrame)]
+    assert [frame.emotion for frame in emotion_frames] == ["calm"]
 
 
 def test_agent_processor_never_persists_tool_output_when_continuation_has_no_text(

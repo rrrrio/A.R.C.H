@@ -31,6 +31,7 @@ from arch.memory.extractor import MemoryCandidateExtractor
 from arch.memory.store import MemoryStore, StoredMessage
 from arch.rag.retriever import Retriever
 from arch.tools.gateway import ToolOutcome
+from arch.voice.emotion import EmotionFrame, normalize_emotion
 
 
 class ToolDispatcher(Protocol):
@@ -139,6 +140,8 @@ class PipecatAgentProcessor(FrameProcessor):
                 if event.kind in {AgentResponseKind.TEXT, AgentResponseKind.ERROR}:
                     assistant_history_parts.append(event.text)
                     await self.push_frame(LLMTextFrame(event.text))
+                elif event.kind == AgentResponseKind.EMOTION:
+                    await self.push_frame(EmotionFrame(emotion=normalize_emotion(event.text)))
                 elif event.kind == AgentResponseKind.TOOL_REQUEST:
                     outcome = await self._dispatch_tool_request(event.tool_request)
                     if outcome is None:
@@ -306,6 +309,8 @@ class PipecatAgentProcessor(FrameProcessor):
                 emitted = True
                 assistant_history_parts.append(event.text)
                 await self.push_frame(LLMTextFrame(event.text))
+            elif event.kind == AgentResponseKind.EMOTION:
+                await self.push_frame(EmotionFrame(emotion=normalize_emotion(event.text)))
             elif event.kind == AgentResponseKind.END:
                 break
         return emitted

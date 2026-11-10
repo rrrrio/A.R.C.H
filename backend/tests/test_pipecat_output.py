@@ -12,6 +12,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 
+from arch.voice.emotion import EmotionFrame
 from arch.voice.pipecat_output import PipecatOutputMuxProcessor
 
 
@@ -75,4 +76,30 @@ def test_output_mux_processor_only_ends_the_active_tts_context() -> None:
         TTSStartedFrame,
         TTSStartedFrame,
         TTSStoppedFrame,
+    ]
+
+
+def test_output_mux_processor_uses_bounded_emotion_for_next_tts_context() -> None:
+    """Expression metadata affects a future output context and resets on interruption."""
+    processor = InspectingOutputMuxProcessor()
+    beginnings: list[tuple[str, int, str]] = []
+
+    async def begin(utterance_id: str, sample_rate: int, emotion: str) -> None:
+        beginnings.append((utterance_id, sample_rate, emotion))
+
+    processor._mux.begin = begin  # type: ignore[assignment]
+
+    async def exercise() -> None:
+        await processor.process_frame(EmotionFrame(emotion="warm"), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(TTSStartedFrame(context_id="warm"), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(
+            TTSStartedFrame(context_id="neutral"), FrameDirection.DOWNSTREAM
+        )
+
+    asyncio.run(exercise())
+
+    assert beginnings == [
+        ("tts:warm", 24000, "warm"),
+        ("tts:neutral", 24000, "neutral"),
     ]

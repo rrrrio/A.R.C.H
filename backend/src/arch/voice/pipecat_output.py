@@ -17,6 +17,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from arch.avatar.adapter import NullAvatarAdapter
 from arch.voice.cancellation import CancellationController
+from arch.voice.emotion import DEFAULT_EMOTION, Emotion, EmotionFrame
 from arch.voice.output_mux import OutputMux
 
 
@@ -61,6 +62,7 @@ class PipecatOutputMuxProcessor(FrameProcessor):
         self._context_utterances: dict[str, str] = {}
         self._active_utterance_id: str | None = None
         self._anonymous_turn = 0
+        self._pending_emotion: Emotion = DEFAULT_EMOTION
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """Forward controls while routing PCM only through the active output owner."""
@@ -69,12 +71,18 @@ class PipecatOutputMuxProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
         if isinstance(frame, InterruptionFrame):
+            self._pending_emotion = DEFAULT_EMOTION
             await self._cancel_active_output()
             await self.push_frame(frame, direction)
             return
+        if isinstance(frame, EmotionFrame):
+            self._pending_emotion = frame.emotion
+            return
         if isinstance(frame, TTSStartedFrame):
             started_utterance_id = self._utterance_for_started(frame)
-            await self._mux.begin(started_utterance_id, self._output_sample_rate)
+            await self._mux.begin(
+                started_utterance_id, self._output_sample_rate, self._pending_emotion
+            )
             await self.push_frame(frame, direction)
             return
         if isinstance(frame, TTSAudioRawFrame):
