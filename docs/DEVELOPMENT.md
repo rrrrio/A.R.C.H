@@ -40,7 +40,7 @@
 
 ## 数据与迁移
 
-所有可写数据必须保留在 `data/` 内。运行 SQLite migration：
+所有可写的应用数据必须保留在 `data/` 内。Caddy 容器的受忽略状态位于 `deploy/caddy-data/` 和 `deploy/caddy-config/`，不要提交或复制其中的私钥。运行 SQLite migration：
 
     make migrate
 

@@ -57,7 +57,7 @@ gateway:
 
 | 参数 | 类型 / 默认值 | 约束 | 作用 |
 | --- | --- | --- | --- |
-| `ARCH_DATA_DIR` | `Path` / `data` | 必须在仓库 `data/` 内 | 模型、凭据、数据库、知识库、日志和运行时状态的唯一写入根目录。 |
+| `ARCH_DATA_DIR` | `Path` / `data` | 必须在仓库 `data/` 内 | 应用模型、凭据、数据库、知识库、日志和运行时状态的唯一写入根目录；不包含 Caddy 容器的受忽略状态目录。 |
 | `ARCH_ARTIFACT_DIR` | `Path` / 未设置 | 未设置时等于 `ARCH_DATA_DIR`；设置时必须在仓库 `data/` 内 | 固定模型和运行时制品的读取根目录；隔离验收用它读取已有制品，同时将凭据与 SQLite 写入独立 `ARCH_DATA_DIR`。 |
 | `ARCH_ENVIRONMENT` | `str` / `development` | 非空字符串 | 健康检查中返回的环境标签。 |
 | `ARCH_HOST` | `str` / `127.0.0.1` | 合法监听地址 | 后端开发服务器的默认监听主机；生产入口由 Caddy 代理。 |
