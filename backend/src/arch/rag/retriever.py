@@ -18,12 +18,21 @@ class Retriever(Protocol):
 class LocalKnowledgeRetriever:
     """Embed one transcript and return source-labeled excerpts from the local index."""
 
-    def __init__(self, store: KnowledgeStore, embedder: TextEmbedder, limit: int = 4) -> None:
+    def __init__(
+        self,
+        store: KnowledgeStore,
+        embedder: TextEmbedder,
+        limit: int = 4,
+        minimum_score: float = 0.4,
+    ) -> None:
         if limit < 1:
             raise ValueError("Knowledge retrieval limit must be positive.")
+        if not 0.0 <= minimum_score <= 1.0:
+            raise ValueError("Knowledge retrieval minimum score must be between zero and one.")
         self._store = store
         self._embedder = embedder
         self._limit = limit
+        self._minimum_score = minimum_score
 
     def retrieve(self, query: str) -> tuple[str, ...]:
         """Return only a small, inspectable set of non-empty document excerpts."""
@@ -34,5 +43,5 @@ class LocalKnowledgeRetriever:
         return tuple(
             f"来源：{hit.path}\n{hit.content}"
             for hit in self._store.search_hybrid(query_vector, normalized, limit=self._limit)
-            if hit.content
+            if hit.content and hit.score >= self._minimum_score
         )

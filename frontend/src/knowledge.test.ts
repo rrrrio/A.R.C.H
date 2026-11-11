@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { fetchKnowledgeStatus, readKnowledgeStatus } from './knowledge'
+import { fetchKnowledgeStatus, rebuildKnowledgeIndex, readKnowledgeStatus } from './knowledge'
 
 describe('readKnowledgeStatus', () => {
   it('accepts a browser-safe local index summary', () => {
@@ -30,5 +30,29 @@ describe('readKnowledgeStatus', () => {
     }
 
     expect(requests).toEqual(['/api/knowledge/status'])
+  })
+
+  it('posts a CSRF-protected request to rebuild the fixed local inbox index', async () => {
+    const originalFetch = globalThis.fetch
+    const requests: Array<{ input: string; init: RequestInit | undefined }> = []
+    globalThis.fetch = async (input, init) => {
+      requests.push({ input: String(input), init })
+      return new Response(JSON.stringify({ changed_source_count: 2, source_count: 3, indexed_at: '2026-11-11T00:00:00+00:00' }), { status: 200 })
+    }
+
+    try {
+      await expect(rebuildKnowledgeIndex('csrf-token')).resolves.toEqual({
+        changed_source_count: 2,
+        source_count: 3,
+        indexed_at: '2026-11-11T00:00:00+00:00',
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].input).toBe('/api/knowledge/reindex')
+    expect(requests[0].init?.method).toBe('POST')
+    expect(new Headers(requests[0].init?.headers).get('X-CSRF-Token')).toBe('csrf-token')
   })
 })

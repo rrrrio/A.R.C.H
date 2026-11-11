@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { AvatarPreview } from './AvatarPreview'
 import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
-import { fetchKnowledgeStatus, type KnowledgeStatus } from './knowledge'
+import { fetchKnowledgeStatus, rebuildKnowledgeIndex, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
 import { decideToolApproval, fetchToolApprovals, type ToolApproval } from './tools'
 import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceConnection, type VoiceEvent, VoiceClient, WebSocketVoiceClient } from './voice'
@@ -55,6 +55,8 @@ function App() {
   const [pendingCandidates, setPendingCandidates] = useState<MemoryCandidate[]>([])
   const [approvedCandidates, setApprovedCandidates] = useState<MemoryCandidate[]>([])
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
+  const [knowledgeIndexing, setKnowledgeIndexing] = useState(false)
+  const [knowledgeIndexMessage, setKnowledgeIndexMessage] = useState<string | null>(null)
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({})
   const [candidateActionId, setCandidateActionId] = useState<string | null>(null)
   const [toolApprovals, setToolApprovals] = useState<ToolApproval[]>([])
@@ -95,6 +97,21 @@ function App() {
       setKnowledgeStatus(await fetchKnowledgeStatus())
     } catch {
       setKnowledgeStatus(null)
+    }
+  }
+
+  async function rebuildKnowledgeIndexFromBrowser() {
+    if (session.kind !== 'authenticated' || knowledgeIndexing) return
+    setKnowledgeIndexing(true)
+    setKnowledgeIndexMessage(null)
+    try {
+      const result = await rebuildKnowledgeIndex(session.csrfToken)
+      setKnowledgeStatus(result)
+      setKnowledgeIndexMessage(`已更新 ${result.changed_source_count} 个文件。`)
+    } catch {
+      setKnowledgeIndexMessage('无法建立索引。请确认本地模型已准备完成后重试。')
+    } finally {
+      setKnowledgeIndexing(false)
     }
   }
 
@@ -452,6 +469,10 @@ function App() {
             <button type="button" className="secondary-button" onClick={() => void refreshKnowledgeStatus()}>
               刷新状态
             </button>
+            <button type="button" className="primary-button" disabled={knowledgeIndexing} onClick={() => void rebuildKnowledgeIndexFromBrowser()}>
+              {knowledgeIndexing ? '正在建立索引' : '建立索引'}
+            </button>
+            {knowledgeIndexMessage ? <p role="status">{knowledgeIndexMessage}</p> : null}
           </section>
           <section className="tool-review" aria-labelledby="tool-review-title">
             <h2 id="tool-review-title">待确认工具操作</h2>

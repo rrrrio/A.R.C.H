@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
 from arch.api.auth import AuthServiceDependency
+from arch.rag.index_service import (
+    KnowledgeIndexBusyError,
+    KnowledgeIndexService,
+    KnowledgeIndexUnavailableError,
+)
 from arch.rag.store import KnowledgeStore
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
@@ -20,12 +27,28 @@ class KnowledgeStatusResponse(BaseModel):
     indexed_at: str | None
 
 
+class KnowledgeReindexResponse(KnowledgeStatusResponse):
+    """Browser-safe result of one completed fixed-inbox rebuild."""
+
+    changed_source_count: int = Field(ge=0)
+
+
 def get_knowledge_store(request: Request) -> KnowledgeStore:
     """Read the application-scoped local knowledge repository."""
     return cast(KnowledgeStore, request.app.state.knowledge_store)
 
 
 KnowledgeStoreDependency = Annotated[KnowledgeStore, Depends(get_knowledge_store)]
+
+
+def get_knowledge_index_service(request: Request) -> KnowledgeIndexService:
+    """Read the application-owned rebuild service without exposing its inputs."""
+    return cast(KnowledgeIndexService, request.app.state.knowledge_index_service)
+
+
+KnowledgeIndexServiceDependency = Annotated[
+    KnowledgeIndexService, Depends(get_knowledge_index_service)
+]
 
 
 @router.get("/status", response_model=KnowledgeStatusResponse)
@@ -38,3 +61,34 @@ def status(
     auth.require_session(request)
     source_count, indexed_at = store.index_status()
     return KnowledgeStatusResponse(source_count=source_count, indexed_at=indexed_at)
+
+
+@router.post("/reindex", response_model=KnowledgeReindexResponse)
+async def reindex(
+    request: Request,
+    auth: AuthServiceDependency,
+    store: KnowledgeStoreDependency,
+    index_service: KnowledgeIndexServiceDependency,
+) -> KnowledgeReindexResponse:
+    """Rebuild only the configured inbox after same-origin administrator authorization."""
+    auth.require_csrf(request)
+    try:
+        changed_source_count = await asyncio.to_thread(index_service.rebuild)
+    except KnowledgeIndexBusyError as error:
+        raise HTTPException(
+            http_status.HTTP_409_CONFLICT, "Knowledge indexing is already running."
+        ) from error
+    except KnowledgeIndexUnavailableError as error:
+        raise HTTPException(
+            http_status.HTTP_503_SERVICE_UNAVAILABLE, "Local knowledge model is not ready."
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            http_status.HTTP_503_SERVICE_UNAVAILABLE, "Local knowledge indexing is unavailable."
+        ) from error
+    source_count, indexed_at = store.index_status()
+    return KnowledgeReindexResponse(
+        changed_source_count=changed_source_count,
+        source_count=source_count,
+        indexed_at=indexed_at,
+    )

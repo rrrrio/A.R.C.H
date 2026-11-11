@@ -16,6 +16,7 @@ from arch.api.voice import router as voice_router
 from arch.api.voices import router as voices_router
 from arch.auth.service import AuthService
 from arch.memory.store import MemoryStore
+from arch.rag.index_service import KnowledgeIndexService, LocalKnowledgeIndexService
 from arch.rag.store import KnowledgeStore
 from arch.settings import Settings, get_settings
 from arch.tools.approvals import ApprovalStore
@@ -34,6 +35,7 @@ def create_app(
     signaling_service: WebRTCSignalingService | None = None,
     memory_store: MemoryStore | None = None,
     knowledge_store: KnowledgeStore | None = None,
+    knowledge_index_service: KnowledgeIndexService | None = None,
     approval_store: ApprovalStore | None = None,
     tool_gateway: ToolGateway | None = None,
     voice_profile_store: VoiceProfileStore | None = None,
@@ -51,6 +53,12 @@ def create_app(
         if not hasattr(app.state, "knowledge_store"):
             app.state.knowledge_store = KnowledgeStore(settings.database_path)
         app.state.knowledge_store.migrate()
+        if not hasattr(app.state, "knowledge_index_service"):
+            app.state.knowledge_index_service = LocalKnowledgeIndexService(
+                settings.knowledge_inbox_path,
+                settings.rag_model_path,
+                app.state.knowledge_store,
+            )
         if not hasattr(app.state, "approval_store"):
             app.state.approval_store = ApprovalStore(settings.database_path)
         if not hasattr(app.state, "tool_gateway"):
@@ -95,6 +103,8 @@ def create_app(
         application.state.memory_store = memory_store
     if knowledge_store is not None:
         application.state.knowledge_store = knowledge_store
+    if knowledge_index_service is not None:
+        application.state.knowledge_index_service = knowledge_index_service
     if approval_store is not None:
         application.state.approval_store = approval_store
     if tool_gateway is not None:
