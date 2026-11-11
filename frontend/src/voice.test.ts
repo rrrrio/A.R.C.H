@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createMutedCaptureSink, isOfferResponse, isVoiceEvent, listAudioInputs, normalizeAudioLevel, pcmEnergy, VoiceClient, voiceCaptureConstraints } from './voice'
+import { createMutedCaptureSink, decodeBrowserPCM, isOfferResponse, isVoiceEvent, listAudioInputs, normalizeAudioLevel, pcmEnergy, VoiceClient, voiceCaptureConstraints, WebSocketVoiceClient } from './voice'
 
 describe('isOfferResponse', () => {
   it('accepts a complete server answer', () => {
@@ -50,6 +50,20 @@ describe('output energy helpers', () => {
     expect(createMutedCaptureSink({ createGain: () => sink, destination })).toBe(sink)
     expect(sink.gain.value).toBe(0)
     expect(connect).toHaveBeenCalledWith(destination)
+  })
+})
+
+describe('WebSocket PCM framing', () => {
+  it('decodes only a generation-bound PCM packet', () => {
+    const payload = new Uint8Array([
+      65, 80, 67, 77, 10, 116, 116, 115, 58, 116, 117, 114, 110, 45, 49, 2, 0,
+    ]).buffer
+
+    expect(decodeBrowserPCM(payload)).toEqual({
+      utteranceId: 'tts:turn-1',
+      pcm: new Uint8Array([2, 0]).buffer,
+    })
+    expect(decodeBrowserPCM(new ArrayBuffer(2))).toBeNull()
   })
 })
 
@@ -159,6 +173,8 @@ describe('VoiceClient', () => {
     const outputEnergy: number[] = []
     const dataChannel = { close() {}, onmessage: null as ((event: MessageEvent) => void) | null }
     const getUserMedia = vi.fn().mockResolvedValue(stream)
+    const remoteStream = {} as MediaStream
+    const audioInstances: Array<{ autoplay: boolean; muted: boolean; srcObject: MediaProvider | null; pause: ReturnType<typeof vi.fn>; play: ReturnType<typeof vi.fn> }> = []
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ sdp: 'answer', type: 'answer', pc_id: 'pc-1' }))))
     vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } })
@@ -169,10 +185,12 @@ describe('VoiceClient', () => {
         muted = false
         srcObject: MediaProvider | null = null
 
-        pause() {}
+        pause = vi.fn()
 
-        play() {
-          return Promise.resolve()
+        play = vi.fn().mockResolvedValue(undefined)
+
+        constructor() {
+          audioInstances.push(this)
         }
       },
     )
@@ -210,6 +228,9 @@ describe('VoiceClient', () => {
       (energy) => outputEnergy.push(energy),
     )
     await client.connect()
+    const internalClient = client as unknown as { remoteAudioStream: MediaStream | null }
+    internalClient.remoteAudioStream = remoteStream
+    if (audioInstances[0]) audioInstances[0].srcObject = remoteStream
 
     expect(getUserMedia).toHaveBeenCalledWith({
       audio: {
@@ -223,10 +244,13 @@ describe('VoiceClient', () => {
     dataChannel.onmessage?.({ data: JSON.stringify({ type: 'voice_state', state: 'user-speaking' }) } as MessageEvent)
 
     expect((client as unknown as { audio: HTMLAudioElement }).audio.muted).toBe(true)
+    expect(audioInstances[0]?.pause).toHaveBeenCalledOnce()
+    expect(audioInstances[0]?.srcObject).toBeNull()
     expect(outputEnergy).toEqual([0])
     dataChannel.onmessage?.({ data: JSON.stringify({ type: 'voice_state', state: 'speaking' }) } as MessageEvent)
 
     expect((client as unknown as { audio: HTMLAudioElement }).audio.muted).toBe(false)
+    expect(audioInstances[0]?.srcObject).toBe(remoteStream)
     expect(receivedEvents).toEqual([
       { type: 'voice_state', state: 'user-speaking' },
       { type: 'voice_state', state: 'speaking' },
@@ -276,3 +300,93 @@ describe('VoiceClient', () => {
     expect(closed).toHaveBeenCalledOnce()
   })
 })
+
+describe('WebSocketVoiceClient', () => {
+  it('admits only the replacement PCM after its assistant transcript starts', () => {
+    const interruptPlayback = vi.fn()
+    const playPCM = vi.fn()
+    const onEvent = vi.fn()
+    const client = Object.create(WebSocketVoiceClient.prototype) as {
+      activeAudioUtteranceId: string | null
+      cancelledAudioUtteranceIds: Set<string>
+      awaitingAssistantTranscript: boolean
+      interruptPlayback(): void
+      playPCM(payload: ArrayBuffer): void
+      onEvent(event: unknown): void
+      handleMessage(message: MessageEvent): void
+    }
+    client.activeAudioUtteranceId = null
+    client.cancelledAudioUtteranceIds = new Set()
+    client.awaitingAssistantTranscript = false
+    Object.assign(client, { interruptPlayback, playPCM, onEvent })
+
+    client.handleMessage({
+      data: JSON.stringify({ type: 'voice_state', state: 'user-speaking' }),
+    } as MessageEvent)
+    client.handleMessage({
+      data: JSON.stringify({ type: 'audio_started', utterance_id: 'tts:old' }),
+    } as MessageEvent)
+    client.handleMessage({
+      data: JSON.stringify({ type: 'audio_cancelled', utterance_id: 'tts:old' }),
+    } as MessageEvent)
+    client.handleMessage({ data: framedPCM('tts:old') } as MessageEvent)
+
+    expect(interruptPlayback).toHaveBeenCalledOnce()
+    expect(playPCM).not.toHaveBeenCalled()
+
+    client.handleMessage({
+      data: JSON.stringify({ type: 'transcript', state: 'thinking', role: 'assistant', phase: 'start', text: '' }),
+    } as MessageEvent)
+    client.handleMessage({
+      data: JSON.stringify({ type: 'audio_started', utterance_id: 'tts:new' }),
+    } as MessageEvent)
+    client.handleMessage({ data: framedPCM('tts:new') } as MessageEvent)
+
+    expect(playPCM).toHaveBeenCalledOnce()
+    expect(onEvent).toHaveBeenCalledWith({ type: 'voice_state', state: 'user-speaking' })
+  })
+
+  it('clears scheduled PCM as soon as VAD reports that the user is speaking', () => {
+    const previousGain = { disconnect: vi.fn() } as unknown as GainNode
+    const replacementGain = { connect: vi.fn() } as unknown as GainNode
+    const onEvent = vi.fn()
+    const onOutputEnergy = vi.fn()
+    const client = Object.create(WebSocketVoiceClient.prototype) as {
+      context: Pick<AudioContext, 'currentTime' | 'createGain' | 'destination'>
+      gain: GainNode | null
+      nextPlaybackTime: number
+      awaitingAssistantTranscript: boolean
+      onEvent(event: unknown): void
+      onOutputEnergy(energy: number): void
+      handleMessage(message: MessageEvent): void
+    }
+    client.context = {
+      currentTime: 4.2,
+      createGain: () => replacementGain,
+      destination: {} as AudioDestinationNode,
+    }
+    client.gain = previousGain
+    client.nextPlaybackTime = 8.4
+    client.awaitingAssistantTranscript = false
+    Object.assign(client, { onEvent, onOutputEnergy })
+
+    client.handleMessage({
+      data: JSON.stringify({ type: 'voice_state', state: 'user-speaking' }),
+    } as MessageEvent)
+
+    expect(previousGain.disconnect).toHaveBeenCalledOnce()
+    expect(replacementGain.connect).toHaveBeenCalledWith(client.context.destination)
+    expect(client.nextPlaybackTime).toBe(4.2)
+    expect(onOutputEnergy).toHaveBeenCalledWith(0)
+    expect(onEvent).toHaveBeenCalledWith({ type: 'voice_state', state: 'user-speaking' })
+  })
+})
+
+function framedPCM(utteranceId: string): ArrayBuffer {
+  const identifier = new TextEncoder().encode(utteranceId)
+  const packet = new Uint8Array(5 + identifier.length + 2)
+  packet.set([65, 80, 67, 77, identifier.length], 0)
+  packet.set(identifier, 5)
+  packet.set([2, 0], 5 + identifier.length)
+  return packet.buffer
+}

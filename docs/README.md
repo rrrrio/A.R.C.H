@@ -20,7 +20,7 @@
 - [安全边界](SECURITY.md)：网络、凭据、数据、工具与当前运行限制。
 - [模型与许可证](MODELS_AND_LICENSES.md)：固定模型来源、准备命令、许可证证据与可复现边界。
 - [配置参考](reference/configuration.md)：环境变量、端口、持久化目录和支持的文件格式。
-- [架构与安全边界](explanation/architecture.md)：实时路径、审批、取消、记忆、RAG 与未来数字人的设计理由。
+- [架构与安全边界](explanation/architecture.md)：实时路径、即时插话取消（包括 PCM 回退）、审批、记忆、RAG 与未来数字人的设计理由。
 - [使用浏览器数字人预览](how-to/use-browser-avatar.md)：在不上传 VRM 模型的前提下启用本地浏览器预览。
 - [开发环境](DEVELOPMENT.md)：运行测试、启动开发服务和维护文档。
 - [组件基准](benchmarks/README.md)：当前 ASR、LLM 和 TTS 基线及其复跑方式，以及浏览器语音验收证据的边界。

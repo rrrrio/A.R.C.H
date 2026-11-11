@@ -171,6 +171,35 @@ try {
     document.addEventListener('arch:latency', (event) => window.__archE2ELatency.push(event.detail))
   })()`)
 
+  if (configuration.forceWebSocket) {
+    await client.evaluate(`(() => {
+      window.__archE2EFrames = []
+      const NativeWebSocket = window.WebSocket
+      class ObservedWebSocket extends NativeWebSocket {
+        constructor(...args) {
+          super(...args)
+          if (!String(args[0]).includes('/api/voice/stream')) return
+          this.addEventListener('message', (event) => {
+            if (typeof event.data === 'string') {
+              try { window.__archE2EFrames.push({ kind: 'control', value: JSON.parse(event.data) }) } catch { }
+              return
+            }
+            if (event.data instanceof ArrayBuffer) {
+              const bytes = new Uint8Array(event.data)
+              const idLength = bytes[4]
+              const id = new TextDecoder().decode(bytes.slice(5, 5 + idLength))
+              window.__archE2EFrames.push({ kind: 'pcm', id })
+            }
+          })
+        }
+      }
+      window.WebSocket = ObservedWebSocket
+      // Keep signaling available but withhold the WebRTC microphone track so
+      // App.tsx selects its normal same-origin PCM fallback after four seconds.
+      RTCPeerConnection.prototype.addTrack = () => ({})
+    })()`)
+  }
+
   await client.evaluate(`(() => {
     const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === '连接语音')
     if (!button) throw new Error('voice connection control is missing')
@@ -178,6 +207,13 @@ try {
   })()`)
   await waitFor('WebRTC connection', async () => (await client.evaluate("document.body.innerText.includes('断开')")), configuration.timeoutSeconds * 1000)
   console.log('browser-e2e: WebRTC connected')
+
+  if (configuration.forceWebSocket) {
+    await waitFor('WebSocket PCM fallback', async () => (await client.evaluate(
+      "window.__archE2EFrames.some((frame) => frame.kind === 'control' && frame.value.type === 'voice_input_ready')",
+    )), configuration.timeoutSeconds * 1000)
+    console.log('browser-e2e: WebSocket PCM fallback connected')
+  }
 
   await waitFor('user transcript', async () => (await client.evaluate(`(() => {
     const rows = [...document.querySelectorAll('.transcript p')]
@@ -198,6 +234,28 @@ try {
       "[...document.querySelectorAll('.latency span')].some((stage) => stage.textContent?.trim() === '播放停止')",
     )), configuration.timeoutSeconds * 1000)
     console.log('browser-e2e: browser interruption after playback observed')
+  }
+
+  if (configuration.forceWebSocket && configuration.assertBargeIn) {
+    const protocolResult = await client.evaluate(`(() => {
+      const frames = window.__archE2EFrames
+      const interruption = frames.findLastIndex((frame) => frame.kind === 'control' &&
+        frame.value.type === 'voice_state' && frame.value.state === 'user-speaking')
+      if (interruption < 0) throw new Error('no WebSocket user-speaking event was observed')
+      const priorStarts = frames.slice(0, interruption).filter((frame) => frame.kind === 'control' &&
+        frame.value.type === 'audio_started').map((frame) => frame.value.utterance_id)
+      if (priorStarts.length === 0) throw new Error('no prior WebSocket audio response was observed')
+      const staleIds = new Set(priorStarts)
+      const stalePackets = frames.slice(interruption + 1).filter((frame) => frame.kind === 'pcm' && staleIds.has(frame.id))
+      return { interruption, stale_ids: [...staleIds], stale_packets: stalePackets.length, frames }
+    })()`)
+    if (protocolResult.stale_packets !== 0) {
+      throw new Error(
+        `browser-e2e: ${protocolResult.stale_packets} cancelled-response PCM packets arrived after barge-in: ` +
+        JSON.stringify(protocolResult.frames.slice(Math.max(0, protocolResult.interruption - 12))),
+      )
+    }
+    console.log(`browser-e2e: WebSocket stale PCM rejected ${JSON.stringify(protocolResult)}`)
   }
 
   const latency = await client.evaluate('JSON.stringify(window.__archE2ELatency)')

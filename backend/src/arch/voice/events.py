@@ -10,6 +10,7 @@ from pipecat.frames.frames import (
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
+    OutputTransportMessageUrgentFrame,
     TranscriptionFrame,
     TTSStartedFrame,
     TTSStoppedFrame,
@@ -99,17 +100,41 @@ def event_from_frame(frame: Frame) -> VoiceEvent | None:
 
 
 class VoiceEventProcessor(FrameProcessor):
-    """Mirror selected downstream frames to a WebRTC application data channel."""
+    """Publish one selected category of browser state for each media frame."""
 
-    def __init__(self, send_event: Callable[[dict[str, str | int]], None]) -> None:
+    def __init__(
+        self,
+        send_event: Callable[[dict[str, str | int]], None],
+        *,
+        transcript_roles: frozenset[str] = frozenset({"user", "assistant"}),
+        include_voice_state: bool = True,
+        ordered_transport_events: bool = False,
+    ) -> None:
         super().__init__()
         self._send_event = send_event
+        self._transcript_roles = transcript_roles
+        self._include_voice_state = include_voice_state
+        self._ordered_transport_events = ordered_transport_events
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """Forward media unchanged after publishing a matching browser event."""
         await super().process_frame(frame, direction)
         if direction == FrameDirection.DOWNSTREAM:
             event = event_from_frame(frame)
-            if event is not None:
-                self._send_event(cast(dict[str, str | int], event))
+            if event is not None and self._should_publish(event):
+                browser_event = cast(dict[str, str | int], event)
+                if self._ordered_transport_events:
+                    # WebSocket captions and PCM must share the transport queue.
+                    # Scheduling websocket.send_text separately allows stale PCM
+                    # to overtake its cancellation and subtitle controls.
+                    await self.push_frame(
+                        OutputTransportMessageUrgentFrame(message=browser_event), direction
+                    )
+                else:
+                    self._send_event(browser_event)
         await self.push_frame(frame, direction)
+
+    def _should_publish(self, event: VoiceEvent) -> bool:
+        if event["type"] == "voice_state":
+            return self._include_voice_state
+        return event["role"] in self._transcript_roles

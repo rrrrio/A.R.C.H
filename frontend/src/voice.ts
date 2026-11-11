@@ -13,6 +13,11 @@ export type VoiceEvent =
   | { type: 'transcript'; state: VoiceActivity; role: 'user' | 'assistant'; phase: 'final' | 'start' | 'delta' | 'end'; text: string }
   | { type: 'latency'; utterance_id: string; stage: LatencyStage; elapsed_ms: number }
 
+type AudioGenerationEvent = {
+  type: 'audio_started' | 'audio_cancelled'
+  utterance_id: string
+}
+
 export type AudioInput = { deviceId: string; label: string }
 export type OutputEnergyHandler = (energy: number) => void
 
@@ -33,12 +38,14 @@ export class VoiceClient {
   private pcId: string | null = null
   private pendingCandidates: Candidate[] = []
   private stream: MediaStream | null = null
+  private remoteAudioStream: MediaStream | null = null
   private serverSessionMayExist = false
   private closing = false
   private connectionClosedNotified = false
   private outputEnergyTimer: number | null = null
   private outputEnergyPolling = false
   private outputEnergySuppressed = false
+  private remotePlaybackInterrupted = false
 
   constructor(
     csrfToken: string,
@@ -54,8 +61,8 @@ export class VoiceClient {
     this.onOutputEnergy = onOutputEnergy
     this.audio.autoplay = true
     this.connection.ontrack = (event) => {
-      this.audio.srcObject = event.streams[0] ?? new MediaStream([event.track])
-      void this.audio.play().catch(() => undefined)
+      this.remoteAudioStream = event.streams[0] ?? new MediaStream([event.track])
+      this.resumeRemotePlayback()
       this.startOutputEnergyMeter()
     }
     this.connection.onicecandidate = (event) => {
@@ -91,12 +98,13 @@ export class VoiceClient {
         const event: unknown = JSON.parse(message.data)
         if (isVoiceEvent(event)) {
           if (event.type === 'voice_state' && event.state === 'user-speaking') {
-            this.audio.muted = true
+            this.interruptRemotePlayback()
             this.outputEnergySuppressed = true
             this.onOutputEnergy(0)
           }
           if (event.type === 'voice_state' && event.state === 'speaking') {
-            this.audio.muted = false
+            this.remotePlaybackInterrupted = false
+            this.resumeRemotePlayback()
             this.outputEnergySuppressed = false
           }
           this.onEvent(event)
@@ -125,6 +133,7 @@ export class VoiceClient {
     this.stream = null
     this.audio.pause()
     this.audio.srcObject = null
+    this.remoteAudioStream = null
     this.dataChannel?.close()
     this.dataChannel = null
     this.connection.close()
@@ -163,6 +172,20 @@ export class VoiceClient {
       body: JSON.stringify({ pc_id: this.pcId, candidates }),
     })
     if (!response.ok) throw new Error('Voice ICE negotiation failed.')
+  }
+
+  private interruptRemotePlayback() {
+    this.remotePlaybackInterrupted = true
+    this.audio.muted = true
+    this.audio.pause()
+    this.audio.srcObject = null
+  }
+
+  private resumeRemotePlayback() {
+    if (this.remotePlaybackInterrupted || !this.remoteAudioStream) return
+    this.audio.srcObject = this.remoteAudioStream
+    this.audio.muted = false
+    void this.audio.play().catch(() => undefined)
   }
 
   private startOutputEnergyMeter() {
@@ -214,6 +237,11 @@ export class WebSocketVoiceClient implements VoiceConnection {
   private nextPlaybackTime = 0
   private closing = false
   private readonly onOutputEnergy: OutputEnergyHandler
+  private activeAudioUtteranceId: string | null = null
+  private readonly cancelledAudioUtteranceIds = new Set<string>()
+  // After the user barges in, PCM is admitted only once the visible assistant
+  // transcript for the replacement response has begun.
+  private awaitingAssistantTranscript = false
 
   constructor(
     csrfToken: string,
@@ -287,13 +315,43 @@ export class WebSocketVoiceClient implements VoiceConnection {
     if (typeof message.data === 'string') {
       try {
         const event: unknown = JSON.parse(message.data)
-        if (isVoiceEvent(event)) this.onEvent(event)
-        else if (isAudioInterrupted(event)) this.interruptPlayback()
+        if (isAudioGenerationEvent(event)) {
+          this.handleAudioGeneration(event)
+        } else if (isVoiceEvent(event)) {
+          // The VAD state is the earliest browser-visible cancellation signal. Do not wait
+          // for a later transport interruption frame while old PCM remains scheduled.
+          if (event.type === 'voice_state' && event.state === 'user-speaking') {
+            this.activeAudioUtteranceId = null
+            this.awaitingAssistantTranscript = true
+            this.interruptPlayback()
+          }
+          if (event.type === 'transcript' && event.role === 'assistant' && event.phase === 'start') {
+            this.awaitingAssistantTranscript = false
+          }
+          this.onEvent(event)
+        } else if (isAudioInterrupted(event)) this.interruptPlayback()
       } catch { /* Ignore invalid server messages. */ }
       return
     }
     if (message.data instanceof ArrayBuffer) {
-      this.playPCM(message.data)
+      const packet = decodeBrowserPCM(message.data)
+      if (packet && this.activeAudioUtteranceId === packet.utteranceId) {
+        this.playPCM(packet.pcm)
+      }
+    }
+  }
+
+  private handleAudioGeneration(event: AudioGenerationEvent) {
+    if (event.type === 'audio_cancelled') {
+      this.cancelledAudioUtteranceIds.add(event.utterance_id)
+      if (this.activeAudioUtteranceId === event.utterance_id) {
+        this.activeAudioUtteranceId = null
+        this.interruptPlayback()
+      }
+      return
+    }
+    if (!this.awaitingAssistantTranscript && !this.cancelledAudioUtteranceIds.has(event.utterance_id)) {
+      this.activeAudioUtteranceId = event.utterance_id
     }
   }
 
@@ -333,6 +391,17 @@ export function pcmEnergy(input: Int16Array): number {
   return Math.min(1, Math.sqrt(squared / input.length) * 2.5)
 }
 
+export function decodeBrowserPCM(payload: ArrayBuffer): { utteranceId: string; pcm: ArrayBuffer } | null {
+  const bytes = new Uint8Array(payload)
+  if (bytes.length < 6 || String.fromCharCode(...bytes.subarray(0, 4)) !== 'APCM') return null
+  const identifierLength = bytes[4]
+  const audioStart = 5 + identifierLength
+  if (!identifierLength || audioStart >= bytes.length || (bytes.length - audioStart) % 2) return null
+  const utteranceId = new TextDecoder().decode(bytes.subarray(5, audioStart))
+  if (!utteranceId) return null
+  return { utteranceId, pcm: bytes.slice(audioStart).buffer }
+}
+
 /** Keep microphone processing active without monitoring it through the browser speakers. */
 export function createMutedCaptureSink(
   context: Pick<AudioContext, 'createGain' | 'destination'>,
@@ -369,6 +438,12 @@ function floatToPCM16(input: Float32Array): ArrayBuffer {
 
 function isAudioInterrupted(value: unknown): boolean {
   return typeof value === 'object' && value !== null && 'type' in value && value.type === 'audio_interrupted'
+}
+
+function isAudioGenerationEvent(value: unknown): value is AudioGenerationEvent {
+  return typeof value === 'object' && value !== null && 'type' in value &&
+    (value.type === 'audio_started' || value.type === 'audio_cancelled') &&
+    'utterance_id' in value && typeof value.utterance_id === 'string'
 }
 
 function waitForIceGathering(connection: RTCPeerConnection): Promise<void> {

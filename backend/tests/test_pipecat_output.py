@@ -6,6 +6,7 @@ from pipecat.frames.frames import (
     Frame,
     InterruptionFrame,
     OutputAudioRawFrame,
+    OutputTransportMessageUrgentFrame,
     TTSAudioRawFrame,
     TTSStartedFrame,
     TTSStoppedFrame,
@@ -44,20 +45,37 @@ def test_output_mux_processor_replaces_tts_pcm_and_drops_late_audio_after_interr
         old_audio.pts = 123
         await processor.process_frame(old_audio, FrameDirection.DOWNSTREAM)
         await processor.process_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(TTSStartedFrame(context_id="old"), FrameDirection.DOWNSTREAM)
         await processor.process_frame(old_audio, FrameDirection.DOWNSTREAM)
         await processor.process_frame(TTSStoppedFrame(context_id="old"), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(TTSStartedFrame(context_id="new"), FrameDirection.DOWNSTREAM)
+        new_audio = TTSAudioRawFrame(b"\x02\x00", 24000, 1, context_id="new")
+        await processor.process_frame(new_audio, FrameDirection.DOWNSTREAM)
 
     asyncio.run(exercise())
 
-    assert isinstance(processor.forwarded[0], TTSStartedFrame)
-    output = processor.forwarded[1]
+    assert isinstance(processor.forwarded[0], OutputTransportMessageUrgentFrame)
+    assert processor.forwarded[0].message == {
+        "type": "audio_started",
+        "utterance_id": "tts:old",
+    }
+    assert isinstance(processor.forwarded[1], TTSStartedFrame)
+    output = processor.forwarded[2]
     assert isinstance(output, OutputAudioRawFrame)
     assert not isinstance(output, TTSAudioRawFrame)
     assert output.audio == b"\x01\x00"
     assert output.sample_rate == 24000
     assert output.pts == 123
-    assert isinstance(processor.forwarded[2], InterruptionFrame)
-    assert len(processor.forwarded) == 3
+    assert output.metadata["utterance_id"] == "tts:old"
+    assert isinstance(processor.forwarded[3], OutputTransportMessageUrgentFrame)
+    assert processor.forwarded[3].message == {"type": "audio_cancelled", "utterance_id": "tts:old"}
+    assert isinstance(processor.forwarded[4], InterruptionFrame)
+    assert isinstance(processor.forwarded[5], OutputTransportMessageUrgentFrame)
+    assert processor.forwarded[5].message == {"type": "audio_started", "utterance_id": "tts:new"}
+    replacement = processor.forwarded[7]
+    assert isinstance(replacement, OutputAudioRawFrame)
+    assert replacement.audio == b"\x02\x00"
+    assert len(processor.forwarded) == 8
 
 
 def test_output_mux_processor_only_ends_the_active_tts_context() -> None:
@@ -73,7 +91,9 @@ def test_output_mux_processor_only_ends_the_active_tts_context() -> None:
     asyncio.run(exercise())
 
     assert [type(frame) for frame in processor.forwarded] == [
+        OutputTransportMessageUrgentFrame,
         TTSStartedFrame,
+        OutputTransportMessageUrgentFrame,
         TTSStartedFrame,
         TTSStoppedFrame,
     ]

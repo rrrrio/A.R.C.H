@@ -9,6 +9,7 @@ from pipecat.frames.frames import (
     Frame,
     InterruptionFrame,
     OutputAudioRawFrame,
+    OutputTransportMessageUrgentFrame,
     TTSAudioRawFrame,
     TTSStartedFrame,
     TTSStoppedFrame,
@@ -27,10 +28,12 @@ class PipecatDirectAudioOutput:
     def __init__(self, emit_audio: Callable[[OutputAudioRawFrame], Awaitable[None]]) -> None:
         self._emit_audio = emit_audio
         self._sample_rate: int | None = None
+        self._utterance_id: str | None = None
 
     async def begin(self, utterance_id: str, sample_rate: int, emotion: str) -> None:
         """Remember the active output format after the mux accepted a new turn."""
         self._sample_rate = sample_rate
+        self._utterance_id = utterance_id
 
     async def push_audio(self, utterance_id: str, audio: bytes, timestamp_ns: int) -> None:
         """Emit mono PCM only after ``OutputMux`` has checked utterance ownership."""
@@ -38,6 +41,7 @@ class PipecatDirectAudioOutput:
             raise RuntimeError("Audio output received PCM before an utterance began.")
         frame = OutputAudioRawFrame(audio, self._sample_rate, 1)
         frame.pts = timestamp_ns
+        frame.metadata["utterance_id"] = utterance_id
         await self._emit_audio(frame)
 
     async def push_event(self, utterance_id: str, event: str) -> None:
@@ -60,6 +64,7 @@ class PipecatOutputMuxProcessor(FrameProcessor):
         self._mux = OutputMux(self._cancellation, self._direct_audio, NullAvatarAdapter())
         self._output_sample_rate = output_sample_rate
         self._context_utterances: dict[str, str] = {}
+        self._cancelled_context_ids: set[str] = set()
         self._active_utterance_id: str | None = None
         self._anonymous_turn = 0
         self._pending_emotion: Emotion = DEFAULT_EMOTION
@@ -79,18 +84,34 @@ class PipecatOutputMuxProcessor(FrameProcessor):
             self._pending_emotion = frame.emotion
             return
         if isinstance(frame, TTSStartedFrame):
+            if self._is_cancelled_context(frame.context_id):
+                return
             started_utterance_id = self._utterance_for_started(frame)
             await self._mux.begin(
                 started_utterance_id, self._output_sample_rate, self._pending_emotion
             )
+            await self.push_frame(
+                OutputTransportMessageUrgentFrame(
+                    message={
+                        "type": "audio_started",
+                        "utterance_id": started_utterance_id,
+                    }
+                ),
+                direction,
+            )
             await self.push_frame(frame, direction)
             return
         if isinstance(frame, TTSAudioRawFrame):
+            if self._is_cancelled_context(frame.context_id):
+                return
             audio_utterance_id = self._utterance_for_audio(frame)
             if audio_utterance_id is not None:
                 await self._mux.push_audio(audio_utterance_id, frame.audio, self._timestamp(frame))
             return
         if isinstance(frame, TTSStoppedFrame):
+            if self._is_cancelled_context(frame.context_id):
+                self._discard_stopped_context(frame.context_id, None)
+                return
             stopped_utterance_id = self._utterance_for_stopped(frame)
             if stopped_utterance_id is None or not await self._mux.end(stopped_utterance_id):
                 self._discard_stopped_context(frame.context_id, stopped_utterance_id)
@@ -104,10 +125,23 @@ class PipecatOutputMuxProcessor(FrameProcessor):
         await self.push_frame(frame, FrameDirection.DOWNSTREAM)
 
     async def _cancel_active_output(self) -> None:
+        # TTS emits audio asynchronously. A context can still produce a late
+        # start or PCM frame after Pipecat has sent the interruption frame.
+        # Fence every context known at this point so none can reactivate output.
+        self._cancelled_context_ids.update(self._context_utterances)
         utterance_id = self._cancellation.active_utterance_id
         if utterance_id is not None:
             await self._mux.cancel(utterance_id)
+            await self.push_frame(
+                OutputTransportMessageUrgentFrame(
+                    message={"type": "audio_cancelled", "utterance_id": utterance_id}
+                ),
+                FrameDirection.DOWNSTREAM,
+            )
         self._active_utterance_id = None
+
+    def _is_cancelled_context(self, context_id: str | None) -> bool:
+        return context_id is not None and context_id in self._cancelled_context_ids
 
     def _utterance_for_started(self, frame: TTSStartedFrame) -> str:
         if frame.context_id is not None:

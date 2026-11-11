@@ -33,6 +33,11 @@ from arch.voice.models import VoiceModelPaths
 from arch.voice.pipecat_output import PipecatOutputMuxProcessor
 from arch.voice.profiles import VoiceProfile
 from arch.voice.qwen_clone import CloneCancel, CloneSynthesize, QwenCloneTTSService
+from arch.voice.webrtc_interrupt import (
+    BargeInInterruptionProcessor,
+    WebRTCAudioInterruptionProcessor,
+    clear_queued_webrtc_audio,
+)
 from arch.voice.websocket import BrowserPCMSerializer
 
 LAN_VAD_PARAMS = VADParams(confidence=0.6, min_volume=0.25)
@@ -63,6 +68,7 @@ def create_pipeline_worker(
     return _create_pipeline_worker(
         transport, connection.send_app_message, paths, llama_endpoint, memory_store, retriever,
         tool_gateway, on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
+        on_interruption=lambda: clear_queued_webrtc_audio(transport.output()),
     )
 
 
@@ -94,6 +100,7 @@ def create_websocket_pipeline_worker(
     return _create_pipeline_worker(
         transport, send_event, paths, llama_endpoint, memory_store, retriever, tool_gateway,
         on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
+        ordered_transport_events=True,
     )
 
 
@@ -109,6 +116,8 @@ def _create_pipeline_worker(
     clone_profile: VoiceProfile | None,
     clone_synthesize: CloneSynthesize | None,
     clone_cancel: CloneCancel | None,
+    on_interruption: Callable[[], bool] | None = None,
+    ordered_transport_events: bool = False,
 ) -> PipelineWorker:
     """Assemble processors independent of the authenticated browser transport."""
     paths.require_ready()
@@ -147,9 +156,24 @@ def _create_pipeline_worker(
                 voice="zf_001", language=Language.ZH, speed=1.0
             ),
         )
-    user_events = VoiceEventProcessor(send_event)
-    assistant_events = VoiceEventProcessor(send_event)
-    output_events = VoiceEventProcessor(send_event)
+    user_events = VoiceEventProcessor(
+        send_event,
+        transcript_roles=frozenset({"user"}),
+        include_voice_state=False,
+        ordered_transport_events=ordered_transport_events,
+    )
+    assistant_events = VoiceEventProcessor(
+        send_event,
+        transcript_roles=frozenset({"assistant"}),
+        include_voice_state=False,
+        ordered_transport_events=ordered_transport_events,
+    )
+    output_events = VoiceEventProcessor(
+        send_event,
+        transcript_roles=frozenset(),
+        include_voice_state=True,
+        ordered_transport_events=ordered_transport_events,
+    )
     tracker = LatencyTracker()
     input_latency = VoiceLatencyProcessor(
         send_event,
@@ -175,11 +199,17 @@ def _create_pipeline_worker(
         send_event, tracker, stages=frozenset({LatencyStage.PLAYBACK_FIRST_AUDIO})
     )
     output_mux = PipecatOutputMuxProcessor(output_sample_rate=24000)
+    interruption_clearer = (
+        WebRTCAudioInterruptionProcessor(on_interruption)
+        if on_interruption is not None
+        else None
+    )
     pipeline = Pipeline(
         [
             transport.input(),
             InputReadyProcessor(send_event),
             vad,
+            BargeInInterruptionProcessor(),
             input_latency,
             stt,
             asr_latency,
@@ -192,6 +222,7 @@ def _create_pipeline_worker(
             output_mux,
             output_events,
             output_latency,
+            *([interruption_clearer] if interruption_clearer is not None else []),
             transport.output(),
         ]
     )

@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chrome", type=Path, default=Path("/usr/bin/google-chrome"))
     parser.add_argument("--audio", type=Path, default=SAMPLE_WAV)
     parser.add_argument("--assert-barge-in", action="store_true")
+    parser.add_argument("--force-websocket", action="store_true")
     return parser.parse_args()
 
 
@@ -257,6 +258,7 @@ def main() -> None:
                 "chrome": str(args.chrome),
                 "audio": str(audio.resolve()),
                 "assertBargeIn": args.assert_barge_in,
+                "forceWebSocket": args.force_websocket,
                 "timeoutSeconds": args.timeout_seconds,
                 "profileDir": str(layout.root / "chrome-profile"),
                 "debugPort": reserve_port(),

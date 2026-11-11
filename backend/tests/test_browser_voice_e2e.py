@@ -79,6 +79,15 @@ def test_create_barge_in_fixture_repeats_the_fixed_pcm_segment(tmp_path: Path) -
         assert output_file.getnframes() == 240_000
 
 
+def test_parser_accepts_explicit_websocket_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_script()
+    monkeypatch.setattr(sys, "argv", ["run_browser_voice_e2e.py", "--force-websocket"])
+
+    args = module.parse_args()
+
+    assert args.force_websocket is True
+
+
 def test_acceptance_result_requires_one_valid_payload_per_driver_output() -> None:
     summary_path = Path(__file__).parents[1] / "scripts" / "summarize_browser_voice_acceptance.py"
     specification = importlib.util.spec_from_file_location(
