@@ -11,7 +11,7 @@
 | 可选克隆 TTS | `make qwen-tts-dry-run`，确认后 `make qwen-tts-prepare APPLY=1` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base`，revision `c27fe8aa05b732b1376d0f6a1e522fbccb84abbd` | [上游模型卡](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) 标为 Apache-2.0；官方 `qwen-tts` 0.1.1 包也标为 Apache-2.0。准备会校验发布的模型和 speech tokenizer SHA-256；已接入本地隔离 worker，但尚未设备验收。 |
 | RAG 嵌入 | `make rag-prepare` | `BAAI/bge-m3`，revision `5617a9f61b028005a4858fdac845db406aefb181` | [上游模型卡](https://huggingface.co/BAAI/bge-m3) 标为 MIT。 |
 | 基准音频 | `make models-baseline` | FLEURS `cmn_hans_cn_0000`，revision `1cca811bb8ea4d370345f108f00518167040282c` | CC-BY-4.0，详见 `config/benchmark-samples.json`。 |
-| 视频口型 | `make avatar-check`；模型准备仍需独立 runtime 流程 | [MuseTalk](https://github.com/TMElyralab/MuseTalk) 1.5，LiveTalking 编排参考 | MuseTalk 和 LiveTalking 的具体 revision、模型 hash 与上游许可证必须在实际下载后记录；当前未下载或设备验收。 |
+| 视频口型 | `make musetalk-dry-run` | [MuseTalk](https://github.com/TMElyralab/MuseTalk) 源码 `0a89dec45a0192b824e3cf4daf96c239440c5ed8`；V1.5 UNet 来自 `TMElyralab/MuseTalk` revision `2bcb936e2fddb4d86db4c62fd45b387d0c061571` | 模型卡标为 MIT；官方 LFS 元数据给出 `musetalkV15/unet.pth` SHA-256，但完整依赖权重清单尚未审计，因此当前不下载或设备验收。 |
 
 ASR、固定 GGUF 和 TTS 路径会验证列出的 artifact SHA-256；ASR、固定 GGUF、RAG 和 TTS 路径会写入 `lva-provenance.json`。llama.cpp 与基准音频分别保留 hash 验证事实，但当前不写该 provenance 文件。模型、声包和基准音频均保持在受 Git 忽略的 `data/` 内；不要提交它们。
 
