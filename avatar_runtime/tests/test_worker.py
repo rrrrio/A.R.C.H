@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +12,50 @@ from pathlib import Path
 import av
 import numpy as np
 
-from avatar_runtime.worker import PreviewRenderer
+from avatar_runtime.audio import StreamingPcmResampler
+from avatar_runtime.worker import AvatarWorkerConnection, PreviewRenderer
+
+
+class RecordingRenderer:
+    """Record one IPC connection without depending on a GPU runtime."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, bytes | int | str]] = []
+
+    async def begin(self, utterance_id: str, sample_rate: int, emotion: str) -> None:
+        self.calls.append(("begin", utterance_id, f"{sample_rate}:{emotion}"))
+
+    async def push_audio(self, utterance_id: str, pcm: bytes, timestamp_ns: int) -> None:
+        self.calls.append(("audio", utterance_id, pcm))
+
+    async def cancel(self, utterance_id: str) -> None:
+        self.calls.append(("cancel", utterance_id, ""))
+
+    async def end(self, utterance_id: str) -> None:
+        self.calls.append(("end", utterance_id, ""))
+
+    async def frames(self):
+        if False:
+            yield b""
+
+
+class RecordingWriter:
+    """Minimal StreamWriter replacement for worker protocol tests."""
+
+    def __init__(self) -> None:
+        self.messages: list[dict[str, object]] = []
+
+    def write(self, data: bytes) -> None:
+        self.messages.append(json.loads(data))
+
+    async def drain(self) -> None:
+        return
+
+    def close(self) -> None:
+        return
+
+    async def wait_closed(self) -> None:
+        return
 
 
 class PreviewRendererTests(unittest.TestCase):
@@ -42,3 +87,40 @@ class PreviewRendererTests(unittest.TestCase):
                 container.mux(packet)
             for packet in stream.encode():
                 container.mux(packet)
+
+
+class AvatarWorkerConnectionTests(unittest.TestCase):
+    """Verify that control messages reach the renderer with cancellation fencing."""
+
+    def test_forwards_only_active_utterance_pcm(self) -> None:
+        """Cancellation must fence late PCM before the future GPU boundary."""
+        renderer = RecordingRenderer()
+        writer = RecordingWriter()
+        source_pcm = b"\x01\x00\x02\x00\x03\x00"
+        audio = base64.b64encode(source_pcm).decode("ascii")
+        messages = [
+            {"type": "begin", "utterance_id": "turn", "sample_rate": 24000, "emotion": "neutral"},
+            {"type": "audio", "utterance_id": "turn", "timestamp_ns": 0, "pcm_b64": audio},
+            {"type": "cancel", "utterance_id": "turn"},
+            {"type": "audio", "utterance_id": "turn", "timestamp_ns": 1, "pcm_b64": audio},
+            {"type": "end", "utterance_id": "turn"},
+        ]
+
+        async def exercise() -> None:
+            reader = asyncio.StreamReader()
+            for message in messages:
+                reader.feed_data((json.dumps(message) + "\n").encode())
+            reader.feed_eof()
+            await AvatarWorkerConnection(writer, renderer).run(reader)  # type: ignore[arg-type]
+
+        asyncio.run(exercise())
+
+        self.assertEqual(
+            renderer.calls,
+            [
+                ("begin", "turn", "16000:neutral"),
+                ("audio", "turn", StreamingPcmResampler(24000, 16000).convert(source_pcm)),
+                ("cancel", "turn", ""),
+            ],
+        )
+        self.assertEqual(writer.messages, [{"type": "ready"}])

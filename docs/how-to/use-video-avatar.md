@@ -37,7 +37,7 @@
 
 视频 WebRTC、同源鉴权、音频静音边界、TTS PCM observer、取消旧帧和 VRM 备用模式已经接入自动化测试。独立 worker 具备 preview transport smoke 路径。
 
-worker 已具备将 A.R.C.H. 的 24 kHz PCM 连续转换为 MuseTalk 所需 16 kHz 输入的基础；任意 IPC 分块不会改变输出采样时间线。这不是可用的口型 renderer：权重、固定视频预处理缓存和 GPU 推理仍未准备。
+worker 会为每个有效播报轮次将 A.R.C.H. 的 24 kHz PCM 连续转换为 MuseTalk 所需 16 kHz 输入；取消后的旧轮次不会继续进入 renderer，任意 IPC 分块不会改变输出采样时间线。这不是可用的口型 renderer：权重、固定视频预处理缓存和 GPU 推理仍未准备。
 
 MuseTalk 1.5 的权重、预处理缓存和 RTX 4090 实时 FPS 尚未在本机完成准备和设备验证。没有准备好 GPU worker 时，页面会报告视频不可用，现有语音不会被阻断。完成真实模型准备后，必须重新记录首帧时间、稳定 FPS、显存峰值、音视频延迟和插话停止时间。
 
