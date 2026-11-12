@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
+import tempfile
 import uuid
 import wave
 from dataclasses import asdict, dataclass
@@ -15,11 +18,13 @@ MAX_PROFILE_NAME_CHARS = 80
 MAX_REFERENCE_TRANSCRIPT_CHARS = 1000
 MAX_REFERENCE_BYTES = 5 * 1024 * 1024
 MAX_REFERENCE_SECONDS = 10
+MAX_REFERENCE_BASE64_CHARS = ((MAX_REFERENCE_BYTES + 2) // 3) * 4
+NORMALIZED_REFERENCE_SAMPLE_RATE = 24000
 
 
 @dataclass(frozen=True, slots=True)
 class VoiceProfile:
-    """Metadata for one consented local WAV reference without a filesystem path."""
+    """Metadata for one consented local reference without a filesystem path."""
 
     id: str
     name: str
@@ -38,15 +43,16 @@ class VoiceProfileStore:
         self._selection = self._root / "selection.json"
 
     def create(
-        self, name: str, transcript: str, reference_wav: bytes, *, ownership_confirmed: bool
+        self, name: str, transcript: str, reference_audio: bytes, *, ownership_confirmed: bool
     ) -> VoiceProfile:
-        """Validate and atomically persist an attested, short mono PCM WAV reference."""
+        """Normalize and atomically persist an attested, short mono PCM WAV reference."""
         if not ownership_confirmed:
             raise ValueError("Confirm that you have permission to use this reference voice.")
         normalized_name = _text(name, MAX_PROFILE_NAME_CHARS, "Voice profile name")
         normalized_transcript = _text(
             transcript, MAX_REFERENCE_TRANSCRIPT_CHARS, "Reference transcript"
         )
+        reference_wav = normalize_reference_audio(reference_audio)
         sample_rate, duration_ms = _wav_details(reference_wav)
         self._ensure_root()
         profile_id = str(uuid.uuid4())
@@ -197,6 +203,62 @@ def _wav_details(payload: bytes) -> tuple[int, int]:
     if not 1 <= duration_ms <= MAX_REFERENCE_SECONDS * 1000:
         raise ValueError(f"Reference WAV must be at most {MAX_REFERENCE_SECONDS} seconds.")
     return sample_rate, duration_ms
+
+
+def normalize_reference_audio(payload: bytes) -> bytes:
+    """Return a bounded mono PCM WAV, decoding common audio formats with FFmpeg."""
+    if not payload or len(payload) > MAX_REFERENCE_BYTES:
+        raise ValueError(f"Reference audio must be between 1 byte and {MAX_REFERENCE_BYTES} bytes.")
+    try:
+        _wav_details(payload)
+    except ValueError:
+        return _convert_reference_audio(payload)
+    return payload
+
+
+def _convert_reference_audio(payload: bytes) -> bytes:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise ValueError("Audio conversion requires FFmpeg.")
+    with tempfile.TemporaryDirectory(prefix="arch-voice-") as directory:
+        output = Path(directory) / "reference.wav"
+        try:
+            result = subprocess.run(
+                [
+                    ffmpeg,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-nostdin",
+                    "-i",
+                    "pipe:0",
+                    "-map",
+                    "0:a:0",
+                    "-vn",
+                    "-t",
+                    f"{MAX_REFERENCE_SECONDS + 0.001:.3f}",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    str(NORMALIZED_REFERENCE_SAMPLE_RATE),
+                    "-c:a",
+                    "pcm_s16le",
+                    "-f",
+                    "wav",
+                    str(output),
+                ],
+                input=payload,
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+            converted = output.read_bytes() if result.returncode == 0 else b""
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ValueError("Reference audio must be a supported audio file.") from error
+    if not converted:
+        raise ValueError("Reference audio must be a supported audio file.")
+    _wav_details(converted)
+    return converted
 
 
 def _remove_tree(directory: Path) -> None:

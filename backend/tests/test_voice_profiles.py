@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import wave
 from io import BytesIO
 from pathlib import Path
@@ -12,14 +14,35 @@ import pytest
 from arch.voice.profiles import VoiceProfileStore
 
 
-def _wav(seconds: int = 1, sample_rate: int = 8000) -> bytes:
+def _wav(seconds: int = 1, sample_rate: int = 8000, channels: int = 1) -> bytes:
     payload = BytesIO()
     with wave.open(payload, "wb") as output:
-        output.setnchannels(1)
+        output.setnchannels(channels)
         output.setsampwidth(2)
         output.setframerate(sample_rate)
-        output.writeframes(b"\x00\x00" * seconds * sample_rate)
+        output.writeframes(b"\x00\x00" * seconds * sample_rate * channels)
     return payload.getvalue()
+
+
+def _encode(payload: bytes, output_format: str) -> bytes:
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-i",
+            "pipe:0",
+            "-f",
+            output_format,
+            "pipe:1",
+        ],
+        input=payload,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout
 
 
 def test_profile_store_requires_consent_and_valid_bounded_wav(tmp_path: Path) -> None:
@@ -28,10 +51,49 @@ def test_profile_store_requires_consent_and_valid_bounded_wav(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="permission"):
         store.create("我的声音", "这是参考文本", _wav(), ownership_confirmed=False)
-    with pytest.raises(ValueError, match="valid WAV"):
+    with pytest.raises(ValueError, match="supported audio"):
         store.create("我的声音", "这是参考文本", b"not audio", ownership_confirmed=True)
     with pytest.raises(ValueError, match="at most"):
         store.create("我的声音", "这是参考文本", _wav(seconds=11), ownership_confirmed=True)
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="FFmpeg is required for audio normalization"
+)
+def test_profile_store_normalizes_multichannel_wav_to_mono_pcm(tmp_path: Path) -> None:
+    """A stereo reference is accepted and persisted as a bounded mono PCM WAV."""
+    store = VoiceProfileStore(tmp_path)
+
+    profile = store.create(
+        "立体声参考", "这是参考文本", _wav(channels=2), ownership_confirmed=True
+    )
+
+    reference = tmp_path / "voices" / "profiles" / profile.id / "reference.wav"
+    with wave.open(str(reference), "rb") as audio:
+        assert audio.getnchannels() == 1
+        assert audio.getsampwidth() == 2
+        assert audio.getframerate() == 24000
+        assert audio.getnframes() > 0
+    assert profile.sample_rate == 24000
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="FFmpeg is required for audio normalization"
+)
+def test_profile_store_accepts_flac_reference_and_normalizes_it(tmp_path: Path) -> None:
+    """A common non-WAV input is decoded and stored in the internal WAV format."""
+    store = VoiceProfileStore(tmp_path)
+
+    profile = store.create(
+        "FLAC 参考", "这是参考文本", _encode(_wav(), "flac"), ownership_confirmed=True
+    )
+
+    reference = tmp_path / "voices" / "profiles" / profile.id / "reference.wav"
+    with wave.open(str(reference), "rb") as audio:
+        assert audio.getnchannels() == 1
+        assert audio.getsampwidth() == 2
+        assert audio.getframerate() == 24000
+    assert profile.duration_ms == 1000
 
 
 def test_profile_store_keeps_audio_local_and_resets_selected_profile_on_delete(

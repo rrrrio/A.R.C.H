@@ -27,6 +27,7 @@ from arch.tools.search import SearxngSearchClient
 from arch.tools.terminal import TerminalExecutor
 from arch.voice.models import VoiceModelPaths
 from arch.voice.profiles import VoiceProfileStore
+from arch.voice.reference_transcriber import ReferenceTranscriber, VoiceReferenceTranscriber
 from arch.voice.session import LocalVoiceSession
 from arch.voice.webrtc import WebRTCSignalingService
 
@@ -40,6 +41,7 @@ def create_app(
     approval_store: ApprovalStore | None = None,
     tool_gateway: ToolGateway | None = None,
     voice_profile_store: VoiceProfileStore | None = None,
+    voice_reference_transcriber: ReferenceTranscriber | None = None,
 ) -> FastAPI:
     """Create the HTTP application, allowing isolated authentication tests."""
 
@@ -79,6 +81,10 @@ def create_app(
             )
         if not hasattr(app.state, "voice_profile_store"):
             app.state.voice_profile_store = VoiceProfileStore(settings.data_dir)
+        if not hasattr(app.state, "voice_reference_transcriber"):
+            app.state.voice_reference_transcriber = voice_reference_transcriber or (
+                VoiceReferenceTranscriber(VoiceModelPaths.from_data_dir(settings.artifact_data_dir))
+            )
         if not hasattr(app.state, "signaling_service"):
             voice_session = LocalVoiceSession(
                 VoiceModelPaths.from_data_dir(settings.artifact_data_dir),
@@ -96,6 +102,7 @@ def create_app(
             )
         yield
         await app.state.signaling_service.close()
+        app.state.voice_reference_transcriber.close()
 
     application = FastAPI(title="A.R.C.H.", version="0.1.0", lifespan=lifespan)
     if auth_service is not None:
@@ -114,6 +121,8 @@ def create_app(
         application.state.tool_gateway = tool_gateway
     if voice_profile_store is not None:
         application.state.voice_profile_store = voice_profile_store
+    if voice_reference_transcriber is not None:
+        application.state.voice_reference_transcriber = voice_reference_transcriber
     application.include_router(auth_router)
     application.include_router(knowledge_router)
     application.include_router(memory_router)

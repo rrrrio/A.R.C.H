@@ -28,7 +28,7 @@ make qwen-tts-prepare APPLY=1
 
 ## 当前边界
 
-准备成功会让独立 Python 环境能够启动仅监听 Unix socket 的本地 Qwen worker；它不暴露 TCP 端口，参考文件也只由 profile ID 在本机解析。Qwen 适配器会按句号、问号、感叹号和分号切分回答，并在每个句子完成 24 kHz PCM 后立即交给既有播放路径；没有终止标点的文本每 120 个字符强制切分。插话仍会终止 worker 并丢弃未播放的后续句子。
+准备成功会让独立 Python 环境能够启动仅监听 Unix socket 的本地 Qwen worker；它不暴露 TCP 端口，参考文件也只由 profile ID 在本机解析。Qwen 适配器会按句号、问号、感叹号和分号切分回答，并在每个句子完成 24 kHz PCM 后立即交给既有播放路径；没有终止标点的文本每 120 个字符强制切分。考虑到本地模型生成首帧可能超过 Pipecat 默认的 3 秒，克隆 TTS 会保留最多 30 秒的音频 context。插话仍会终止 worker 并丢弃未播放的后续句子。
 
 已使用本地合成 WAV 完成一次 worker 启动和 24 kHz PCM 输出检查，但这不证明声音相似度、授权充分性、GPU 余量、可听首音、插话取消或第二台设备体验。继续保留 Kokoro 作为可用基线，直到目标设备上的克隆路径完成测量。
 

@@ -6,7 +6,7 @@ import { fetchKnowledgeStatus, rebuildKnowledgeIndex, type KnowledgeStatus } fro
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
 import { decideToolApproval, fetchTerminalGrants, fetchToolApprovals, revokeTerminalGrant, type TerminalGrant, type ToolApproval } from './tools'
 import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceConnection, type VoiceEvent, VoiceClient, WebSocketVoiceClient } from './voice'
-import { createVoiceProfile, deleteVoiceProfile, fetchVoiceProfiles, selectVoiceProfile, type VoiceProfile } from './voices'
+import { createVoiceProfile, deleteVoiceProfile, fetchVoiceProfiles, handleReferenceFileSelection, restartVoiceSessionForProfileSelection, selectVoiceProfile, transcribeReferenceAudio, type VoiceProfile, validateReferenceAudio } from './voices'
 import './App.css'
 
 type SessionState =
@@ -72,9 +72,11 @@ function App() {
   const [profileReference, setProfileReference] = useState<File | null>(null)
   const [profileOwnershipConfirmed, setProfileOwnershipConfirmed] = useState(false)
   const [profileBusy, setProfileBusy] = useState(false)
-  const [profileError, setProfileError] = useState(false)
+  const [profileTranscribing, setProfileTranscribing] = useState(false)
+  const [profileError, setProfileError] = useState<string | null>(null)
   const voiceClient = useRef<VoiceConnection | null>(null)
   const inputReadyTimer = useRef<number | null>(null)
+  const profileTranscriptionRequest = useRef(0)
   const avatarEnergySink = useRef<(energy: number) => void>(() => undefined)
 
   const setAvatarEnergySink = useCallback((sink: (energy: number) => void) => {
@@ -254,25 +256,31 @@ function App() {
     if (session.kind !== 'authenticated') return
     setVoiceState('connecting')
     setConversation(initialConversation)
+    const client = new VoiceClient(
+      session.csrfToken,
+      (event) => {
+        if (voiceClient.current === client) handleVoiceEvent(event)
+      },
+      audioDeviceId || undefined,
+      () => handleVoiceDisconnect(client),
+      (energy) => avatarEnergySink.current(energy),
+    )
+    voiceClient.current = client
     try {
-      const client = new VoiceClient(
-        session.csrfToken,
-        (event) => {
-          if (voiceClient.current === client) handleVoiceEvent(event)
-        },
-        audioDeviceId || undefined,
-        () => handleVoiceDisconnect(client),
-        (energy) => avatarEnergySink.current(energy),
-      )
-      voiceClient.current = client
       await client.connect()
+      if (voiceClient.current !== client) {
+        await client.close().catch(() => undefined)
+        return
+      }
       inputReadyTimer.current = window.setTimeout(() => void fallBackToWebSocket(session.csrfToken, client), 4_000)
       setVoiceState((current) => current === 'ready' ? current : 'preparing')
       void refreshAudioInputs()
     } catch {
-      await voiceClient.current?.close().catch(() => undefined)
-      voiceClient.current = null
-      setVoiceState('error')
+      if (voiceClient.current === client) {
+        await client.close().catch(() => undefined)
+        voiceClient.current = null
+        setVoiceState('error')
+      }
     }
   }
 
@@ -351,6 +359,9 @@ function App() {
     voiceClient.current = client
     try {
       await client.connect()
+      if (voiceClient.current !== client) {
+        await client.close().catch(() => undefined)
+      }
     } catch {
       if (voiceClient.current === client) {
         voiceClient.current = null
@@ -400,26 +411,54 @@ function App() {
     await refreshTerminalGrants()
   }
 
+  async function chooseProfileReference(file: File | null) {
+    const requestId = profileTranscriptionRequest.current + 1
+    profileTranscriptionRequest.current = requestId
+    setProfileReference(file)
+    setProfileTranscript('')
+    setProfileError(null)
+    if (file === null || session.kind !== 'authenticated') {
+      setProfileTranscribing(false)
+      return
+    }
+    setProfileTranscribing(true)
+    try {
+      await validateReferenceAudio(file)
+      const transcript = await transcribeReferenceAudio(
+        session.csrfToken,
+        bytesToBase64(await file.arrayBuffer()),
+      )
+      if (profileTranscriptionRequest.current === requestId) setProfileTranscript(transcript)
+    } catch (error) {
+      if (profileTranscriptionRequest.current === requestId) setProfileError(formatVoiceTranscriptionError(error))
+    } finally {
+      if (profileTranscriptionRequest.current === requestId) setProfileTranscribing(false)
+    }
+  }
+
   async function createProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (session.kind !== 'authenticated' || profileReference === null) return
     setProfileBusy(true)
-    setProfileError(false)
+    setProfileError(null)
     try {
-      const referenceWavBase64 = bytesToBase64(await profileReference.arrayBuffer())
+      await validateReferenceAudio(profileReference)
+      const referenceAudioBase64 = bytesToBase64(await profileReference.arrayBuffer())
       await createVoiceProfile(session.csrfToken, {
         name: profileName,
         transcript: profileTranscript,
-        referenceWavBase64,
+        referenceAudioBase64,
         ownershipConfirmed: profileOwnershipConfirmed,
       })
       setProfileName('')
       setProfileTranscript('')
       setProfileReference(null)
       setProfileOwnershipConfirmed(false)
+      profileTranscriptionRequest.current += 1
+      setProfileTranscribing(false)
       await refreshVoiceProfiles()
-    } catch {
-      setProfileError(true)
+    } catch (error) {
+      setProfileError(formatVoiceProfileError(error))
     } finally {
       setProfileBusy(false)
     }
@@ -428,13 +467,14 @@ function App() {
   async function chooseProfile(profileId: string | null) {
     if (session.kind !== 'authenticated') return
     setProfileBusy(true)
-    setProfileError(false)
+    setProfileError(null)
     try {
       const profiles = await selectVoiceProfile(session.csrfToken, profileId)
       setVoiceProfiles(profiles.profiles)
       setSelectedVoiceProfileId(profiles.selected_id)
-    } catch {
-      setProfileError(true)
+      await restartVoiceSessionForProfileSelection(voiceState, disconnectVoice, connectVoice)
+    } catch (error) {
+      setProfileError(formatVoiceProfileError(error))
     } finally {
       setProfileBusy(false)
     }
@@ -443,12 +483,12 @@ function App() {
   async function removeProfile(profileId: string) {
     if (session.kind !== 'authenticated') return
     setProfileBusy(true)
-    setProfileError(false)
+    setProfileError(null)
     try {
       await deleteVoiceProfile(session.csrfToken, profileId)
       await refreshVoiceProfiles()
-    } catch {
-      setProfileError(true)
+    } catch (error) {
+      setProfileError(formatVoiceProfileError(error))
     } finally {
       setProfileBusy(false)
     }
@@ -616,8 +656,10 @@ function App() {
           </section>
           <section className="voice-profiles" aria-labelledby="voice-profiles-title">
             <h2 id="voice-profiles-title">克隆声音参考</h2>
-            <p>当前会话仍使用 Kokoro 基线。保存的参考仅在 Qwen 克隆运行时安装并完成设备验收后启用。</p>
-            {profileError ? <p className="form-error">无法保存或更新声音参考。请确认 WAV 格式、时长和授权确认。</p> : null}
+            <p>{voiceState === 'connecting' || voiceState === 'preparing' || voiceState === 'ready' ? '选择克隆参考后，当前语音会自动重新连接并应用所选声音。' : '选择克隆参考后，会在下一次连接语音时应用所选声音。保存的参考仅在 Qwen 克隆运行时安装并完成设备验收后启用。'}</p>
+            <p className="tool-detail">支持常见音频格式和多声道；需要转换的音频会由服务器转为单声道 16-bit PCM WAV。文件不超过 5 MiB，时长不超过 10 秒。</p>
+            {profileTranscribing ? <p className="tool-detail" role="status">正在自动转录参考音频，完成后可以编辑文本。</p> : null}
+            {profileError ? <p className="form-error">{profileError}</p> : null}
             <div className="voice-profile-list">
               <button type="button" className="secondary-button" disabled={profileBusy || selectedVoiceProfileId === null} onClick={() => void chooseProfile(null)}>使用 Kokoro 基线</button>
               {voiceProfiles.map((profile) => <div className="voice-profile" key={profile.id}>
@@ -633,11 +675,12 @@ function App() {
               <label htmlFor="profile-name">名称</label>
               <input id="profile-name" value={profileName} onChange={(event) => setProfileName(event.target.value)} required maxLength={80} />
               <label htmlFor="profile-transcript">参考音频文本</label>
-              <textarea id="profile-transcript" value={profileTranscript} onChange={(event) => setProfileTranscript(event.target.value)} required maxLength={1000} />
-              <label htmlFor="profile-reference">参考 WAV</label>
-              <input id="profile-reference" type="file" accept="audio/wav,.wav" required onChange={(event) => setProfileReference(event.target.files?.[0] ?? null)} />
+              <p className="tool-detail">自动转录结果会填入这里，请核对并编辑为与录音逐字一致的文本。</p>
+              <textarea id="profile-transcript" value={profileTranscript} onChange={(event) => setProfileTranscript(event.target.value)} disabled={profileTranscribing || profileBusy} required maxLength={1000} />
+              <label htmlFor="profile-reference">参考音频</label>
+              <input id="profile-reference" type="file" accept="audio/*,.wav,.mp3,.flac,.m4a,.aac,.ogg,.opus,.webm" required onChange={(event) => { handleReferenceFileSelection(event.currentTarget, (file) => { void chooseProfileReference(file) }) }} />
               <label className="consent-row"><input type="checkbox" checked={profileOwnershipConfirmed} onChange={(event) => setProfileOwnershipConfirmed(event.target.checked)} required />我确认有权使用此参考声音。</label>
-              <button type="submit" disabled={profileBusy || profileReference === null}>{profileBusy ? '正在保存' : '保存参考'}</button>
+              <button type="submit" disabled={profileBusy || profileTranscribing || profileReference === null}>{profileBusy ? '正在保存' : '保存参考'}</button>
             </form>
           </section>
           <div className="audio-input-row">
@@ -714,6 +757,33 @@ function bytesToBase64(payload: ArrayBuffer): string {
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
   return btoa(binary)
+}
+
+function formatVoiceProfileError(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  const translations: Record<string, string> = {
+    'Reference audio must be a valid WAV file.': '参考音频必须是有效的 WAV 文件。',
+    'Reference audio must be a supported audio file.': '参考音频格式无法读取，请上传包含音轨的常见音频文件。',
+    'Audio conversion requires FFmpeg.': '服务器未准备音频转换组件（FFmpeg）。',
+    'Reference WAV must be at most 10 seconds.': '参考音频时长必须在 10 秒以内。',
+    'Confirm that you have permission to use this reference voice.': '请确认你有权使用此参考声音。',
+  }
+  const detail = translations[message] ?? message
+  return detail ? `无法保存或更新声音参考：${detail}` : '无法保存或更新声音参考，请检查输入后重试。'
+}
+
+function formatVoiceTranscriptionError(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  const translations: Record<string, string> = {
+    'Reference audio must be a supported audio file.': '参考音频格式无法读取，请上传包含音轨的常见音频文件。',
+    'Audio conversion requires FFmpeg.': '服务器未准备音频转换组件（FFmpeg）。',
+    'Local ASR model is not ready.': '本地语音转录模型尚未准备，请先运行 ASR 准备流程。',
+    'Local ASR model is not available.': '本地语音转录模型当前不可用。',
+    'Local reference transcription failed.': '本地语音转录失败。',
+    'No speech was detected in the reference audio.': '没有检测到可转录的人声，请手动填写文本。',
+  }
+  const detail = translations[message] ?? message
+  return detail ? `无法自动填写参考音频文本：${detail}` : '无法自动填写参考音频文本，请手动填写后重试。'
 }
 
 function voiceHeading(

@@ -21,6 +21,7 @@ QWEN_OUTPUT_SAMPLE_RATE = 24000
 QWEN_MODEL_REVISION = "c27fe8aa05b732b1376d0f6a1e522fbccb84abbd"
 MAX_QWEN_MESSAGE_BYTES = 32 * 1024 * 1024
 MAX_QWEN_SENTENCE_CHARS = 120
+QWEN_STOP_FRAME_TIMEOUT_SECONDS = 30.0
 _SENTENCE_ENDINGS = frozenset("。！？!?；;")
 type CloneSynthesize = Callable[[str, VoiceProfile], Awaitable[tuple[bytes, int]]]
 type CloneCancel = Callable[[], Awaitable[None]]
@@ -57,6 +58,7 @@ class QwenCloneRuntime:
         self._environment = data_dir / "runtime" / "qwen-tts"
         self._socket = self._environment / "worker.sock"
         self._process: asyncio.subprocess.Process | None = None
+        self._start_lock = asyncio.Lock()
 
     def require_ready(self) -> None:
         """Fail before session startup when explicit model preparation has not completed."""
@@ -70,34 +72,52 @@ class QwenCloneRuntime:
 
     async def start(self) -> None:
         """Start one local worker only after artifact and isolated-runtime checks succeed."""
-        self.require_ready()
-        if self._process is not None and self._process.returncode is None:
-            return
-        self._socket.unlink(missing_ok=True)
-        worker = Path(__file__).parents[3] / "scripts" / "qwen_tts_worker.py"
-        self._process = await asyncio.create_subprocess_exec(
-            str(self._environment / "bin" / "python"),
-            str(worker),
-            "--data-dir",
-            str(self._data_dir),
-            "--socket",
-            str(self._socket),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        for _ in range(100):
-            if self._socket.is_socket():
+        async with self._start_lock:
+            self.require_ready()
+            if self._process is not None and self._process.returncode is None:
                 return
-            if self._process.returncode is not None:
-                break
-            await asyncio.sleep(0.1)
-        await self.stop()
-        raise QwenCloneUnavailable("Qwen clone worker did not become ready.")
+            self._socket.unlink(missing_ok=True)
+            worker = Path(__file__).parents[3] / "scripts" / "qwen_tts_worker.py"
+            self._process = await asyncio.create_subprocess_exec(
+                str(self._environment / "bin" / "python"),
+                str(worker),
+                "--data-dir",
+                str(self._data_dir),
+                "--socket",
+                str(self._socket),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            for _ in range(100):
+                if self._socket.is_socket():
+                    return
+                if self._process.returncode is not None:
+                    break
+                await asyncio.sleep(0.1)
+            await self.stop()
+            raise QwenCloneUnavailable("Qwen clone worker did not become ready.")
 
     async def synthesize(self, text: str, profile: VoiceProfile) -> tuple[bytes, int]:
         """Request one profile-bound PCM response without transmitting a local path."""
-        if self._process is None or self._process.returncode is not None:
-            raise QwenCloneUnavailable("Qwen clone worker is not running.")
+        for attempt in range(2):
+            if self._process is None or self._process.returncode is not None:
+                await self.start()
+            if self._process is None or self._process.returncode is not None:
+                raise QwenCloneUnavailable("Qwen clone worker is not running.")
+            try:
+                return await self._request_synthesis(text, profile)
+            except QwenCloneUnavailable:
+                if attempt == 1:
+                    raise
+                await self.stop()
+            except Exception as error:
+                if attempt == 1:
+                    raise QwenCloneUnavailable("Qwen clone worker request failed.") from error
+                await self.stop()
+        raise QwenCloneUnavailable("Qwen clone worker request failed.")
+
+    async def _request_synthesis(self, text: str, profile: VoiceProfile) -> tuple[bytes, int]:
+        """Send one request over the current worker socket and validate its PCM response."""
         reader, writer = await asyncio.open_unix_connection(
             str(self._socket), limit=MAX_QWEN_MESSAGE_BYTES
         )
@@ -121,7 +141,7 @@ class QwenCloneRuntime:
             ) from error
 
     async def cancel(self) -> None:
-        """Terminate in-flight local generation; the next request starts a clean worker."""
+        """Terminate in-flight local generation; the next request restores a clean worker."""
         await self.stop()
 
     async def stop(self) -> None:
@@ -168,6 +188,7 @@ class QwenCloneTTSService(TTSService):
         super().__init__(
             push_start_frame=True,
             push_stop_frames=True,
+            stop_frame_timeout_s=QWEN_STOP_FRAME_TIMEOUT_SECONDS,
             sample_rate=QWEN_OUTPUT_SAMPLE_RATE,
             settings=TTSSettings(
                 model="Qwen3-TTS-12Hz-0.6B-Base", voice=profile.id, language=Language.ZH

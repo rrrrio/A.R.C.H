@@ -9,8 +9,10 @@ import struct
 from pathlib import Path
 
 import pytest
-from pipecat.frames.frames import ErrorFrame, TTSAudioRawFrame
+from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame, TTSStoppedFrame
+from pipecat.processors.frame_processor import FrameDirection
 
+from arch.voice import qwen_clone as qwen_clone_module
 from arch.voice.profiles import VoiceProfile
 from arch.voice.qwen_clone import (
     QwenCloneRuntime,
@@ -45,6 +47,46 @@ def test_qwen_clone_service_emits_profile_bound_24khz_pcm() -> None:
     assert isinstance(frames[0], TTSAudioRawFrame)
     assert frames[0].sample_rate == 24000
     assert frames[0].context_id == "turn-1"
+
+
+def test_qwen_clone_service_keeps_context_open_until_slow_first_audio_arrives() -> None:
+    """A slow first Qwen frame must not be discarded by Pipecat's default timeout."""
+
+    async def synthesize(_: str, __: VoiceProfile) -> tuple[bytes, int]:
+        await asyncio.sleep(3.25)
+        return b"\x01\x00", 24000
+
+    async def exercise() -> list[Frame]:
+        service = QwenCloneTTSService(_profile(), synthesize)
+        emitted: list[Frame] = []
+
+        async def capture(
+            frame: Frame, _: FrameDirection = FrameDirection.DOWNSTREAM
+        ) -> None:
+            emitted.append(frame)
+
+        service.push_frame = capture  # type: ignore[method-assign]
+        service.start_word_timestamps = lambda: asyncio.sleep(0)  # type: ignore[method-assign]
+        service.process_ttfa_metrics = lambda _: asyncio.sleep(0)  # type: ignore[method-assign]
+        service._audio_context_task = asyncio.create_task(service._audio_context_task_handler())
+        await service.create_audio_context("slow-turn")
+        service._turn_context_id = "slow-turn"
+        await service._synthesize_text("慢速回答", "slow-turn")
+        await service.append_to_audio_context(
+            "slow-turn", TTSStoppedFrame(context_id="slow-turn")
+        )
+        await service.remove_audio_context("slow-turn")
+        await asyncio.sleep(0.05)
+        audio_context_task = service._audio_context_task
+        if audio_context_task is not None:
+            audio_context_task.cancel()
+            await asyncio.gather(audio_context_task, return_exceptions=True)
+        return emitted
+
+    frames = asyncio.run(exercise())
+
+    assert any(isinstance(frame, TTSAudioRawFrame) for frame in frames)
+    assert not any(isinstance(frame, ErrorFrame) for frame in frames)
 
 
 def test_qwen_clone_service_emits_each_completed_sentence_before_synthesizing_the_next() -> None:
@@ -116,6 +158,140 @@ def test_runtime_reads_bounded_local_pcm_response() -> None:
     response = asyncio.run(exercise())
 
     assert response["sample_rate"] == 24000
+
+
+def test_runtime_restarts_worker_before_synthesizing_after_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An interrupted clone turn must not silence every later turn in the session."""
+
+    class FakeProcess:
+        returncode = None
+
+    class FakeWriter:
+        def __init__(self) -> None:
+            self.payload = b""
+
+        def write(self, payload: bytes) -> None:
+            self.payload += payload
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    class FakeReader:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+
+        async def readexactly(self, size: int) -> bytes:
+            value, self.payload = self.payload[:size], self.payload[size:]
+            return value
+
+    starts = 0
+    runtime = QwenCloneRuntime(tmp_path)
+    monkeypatch.setattr(runtime, "_process", FakeProcess())
+
+    async def stop() -> None:
+        monkeypatch.setattr(runtime, "_process", None)
+
+    async def start() -> None:
+        nonlocal starts
+        starts += 1
+        monkeypatch.setattr(runtime, "_process", FakeProcess())
+
+    monkeypatch.setattr(runtime, "stop", stop)
+    monkeypatch.setattr(runtime, "start", start)
+    payload = json.dumps(
+        {"ok": True, "sample_rate": 24000, "audio": base64.b64encode(b"\x01\x00").decode()}
+    ).encode()
+    reader = FakeReader(struct.pack("!I", len(payload)) + payload)
+    writer = FakeWriter()
+
+    async def open_connection(*_: object, **__: object) -> tuple[FakeReader, FakeWriter]:
+        return reader, writer
+
+    monkeypatch.setattr(qwen_clone_module.asyncio, "open_unix_connection", open_connection)
+
+    async def exercise() -> tuple[bytes, int]:
+        await runtime.cancel()
+        return await runtime.synthesize("下一句", _profile())
+
+    assert asyncio.run(exercise()) == (b"\x01\x00", 24000)
+    assert starts == 1
+
+
+def test_runtime_restarts_worker_after_a_rejected_synthesis_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One transient worker failure must not poison later clone turns."""
+
+    class FakeProcess:
+        returncode = None
+
+    class FakeWriter:
+        def write(self, _: bytes) -> None:
+            return None
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    class FakeReader:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+
+        async def readexactly(self, size: int) -> bytes:
+            value, self.payload = self.payload[:size], self.payload[size:]
+            return value
+
+    def response(payload: dict[str, object]) -> FakeReader:
+        encoded = json.dumps(payload).encode()
+        return FakeReader(struct.pack("!I", len(encoded)) + encoded)
+
+    starts = 0
+    connections = 0
+    runtime = QwenCloneRuntime(tmp_path)
+    monkeypatch.setattr(runtime, "_process", FakeProcess())
+
+    async def stop() -> None:
+        monkeypatch.setattr(runtime, "_process", None)
+
+    async def start() -> None:
+        nonlocal starts
+        starts += 1
+        monkeypatch.setattr(runtime, "_process", FakeProcess())
+
+    monkeypatch.setattr(runtime, "stop", stop)
+    monkeypatch.setattr(runtime, "start", start)
+    readers = iter(
+        (
+            response({"ok": False, "error": "RuntimeError"}),
+            response(
+                {"ok": True, "sample_rate": 24000, "audio": base64.b64encode(b"\x01\x00").decode()}
+            ),
+        )
+    )
+
+    async def open_connection(*_: object, **__: object) -> tuple[FakeReader, FakeWriter]:
+        nonlocal connections
+        connections += 1
+        return next(readers), FakeWriter()
+
+    monkeypatch.setattr(qwen_clone_module.asyncio, "open_unix_connection", open_connection)
+
+    assert asyncio.run(runtime.synthesize("下一句", _profile())) == (b"\x01\x00", 24000)
+    assert starts == 1
+    assert connections == 2
 
 
 def test_qwen_clone_service_cancels_its_runtime_when_pipecat_cancels_synthesis() -> None:

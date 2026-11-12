@@ -13,8 +13,23 @@ from arch.auth.credentials import provision_credentials
 from arch.auth.service import AuthService
 from arch.main import create_app
 from arch.voice.profiles import VoiceProfileStore
+from arch.voice.reference_transcriber import ReferenceTranscriber
 
 PUBLIC_ORIGIN = "https://voice.test:8443"
+
+
+class FakeReferenceTranscriber:
+    """Return a deterministic draft while exercising the authenticated HTTP route."""
+
+    def __init__(self) -> None:
+        self.payloads: list[bytes] = []
+
+    def transcribe(self, payload: bytes) -> str:
+        self.payloads.append(payload)
+        return "自动转录文本"
+
+    def close(self) -> None:
+        return None
 
 
 def _wav() -> bytes:
@@ -38,7 +53,7 @@ def test_voice_profiles_require_login_csrf_and_explicit_ownership(tmp_path: Path
     payload = {
         "name": "我的声音",
         "transcript": "这是参考文本",
-        "reference_wav_base64": base64.b64encode(_wav()).decode("ascii"),
+        "reference_audio_base64": base64.b64encode(_wav()).decode("ascii"),
         "ownership_confirmed": True,
     }
 
@@ -87,3 +102,38 @@ def test_voice_profiles_require_login_csrf_and_explicit_ownership(tmp_path: Path
     assert selected.json()["selected_id"] == profile_id
     assert deleted.status_code == 204
     assert listed.json() == {"selected_id": None, "profiles": []}
+
+
+def test_voice_reference_transcription_requires_csrf_and_returns_draft(tmp_path: Path) -> None:
+    """The browser can request a draft without persisting audio or requiring ownership."""
+    credential_path = tmp_path / "admin.json"
+    provision_credentials(credential_path, "correct-horse-battery-staple")
+    transcriber: ReferenceTranscriber = FakeReferenceTranscriber()
+    app = create_app(
+        AuthService(credential_path, PUBLIC_ORIGIN),
+        voice_reference_transcriber=transcriber,
+    )
+    payload = {"reference_audio_base64": base64.b64encode(b"audio").decode("ascii")}
+
+    with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
+        headers = {"Origin": PUBLIC_ORIGIN}
+        anonymous = client.post("/api/voices/reference-transcript", json=payload)
+        login = client.post(
+            "/api/auth/login",
+            headers=headers,
+            json={"password": "correct-horse-battery-staple"},
+        )
+        csrf_token = login.json()["csrf_token"]
+        missing_csrf = client.post("/api/voices/reference-transcript", json=payload)
+        drafted = client.post(
+            "/api/voices/reference-transcript",
+            headers={**headers, "X-CSRF-Token": csrf_token},
+            json=payload,
+        )
+
+    assert anonymous.status_code == 401
+    assert missing_csrf.status_code == 403
+    assert drafted.status_code == 200
+    assert drafted.json() == {"transcript": "自动转录文本"}
+    assert isinstance(transcriber, FakeReferenceTranscriber)
+    assert transcriber.payloads == [b"audio"]
