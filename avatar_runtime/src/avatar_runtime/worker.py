@@ -45,7 +45,7 @@ class Renderer(Protocol):
 class CompletedUtteranceEngine(Protocol):
     """Synchronous model boundary kept behind the async worker protocol."""
 
-    def render(self, pcm: bytes) -> list[bytes]: ...
+    def render(self, pcm: bytes, *, frame_offset: int = 0) -> list[bytes]: ...
 
 
 class PreviewRenderer:
@@ -111,6 +111,7 @@ class MuseTalkRenderer:
     """Run a pinned MuseTalk engine after a complete, cancellable utterance arrives."""
 
     _RIGHT_CONTEXT_FRAMES = 2
+    _LEFT_CONTEXT_FRAMES = 4
     _MIN_BATCH_FRAMES = 8
 
     def __init__(
@@ -142,13 +143,16 @@ class MuseTalkRenderer:
         self._engine = engine
         self._buffers: dict[str, _UtteranceBuffer] = {}
         self._generation = 0
-        self._frames: asyncio.Queue[bytes] = asyncio.Queue(maxsize=max(fps * 2, 8))
+        self._frames: asyncio.Queue[bytes | Exception] = asyncio.Queue(maxsize=max(fps * 2, 8))
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def frames(self) -> AsyncIterator[bytes]:
         """Yield only frames belonging to the latest uncancelled utterance."""
         while True:
-            yield await self._frames.get()
+            payload = await self._frames.get()
+            if isinstance(payload, Exception):
+                raise payload
+            yield payload
 
     async def begin(self, utterance_id: str, sample_rate: int, emotion: str) -> None:
         """Start collecting renderer-normalized 16 kHz PCM for one utterance."""
@@ -203,21 +207,44 @@ class MuseTalkRenderer:
             return
         buffer.rendering = True
         generation = self._generation
+        start_frame = max(0, buffer.emitted_frames - self._LEFT_CONTEXT_FRAMES)
+        start_sample = start_frame * 16000 // self._fps
+        snapshot = bytes(buffer.pcm[start_sample * 2 :])
         task = asyncio.create_task(
-            self._render_snapshot(utterance_id, bytes(buffer.pcm), ready_frames, generation)
+            self._render_snapshot(
+                utterance_id,
+                snapshot,
+                start_frame,
+                ready_frames,
+                generation,
+            )
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
     async def _render_snapshot(
-        self, utterance_id: str, pcm: bytes, ready_frames: int, generation: int
+        self,
+        utterance_id: str,
+        pcm: bytes,
+        start_frame: int,
+        ready_frames: int,
+        generation: int,
     ) -> None:
-        frames = await asyncio.to_thread(self._engine.render, pcm)
+        try:
+            frames = await asyncio.to_thread(self._engine.render, pcm, frame_offset=start_frame)
+        except Exception as error:
+            buffer = self._buffers.get(utterance_id)
+            if generation == self._generation and buffer is not None:
+                buffer.rendering = False
+                self._buffers.pop(utterance_id, None)
+                self._publish_failure(RuntimeError(f"MuseTalk inference failed: {error}"))
+            logger.exception("MuseTalk inference failed for utterance %s.", utterance_id)
+            return
         buffer = self._buffers.get(utterance_id)
         if generation != self._generation or buffer is None:
             return
-        first_frame = buffer.emitted_frames
-        available_frames = min(ready_frames, len(frames))
+        first_frame = buffer.emitted_frames - start_frame
+        available_frames = min(ready_frames - start_frame, len(frames))
         if available_frames <= first_frame:
             buffer.rendering = False
             logger.error(
@@ -228,7 +255,7 @@ class MuseTalkRenderer:
             if self._frames.full():
                 self._frames.get_nowait()
             self._frames.put_nowait(frame)
-        buffer.emitted_frames = available_frames
+        buffer.emitted_frames = start_frame + available_frames
         buffer.rendering = False
         if buffer.ended and buffer.emitted_frames >= self._frame_count(buffer.pcm):
             self._buffers.pop(utterance_id, None)
@@ -241,6 +268,11 @@ class MuseTalkRenderer:
     def _discard_frames(self) -> None:
         while not self._frames.empty():
             self._frames.get_nowait()
+
+    def _publish_failure(self, error: Exception) -> None:
+        while self._frames.full():
+            self._frames.get_nowait()
+        self._frames.put_nowait(error)
 
 
 class AvatarWorkerConnection:
@@ -286,7 +318,7 @@ class AvatarWorkerConnection:
             yield line
 
     def _start_rendering(self) -> None:
-        if self._render_task is not None:
+        if self._render_task is not None and not self._render_task.done():
             return
         self._render_task = asyncio.create_task(self._render())
 

@@ -100,8 +100,13 @@ class MuseTalkEngine:
         images = sorted(directory.glob("*.png"), key=lambda path: int(path.stem))
         return [self._cv2.imread(str(path)) for path in images]
 
-    def render(self, pcm: bytes) -> list[bytes]:
-        """Run the official audio feature and diffusion path for one complete utterance."""
+    @staticmethod
+    def _cycle_index(frame_offset: int, batch_offset: int, index: int, cycle_length: int) -> int:
+        """Map one local diffusion item to the matching fixed-video cycle item."""
+        return (frame_offset + batch_offset + index) % cycle_length
+
+    def render(self, pcm: bytes, *, frame_offset: int = 0) -> list[bytes]:
+        """Run the official path for PCM whose first frame is ``frame_offset``."""
         if len(pcm) % 2:
             raise ValueError("MuseTalk PCM must contain 16-bit samples.")
         samples = self._np.frombuffer(pcm, dtype=self._np.int16).astype(self._np.float32) / 32768.0
@@ -140,7 +145,9 @@ class MuseTalkEngine:
             prompt_batch = prompts_tensor[offset : offset + batch_size]
             latent_batch = self._torch.cat(
                 [
-                    self._latents[(offset + index) % len(self._latents)]
+                    self._latents[
+                        self._cycle_index(frame_offset, offset, index, len(self._latents))
+                    ]
                     for index in range(len(prompt_batch))
                 ],
                 dim=0,
@@ -152,7 +159,7 @@ class MuseTalkEngine:
                 ).sample
                 decoded = self._vae.decode_latents(predicted.to(dtype=self._vae.vae.dtype))
             for index, face in enumerate(decoded):
-                frame_index = (offset + index) % len(self._frames)
+                frame_index = self._cycle_index(frame_offset, offset, index, len(self._frames))
                 x1, y1, x2, y2 = self._coords[frame_index]
                 face = self._cv2.resize(face.astype(self._np.uint8), (x2 - x1, y2 - y1))
                 combined = self._blend(

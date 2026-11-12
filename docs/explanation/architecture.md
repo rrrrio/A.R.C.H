@@ -61,4 +61,4 @@ Agent Core 可以为下一段 TTS 输出提供 `neutral`、`warm`、`calm` 或 `
 
 浏览器数字人预览是独立于 `avatar_av` 的第一条实现路径。它使用浏览器本地选择的 VRM 文件和 WebGL 渲染；模型不经过 API、不写入 `data/`，也不进入备份。WebRTC 路径从已接收的音频统计读取能量，WebSocket PCM 路径从收到的 PCM 计算能量，两者都不会增加音频 destination 或第二路播放。该能量驱动 fallback 或具有 `aa` 元音表情的 VRM 的基础嘴部开合；当前没有服务器视频轨、浏览器表达事件或可接受的设备帧率/音画同步证据。直接音频仍是唯一输出所有者。
 
-真人视频数字人沿用同一音频唯一所有权，但新增独立的视频 WebRTC。`OutputMux` 仍先把 PCM 交给直接音频 adapter，只有被接受的同一 `utterance_id` 才复制给 video observer。observer、Unix socket、worker 队列和浏览器视频 track 都遵守同一取消 fence；worker 或视频 peer 失败不会阻断语音。MuseTalk worker 每积累一批稳定 PCM 即运行固定 UNet/VAE/Whisper 路径，保留右侧上下文并在结束时 flush；取消或连接关闭会丢弃已在运行的旧 batch。当前仓库已完成信令、鉴权、静音视频客户端、passive observer、预处理缓存、真实 GPU JPEG 与 private socket smoke，以及 VRM 回退。每个 batch 目前会重新处理累积 PCM，因此长 utterance 的持续延迟仍需滑动窗口优化；浏览器设备上的帧率、音画同步和插话停帧仍未完成验收。
+真人视频数字人沿用同一音频唯一所有权，但新增独立的视频 WebRTC。`OutputMux` 仍先把 PCM 交给直接音频 adapter，只有被接受的同一 `utterance_id` 才复制给 video observer。observer、Unix socket、worker 队列和浏览器视频 track 都遵守同一取消 fence；worker 每积累一批稳定 PCM 即运行固定 UNet/VAE/Whisper 路径，保留左右上下文、复用全局固定视频帧偏移并在结束时 flush；取消或连接关闭会丢弃已在运行的旧 batch。当前仓库已完成信令、鉴权、静音视频客户端、passive observer、预处理缓存、真实 GPU JPEG 与 private socket smoke，以及 VRM 回退。浏览器设备上的帧率、音画同步和插话停帧仍未完成验收。

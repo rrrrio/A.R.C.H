@@ -13,6 +13,7 @@ from pathlib import Path
 import av
 import numpy as np
 from avatar_runtime.audio import StreamingPcmResampler
+from avatar_runtime.musetalk import MuseTalkEngine
 from avatar_runtime.worker import AvatarWorkerConnection, MuseTalkRenderer, PreviewRenderer
 
 
@@ -68,7 +69,8 @@ class BlockingEngine:
         self.started = threading.Event()
         self.release = threading.Event()
 
-    def render(self, pcm: bytes) -> list[bytes]:
+    def render(self, pcm: bytes, *, frame_offset: int = 0) -> list[bytes]:
+        del frame_offset
         self.started.set()
         self.release.wait(timeout=1)
         return [b"stale-frame"]
@@ -79,12 +81,26 @@ class CountingEngine:
 
     def __init__(self, fps: int) -> None:
         self._fps = fps
-        self.calls: list[int] = []
+        self.calls: list[tuple[int, int]] = []
 
-    def render(self, pcm: bytes) -> list[bytes]:
+    def render(self, pcm: bytes, *, frame_offset: int = 0) -> list[bytes]:
         frame_count = len(pcm) // 2 * self._fps // 16000
-        self.calls.append(len(pcm))
-        return [f"frame-{index}".encode() for index in range(frame_count)]
+        self.calls.append((len(pcm), frame_offset))
+        return [f"frame-{frame_offset + index}".encode() for index in range(frame_count)]
+
+
+class RecoveringEngine:
+    """Fail one GPU batch, then prove a following utterance can recover."""
+
+    def __init__(self) -> None:
+        self._fail = True
+
+    def render(self, pcm: bytes, *, frame_offset: int = 0) -> list[bytes]:
+        if self._fail:
+            self._fail = False
+            raise RuntimeError("synthetic CUDA failure")
+        frame_count = len(pcm) // 2 * 25 // 16000
+        return [f"recovered-{frame_offset + index}".encode() for index in range(frame_count)]
 
 
 class PreviewRendererTests(unittest.TestCase):
@@ -187,6 +203,10 @@ class MuseTalkRendererTests(unittest.TestCase):
 
             asyncio.run(exercise())
 
+
+class MuseTalkRendererSchedulingTests(unittest.TestCase):
+    """Verify stable batching and recovery at the renderer boundary."""
+
     def test_emits_stable_batches_before_utterance_end(self) -> None:
         """Incremental scheduling must hold right context but not wait for ``end``."""
         with tempfile.TemporaryDirectory() as directory:
@@ -208,12 +228,56 @@ class MuseTalkRendererTests(unittest.TestCase):
                 await renderer.push_audio("turn", b"\x00\x00" * 16000, 0)
                 await asyncio.sleep(0.02)
                 early = [await asyncio.wait_for(anext(renderer.frames()), 0.1) for _ in range(8)]
-                await renderer.push_audio("turn", b"\x00\x00" * 3200, 1)
+                await renderer.push_audio("turn", b"\x00\x00" * 16000, 1)
+                middle = [await asyncio.wait_for(anext(renderer.frames()), 0.1) for _ in range(10)]
                 await renderer.end("turn")
-                tail = [await asyncio.wait_for(anext(renderer.frames()), 0.1) for _ in range(4)]
+                tail = [await asyncio.wait_for(anext(renderer.frames()), 0.1) for _ in range(2)]
                 await renderer.close()
                 self.assertEqual(early, [f"frame-{index}".encode() for index in range(8)])
-                self.assertEqual(tail, [f"frame-{index}".encode() for index in range(8, 12)])
-                self.assertEqual(engine.calls, [32000, 38400])
+                self.assertEqual(middle, [f"frame-{index}".encode() for index in range(8, 18)])
+                self.assertEqual(tail, [f"frame-{index}".encode() for index in range(18, 20)])
+                self.assertEqual(engine.calls, [(32000, 0), (51200, 4), (19200, 14)])
 
             asyncio.run(exercise())
+
+
+class MuseTalkRendererRecoveryTests(unittest.TestCase):
+    """Verify a renderer can recover from a failed GPU batch."""
+
+    def test_inference_failure_is_reported_and_next_utterance_recovers(self) -> None:
+        """A failed GPU batch must not leave the renderer permanently busy."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "avatar.mp4"
+            source.write_bytes(b"fixed-source")
+            renderer = MuseTalkRenderer(
+                source,
+                fps=25,
+                model_root=root / "models",
+                cache_dir=root / "cache",
+                source_root=root / "source",
+                engine=RecoveringEngine(),
+            )
+
+            async def exercise() -> None:
+                await renderer.begin("failed", 16000, "neutral")
+                await renderer.push_audio("failed", b"\x00\x00" * 16000, 0)
+                with self.assertLogs("arch.avatar", level="ERROR"):
+                    with self.assertRaisesRegex(RuntimeError, "synthetic CUDA failure"):
+                        await asyncio.wait_for(anext(renderer.frames()), 0.1)
+                await renderer.begin("recovered", 16000, "neutral")
+                await renderer.push_audio("recovered", b"\x00\x00" * 16000, 1)
+                frame = await asyncio.wait_for(anext(renderer.frames()), 0.1)
+                await renderer.close()
+                self.assertEqual(frame, b"recovered-0")
+
+            asyncio.run(exercise())
+
+
+class MuseTalkEngineIndexTests(unittest.TestCase):
+    """Verify sliding audio windows preserve their fixed-video source alignment."""
+
+    def test_window_offset_selects_matching_latent_and_blend_frame(self) -> None:
+        """Both inference inputs and output blending must advance by the same global frame."""
+        self.assertEqual(MuseTalkEngine._cycle_index(4, 8, 2, 162), 14)
+        self.assertEqual(MuseTalkEngine._cycle_index(160, 8, 2, 162), 8)
