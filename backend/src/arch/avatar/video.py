@@ -99,9 +99,11 @@ class UnixSocketAvatarWorker:
         self._on_frame: Callable[[bytes], Awaitable[None]] | None = None
         self._ready = asyncio.Event()
         self._write_lock = asyncio.Lock()
+        self._closing = False
 
     async def start(self, on_frame: Callable[[bytes], Awaitable[None]]) -> None:
         """Connect to the already supervised worker and wait for its readiness event."""
+        self._closing = False
         self._on_frame = on_frame
         try:
             self._reader, self._writer = await asyncio.open_unix_connection(self._socket_path)
@@ -145,6 +147,7 @@ class UnixSocketAvatarWorker:
 
     async def close(self) -> None:
         """Close the IPC stream and cancel its reader without killing systemd."""
+        self._closing = True
         if self._writer is not None:
             self._writer.close()
             await self._writer.wait_closed()
@@ -170,6 +173,8 @@ class UnixSocketAvatarWorker:
             while True:
                 line = await self._reader.readline()
                 if not line:
+                    if self._closing:
+                        return
                     raise RuntimeError("Avatar worker disconnected.")
                 message = json.loads(line)
                 kind = message.get("type")
@@ -184,7 +189,8 @@ class UnixSocketAvatarWorker:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Avatar worker IPC reader stopped.")
+            if not self._closing:
+                logger.exception("Avatar worker IPC reader stopped.")
             self._ready.clear()
 
 

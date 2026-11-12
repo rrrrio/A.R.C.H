@@ -3,6 +3,7 @@
 import asyncio
 from pathlib import Path
 
+import pytest
 from aiortc import RTCPeerConnection
 from fastapi.testclient import TestClient
 from pipecat.frames.frames import Frame, TTSAudioRawFrame, TTSStartedFrame
@@ -10,7 +11,7 @@ from pipecat.processors.frame_processor import FrameDirection
 
 from arch.auth.credentials import provision_credentials
 from arch.auth.service import AuthService
-from arch.avatar.video import AvatarVideoSignalingService, AvatarVideoTrack
+from arch.avatar.video import AvatarVideoSignalingService, AvatarVideoTrack, UnixSocketAvatarWorker
 from arch.main import create_app
 from arch.voice.pipecat_output import PipecatOutputMuxProcessor
 
@@ -118,6 +119,43 @@ def test_avatar_track_drops_old_frames_under_backpressure() -> None:
     assert track._frames.qsize() == 2  # noqa: SLF001
     assert asyncio.run(track._frames.get()) == b"middle"  # noqa: SLF001
     assert asyncio.run(track._frames.get()) == b"new"  # noqa: SLF001
+
+
+def test_unix_worker_ignores_expected_eof_while_closing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An explicit local close must make reader EOF a normal terminal state."""
+
+    async def exercise() -> None:
+        reader = asyncio.StreamReader()
+        reader.feed_eof()
+        worker = UnixSocketAvatarWorker(tmp_path / "avatar.sock")
+        worker._reader = reader  # noqa: SLF001
+        worker._closing = True  # noqa: SLF001
+        await worker._read_messages()  # noqa: SLF001
+
+    caplog.set_level("ERROR", logger="arch.avatar.video")
+    asyncio.run(exercise())
+
+    assert "Avatar worker IPC reader stopped." not in caplog.text
+
+
+def test_unix_worker_reports_unexpected_eof(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An EOF without the local close fence must remain observable as a worker failure."""
+
+    async def exercise() -> None:
+        reader = asyncio.StreamReader()
+        reader.feed_eof()
+        worker = UnixSocketAvatarWorker(tmp_path / "avatar.sock")
+        worker._reader = reader  # noqa: SLF001
+        await worker._read_messages()  # noqa: SLF001
+
+    caplog.set_level("ERROR", logger="arch.avatar.video")
+    asyncio.run(exercise())
+
+    assert "Avatar worker IPC reader stopped." in caplog.text
 
 
 def test_avatar_signaling_returns_a_video_only_answer() -> None:
