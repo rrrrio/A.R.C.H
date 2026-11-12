@@ -20,6 +20,7 @@ from typing import Protocol
 import av
 
 from avatar_runtime.audio import StreamingPcmResampler
+from avatar_runtime.cache import AvatarCacheIdentity, sha256_file
 
 logger = logging.getLogger("arch.avatar")
 
@@ -51,7 +52,9 @@ class PreviewRenderer:
     def _load_source(self) -> None:
         with av.open(self._source) as container:
             for frame in container.decode(video=0):
-                output = av.VideoFrame.from_ndarray(frame.to_ndarray(format="bgr24"), format="bgr24")
+                output = av.VideoFrame.from_ndarray(
+                    frame.to_ndarray(format="bgr24"), format="bgr24"
+                )
                 packets = output.to_image()  # type: ignore[attr-defined]
                 import io
 
@@ -83,42 +86,81 @@ class PreviewRenderer:
 
 
 class MuseTalkRenderer:
-    """Integration boundary for the prepared MuseTalk/LiveTalking runtime.
+    """Run a pinned MuseTalk engine after a complete, cancellable utterance arrives."""
 
-    The model runtime is deliberately not imported into the A.R.C.H. backend
-    environment. The prepared worker can replace this class with the official
-    MuseTalk 1.5 pipeline while keeping the socket protocol stable.
-    """
-
-    def __init__(self, source: Path, fps: int) -> None:
-        self._source = source
-        self._fps = fps
-        raise RuntimeError(
-            "MuseTalk runtime is not prepared; install the pinned MuseTalk/LiveTalking "
-            "runtime and preprocess the fixed avatar before selecting backend=musetalk."
+    def __init__(
+        self, source: Path, fps: int, model_root: Path, cache_dir: Path, source_root: Path
+    ) -> None:
+        identity = AvatarCacheIdentity(
+            source_sha256=sha256_file(source),
+            musetalk_revision="0a89dec45a0192b824e3cf4daf96c239440c5ed8",
+            fps=fps,
+            bbox_shift=0,
+            extra_margin=10,
+            parsing_mode="jaw",
         )
+        cache_dir = cache_dir / identity.key
+        if cache_dir.exists():
+            identity.write_manifest(cache_dir)
+        # Keep heavyweight CUDA and upstream imports outside the normal preview path.
+        from avatar_runtime.musetalk import MuseTalkEngine
+
+        self._engine = MuseTalkEngine(source_root, model_root, cache_dir, fps)
+        self._buffers: dict[str, bytearray] = {}
+        self._generation = 0
+        self._frames: asyncio.Queue[bytes] = asyncio.Queue(maxsize=max(fps * 2, 8))
+        self._tasks: set[asyncio.Task[None]] = set()
 
     async def frames(self) -> AsyncIterator[bytes]:
-        """Fail loudly until the GPU runtime has been prepared and selected."""
-        raise RuntimeError(
-            "MuseTalk runtime is not prepared; run the avatar preparation command "
-            "and select the isolated MuseTalk worker."
-        )
-        yield b""
+        """Yield only frames belonging to the latest uncancelled utterance."""
+        while True:
+            yield await self._frames.get()
 
     async def begin(self, utterance_id: str, sample_rate: int, emotion: str) -> None:
-        """Reserve the final renderer's utterance lifecycle entry point."""
-        raise RuntimeError("MuseTalk runtime is not prepared.")
+        """Start collecting renderer-normalized 16 kHz PCM for one utterance."""
+        if sample_rate != 16000:
+            raise ValueError("MuseTalk renderer requires 16 kHz PCM.")
+        del emotion
+        self._generation += 1
+        self._buffers.clear()
+        self._discard_frames()
+        self._buffers[utterance_id] = bytearray()
 
     async def push_audio(self, utterance_id: str, pcm: bytes, timestamp_ns: int) -> None:
-        """Reserve the final renderer's 16 kHz PCM input entry point."""
-        raise RuntimeError("MuseTalk runtime is not prepared.")
+        """Append bounded PCM; the worker already fenced inactive utterances."""
+        del timestamp_ns
+        buffer = self._buffers.get(utterance_id)
+        if buffer is not None:
+            buffer.extend(pcm)
 
     async def cancel(self, utterance_id: str) -> None:
-        """Reserve the final renderer's stale-audio cancellation boundary."""
+        """Fence a GPU batch even when its synchronous call cannot be interrupted."""
+        self._generation += 1
+        self._buffers.pop(utterance_id, None)
+        self._discard_frames()
 
     async def end(self, utterance_id: str) -> None:
-        """Reserve the final renderer's utterance completion boundary."""
+        """Render a complete utterance without writing video files or temporary WAVs."""
+        pcm = bytes(self._buffers.pop(utterance_id, b""))
+        if not pcm:
+            return
+        generation = self._generation
+        task = asyncio.create_task(self._render_completed(pcm, generation))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _render_completed(self, pcm: bytes, generation: int) -> None:
+        frames = await asyncio.to_thread(self._engine.render, pcm)
+        if generation != self._generation:
+            return
+        for frame in frames:
+            if self._frames.full():
+                self._frames.get_nowait()
+            self._frames.put_nowait(frame)
+
+    def _discard_frames(self) -> None:
+        while not self._frames.empty():
+            self._frames.get_nowait()
 
 
 class AvatarWorkerConnection:
@@ -261,12 +303,27 @@ class AvatarWorkerConnection:
         await self._writer.wait_closed()
 
 
-async def serve(socket_path: Path, source: Path, fps: int, backend: str) -> None:
+async def serve(
+    socket_path: Path,
+    source: Path,
+    fps: int,
+    backend: str,
+    model_root: Path | None = None,
+    cache_dir: Path | None = None,
+    source_root: Path | None = None,
+) -> None:
     """Bind the private IPC socket and serve one single-user renderer session."""
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     if socket_path.exists():
         socket_path.unlink()
-    renderer: Renderer = PreviewRenderer(source, fps) if backend == "preview" else MuseTalkRenderer(source, fps)
+    if backend == "preview":
+        renderer: Renderer = PreviewRenderer(source, fps)
+    else:
+        if model_root is None or cache_dir is None or source_root is None:
+            raise RuntimeError(
+                "MuseTalk backend requires --model-root, --cache-dir, and --musetalk-source."
+            )
+        renderer = MuseTalkRenderer(source, fps, model_root, cache_dir, source_root)
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         connection = AvatarWorkerConnection(writer, renderer)
@@ -286,9 +343,22 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--fps", type=int, default=25)
     parser.add_argument("--backend", choices=("musetalk", "preview"), default="musetalk")
+    parser.add_argument("--model-root", type=Path)
+    parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument("--musetalk-source", type=Path)
     arguments = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(serve(arguments.socket, arguments.source, arguments.fps, arguments.backend))
+    asyncio.run(
+        serve(
+            arguments.socket,
+            arguments.source,
+            arguments.fps,
+            arguments.backend,
+            arguments.model_root,
+            arguments.cache_dir,
+            arguments.musetalk_source,
+        )
+    )
 
 
 if __name__ == "__main__":

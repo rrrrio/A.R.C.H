@@ -86,6 +86,17 @@ def render_units(project_root: Path, uv_binary: Path, docker_binary: Path) -> di
         "@AVATAR_SOCKET@": _quote(str(avatar_settings.avatar_socket)),
         "@AVATAR_SOURCE_VIDEO@": _quote(str(avatar_settings.avatar_source_video)),
         "@AVATAR_SOURCE_PATH@": _escape_unit_path(str(avatar_settings.avatar_source_video)),
+        "@AVATAR_MODEL_ROOT@": _quote(str(avatar_settings.avatar_model_root)),
+        "@AVATAR_MODEL_PATH@": _escape_unit_path(str(avatar_settings.avatar_model_root)),
+        "@AVATAR_CACHE_DIR@": _quote(str(avatar_settings.avatar_cache_dir)),
+        "@AVATAR_MUSETALK_SOURCE@": _quote(str(avatar_settings.avatar_musetalk_source)),
+        "@AVATAR_MUSETALK_SOURCE_PATH@": _escape_unit_path(
+            str(avatar_settings.avatar_musetalk_source)
+        ),
+        "@MUSETALK_PYTHON@": _quote(
+            str(project_root / "data" / "runtime" / "musetalk" / "bin" / "python")
+        ),
+        "@AVATAR_RUNTIME_SOURCE@": _quote(str(project_root / "avatar_runtime" / "src")),
         "@AVATAR_FPS@": str(avatar_settings.avatar_fps),
         "@AVATAR_WORKER_BACKEND@": avatar_backend,
     }

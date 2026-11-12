@@ -72,6 +72,18 @@ class Settings(BaseSettings):
         default=PROJECT_ROOT / "data/avatars/idle.mp4",
         validation_alias=AliasChoices("ARCH_AVATAR_SOURCE_VIDEO", "LVA_AVATAR_SOURCE_VIDEO"),
     )
+    avatar_model_root: Path = Field(
+        default=PROJECT_ROOT / "data/models/musetalk/2bcb936e2fddb4d86db4c62fd45b387d0c061571",
+        validation_alias=AliasChoices("ARCH_AVATAR_MODEL_ROOT", "LVA_AVATAR_MODEL_ROOT"),
+    )
+    avatar_cache_dir: Path = Field(
+        default=PROJECT_ROOT / "data/runtime/avatar/preprocessed",
+        validation_alias=AliasChoices("ARCH_AVATAR_CACHE_DIR", "LVA_AVATAR_CACHE_DIR"),
+    )
+    avatar_musetalk_source: Path = Field(
+        default=PROJECT_ROOT / "data/runtime/musetalk/source",
+        validation_alias=AliasChoices("ARCH_AVATAR_MUSETALK_SOURCE", "LVA_AVATAR_MUSETALK_SOURCE"),
+    )
     avatar_model: str = Field(
         default="musetalk-1.5",
         validation_alias=AliasChoices("ARCH_AVATAR_MODEL", "LVA_AVATAR_MODEL"),
@@ -167,7 +179,14 @@ class Settings(BaseSettings):
             raise ValueError("ARCH_SEARXNG_ENDPOINT must be a bare HTTP loopback origin.")
         return value.rstrip("/")
 
-    @field_validator("avatar_runtime_dir", "avatar_socket_path", "avatar_source_video")
+    @field_validator(
+        "avatar_runtime_dir",
+        "avatar_socket_path",
+        "avatar_source_video",
+        "avatar_model_root",
+        "avatar_cache_dir",
+        "avatar_musetalk_source",
+    )
     @classmethod
     def avatar_paths_must_be_under_project_data(cls, value: Path) -> Path:
         """Keep avatar runtime state and operator-provided media inside ``data``."""

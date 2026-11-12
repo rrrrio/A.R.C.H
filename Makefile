@@ -156,5 +156,11 @@ avatar-check:
 avatar-preview:
 	ARCH_VIDEO_AVATAR_ENABLED=true ARCH_AVATAR_WORKER_BACKEND=preview uv run --project avatar_runtime arch-avatar-worker --socket data/runtime/avatar/avatar.sock --source data/avatars/idle.mp4 --fps 25 --backend preview
 
+avatar-musetalk:
+	PYTHONPATH=avatar_runtime/src data/runtime/musetalk/bin/python -m avatar_runtime.worker --socket data/runtime/avatar/avatar.sock --source data/avatars/idle.mp4 --fps 25 --backend musetalk --model-root data/models/musetalk/2bcb936e2fddb4d86db4c62fd45b387d0c061571 --cache-dir data/runtime/avatar/preprocessed --musetalk-source data/runtime/musetalk/source
+
+avatar-musetalk-prepare:
+	PYTHONPATH=avatar_runtime/src data/runtime/musetalk/bin/python -m avatar_runtime.prepare --source data/avatars/idle.mp4 --fps 25 --model-root data/models/musetalk/2bcb936e2fddb4d86db4c62fd45b387d0c061571 --cache-dir data/runtime/avatar/preprocessed --musetalk-source data/runtime/musetalk/source
+
 musetalk-dry-run:
 	uv run --no-sync --directory $(BACKEND_DIR) python scripts/prepare_musetalk.py

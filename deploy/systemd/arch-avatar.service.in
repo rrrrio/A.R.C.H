@@ -7,7 +7,8 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=@WORKING_DIRECTORY@
 Environment=@EXECUTION_PATH@
-ExecStart=@UV_BIN@ run --project @PROJECT_ROOT@/avatar_runtime arch-avatar-worker --socket @AVATAR_SOCKET@ --source @AVATAR_SOURCE_VIDEO@ --fps @AVATAR_FPS@ --backend @AVATAR_WORKER_BACKEND@
+Environment=PYTHONPATH=@AVATAR_RUNTIME_SOURCE@
+ExecStart=@MUSETALK_PYTHON@ -m avatar_runtime.worker --socket @AVATAR_SOCKET@ --source @AVATAR_SOURCE_VIDEO@ --fps @AVATAR_FPS@ --backend @AVATAR_WORKER_BACKEND@ --model-root @AVATAR_MODEL_ROOT@ --cache-dir @AVATAR_CACHE_DIR@ --musetalk-source @AVATAR_MUSETALK_SOURCE@
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
@@ -22,7 +23,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=@AVATAR_RUNTIME_DIR@
-ReadOnlyPaths=@AVATAR_SOURCE_PATH@ @WORKING_DIRECTORY@/data/models/avatar
+ReadOnlyPaths=@AVATAR_SOURCE_PATH@ @AVATAR_MODEL_PATH@ @AVATAR_MUSETALK_SOURCE_PATH@
 
 [Install]
 WantedBy=default.target

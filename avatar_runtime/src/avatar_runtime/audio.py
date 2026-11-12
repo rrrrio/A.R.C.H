@@ -36,11 +36,8 @@ class StreamingPcmResampler:
             start -= 1
         end = start + len(samples) - 1
         positions: list[int] = []
-        end_numerator = end * self._target_rate
         start_numerator = start * self._target_rate
-        while (
-            self._next_position_numerator // self._target_rate + 1 <= end
-        ):
+        while self._next_position_numerator // self._target_rate + 1 <= end:
             if self._next_position_numerator >= start_numerator:
                 positions.append(self._next_position_numerator)
             self._next_position_numerator += self._source_rate
