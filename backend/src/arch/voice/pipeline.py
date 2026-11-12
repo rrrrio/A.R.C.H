@@ -19,6 +19,7 @@ from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 
 from arch.agent.llama import LlamaCppAgentCore
+from arch.avatar.adapter import AvatarAdapter
 from arch.memory.extractor import LlamaCppMemoryCandidateExtractor
 from arch.memory.store import MemoryStore
 from arch.observability.metrics import LatencyStage, LatencyTracker
@@ -55,6 +56,7 @@ def create_pipeline_worker(
     clone_synthesize: CloneSynthesize | None = None,
     clone_cancel: CloneCancel | None = None,
     session_id: str | None = None,
+    avatar_observer: AvatarAdapter | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
     transport = SmallWebRTCTransport(
@@ -70,6 +72,7 @@ def create_pipeline_worker(
         transport, connection.send_app_message, paths, llama_endpoint, memory_store, retriever,
         tool_gateway, on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
         session_id=session_id,
+        avatar_observer=avatar_observer,
         on_interruption=lambda: clear_queued_webrtc_audio(transport.output()),
     )
 
@@ -87,6 +90,7 @@ def create_websocket_pipeline_worker(
     clone_synthesize: CloneSynthesize | None = None,
     clone_cancel: CloneCancel | None = None,
     session_id: str | None = None,
+    avatar_observer: AvatarAdapter | None = None,
 ) -> PipelineWorker:
     """Build the same worker over authenticated same-origin PCM WebSocket media."""
     transport = FastAPIWebsocketTransport(
@@ -104,6 +108,7 @@ def create_websocket_pipeline_worker(
         transport, send_event, paths, llama_endpoint, memory_store, retriever, tool_gateway,
         on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
         session_id=session_id,
+        avatar_observer=avatar_observer,
         ordered_transport_events=True,
     )
 
@@ -123,6 +128,7 @@ def _create_pipeline_worker(
     session_id: str | None = None,
     on_interruption: Callable[[], bool] | None = None,
     ordered_transport_events: bool = False,
+    avatar_observer: AvatarAdapter | None = None,
 ) -> PipelineWorker:
     """Assemble processors independent of the authenticated browser transport."""
     paths.require_ready()
@@ -205,7 +211,10 @@ def _create_pipeline_worker(
     output_latency = VoiceLatencyProcessor(
         send_event, tracker, stages=frozenset({LatencyStage.PLAYBACK_FIRST_AUDIO})
     )
-    output_mux = PipecatOutputMuxProcessor(output_sample_rate=24000)
+    output_mux = PipecatOutputMuxProcessor(
+        output_sample_rate=24000,
+        avatar_observer=avatar_observer,
+    )
     interruption_clearer = (
         WebRTCAudioInterruptionProcessor(on_interruption)
         if on_interruption is not None

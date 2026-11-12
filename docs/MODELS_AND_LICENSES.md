@@ -11,7 +11,10 @@
 | 可选克隆 TTS | `make qwen-tts-dry-run`，确认后 `make qwen-tts-prepare APPLY=1` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base`，revision `c27fe8aa05b732b1376d0f6a1e522fbccb84abbd` | [上游模型卡](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) 标为 Apache-2.0；官方 `qwen-tts` 0.1.1 包也标为 Apache-2.0。准备会校验发布的模型和 speech tokenizer SHA-256；已接入本地隔离 worker，但尚未设备验收。 |
 | RAG 嵌入 | `make rag-prepare` | `BAAI/bge-m3`，revision `5617a9f61b028005a4858fdac845db406aefb181` | [上游模型卡](https://huggingface.co/BAAI/bge-m3) 标为 MIT。 |
 | 基准音频 | `make models-baseline` | FLEURS `cmn_hans_cn_0000`，revision `1cca811bb8ea4d370345f108f00518167040282c` | CC-BY-4.0，详见 `config/benchmark-samples.json`。 |
+| 视频口型 | `make avatar-check`；模型准备仍需独立 runtime 流程 | [MuseTalk](https://github.com/TMElyralab/MuseTalk) 1.5，LiveTalking 编排参考 | MuseTalk 和 LiveTalking 的具体 revision、模型 hash 与上游许可证必须在实际下载后记录；当前未下载或设备验收。 |
 
 ASR、固定 GGUF 和 TTS 路径会验证列出的 artifact SHA-256；ASR、固定 GGUF、RAG 和 TTS 路径会写入 `lva-provenance.json`。llama.cpp 与基准音频分别保留 hash 验证事实，但当前不写该 provenance 文件。模型、声包和基准音频均保持在受 Git 忽略的 `data/` 内；不要提交它们。
 
 `make ollama-pull` 拉取的是可变 `qwen3:8b` tag，未记录 revision 或 artifact hash。它只能用于诊断或后续适配器试验，不能替代上述固定 LLM 基线。
+
+下载原型中的 `wav2lip256.pth` 和 `wav2lip256_avatar1.tar.gz` 不属于 A.R.C.H. 的固定模型基线。`idle.mp4` 是运维提供的真人素材，不随仓库再分发；使用者必须确认肖像、声音和模型权利。

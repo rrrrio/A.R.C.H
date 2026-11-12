@@ -1,6 +1,6 @@
 # 文档导航
 
-本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。当前可管理经确认授权的本地声音参考，但 Qwen 克隆运行时、情绪控制和数字人仍在后续里程碑中，不能视为当前功能。
+本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。固定 MP4 真人视频数字人的鉴权视频桥接和 preview worker 已实现，但 MuseTalk 实时口型 renderer 仍在准备中，不能把预览画面视为同步口型。
 
 ## 按任务阅读
 
@@ -21,8 +21,9 @@
 - [安全边界](SECURITY.md)：网络、凭据、数据、工具与当前运行限制。
 - [模型与许可证](MODELS_AND_LICENSES.md)：固定模型来源、准备命令、许可证证据与可复现边界。
 - [配置参考](reference/configuration.md)：环境变量、端口、持久化目录和支持的文件格式。
-- [架构与安全边界](explanation/architecture.md)：实时路径、即时插话取消（包括 PCM 回退）、审批、记忆、RAG 与未来数字人的设计理由。
+- [架构与安全边界](explanation/architecture.md)：实时路径、即时插话取消（包括 PCM 回退）、审批、记忆、RAG 与视频数字人的设计理由。
 - [使用浏览器数字人预览](how-to/use-browser-avatar.md)：在不上传 VRM 模型的前提下启用本地浏览器预览。
+- [使用真人视频数字人](how-to/use-video-avatar.md)：准备固定 MP4、启动独立视频 worker 和验证视频 WebRTC。
 - [开发环境](DEVELOPMENT.md)：运行测试、启动开发服务和维护文档。
 - [组件基准](benchmarks/README.md)：当前 ASR、LLM 和 TTS 基线及其复跑方式，以及浏览器语音验收证据的边界。
 

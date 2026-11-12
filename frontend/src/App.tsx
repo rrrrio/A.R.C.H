@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { AvatarPreview } from './AvatarPreview'
+import { AvatarVideoPreview } from './AvatarVideoPreview'
 import { fetchAuthStatus, fetchCsrfToken, hasCurrentAuthContract, login, logout, reissueTerminalLease, setTerminalProfile } from './auth'
 import { fetchKnowledgeStatus, rebuildKnowledgeIndex, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
@@ -577,6 +578,7 @@ function App() {
               ))}
             </div>
           ) : null}
+          <AvatarVideoPreview csrfToken={session.csrfToken} />
           <AvatarPreview setEnergySink={setAvatarEnergySink} />
           <section className="memory-review" aria-labelledby="memory-title">
             <h2 id="memory-title">待确认记忆</h2>

@@ -10,12 +10,14 @@ from typing import Annotated
 from fastapi import Depends, FastAPI
 
 from arch.api.auth import router as auth_router
+from arch.api.avatar import router as avatar_router
 from arch.api.knowledge import router as knowledge_router
 from arch.api.memory import router as memory_router
 from arch.api.tools import router as tools_router
 from arch.api.voice import router as voice_router
 from arch.api.voices import router as voices_router
 from arch.auth.service import AuthService
+from arch.avatar.video import AvatarVideoSignalingService
 from arch.memory.store import MemoryStore
 from arch.rag.index_service import KnowledgeIndexService, LocalKnowledgeIndexService
 from arch.rag.store import KnowledgeStore
@@ -42,6 +44,7 @@ def create_app(
     tool_gateway: ToolGateway | None = None,
     voice_profile_store: VoiceProfileStore | None = None,
     voice_reference_transcriber: ReferenceTranscriber | None = None,
+    avatar_video_service: AvatarVideoSignalingService | None = None,
 ) -> FastAPI:
     """Create the HTTP application, allowing isolated authentication tests."""
 
@@ -100,7 +103,21 @@ def create_app(
                 on_connection=voice_session.start,
                 on_disconnection=voice_session.stop,
             )
+        if not hasattr(app.state, "avatar_video_service"):
+            app.state.avatar_video_service = avatar_video_service or AvatarVideoSignalingService(
+                enabled=settings.video_avatar_enabled,
+                model=settings.avatar_model,
+                source_video=settings.avatar_source_video,
+                socket_path=settings.avatar_socket,
+                fps=settings.avatar_fps,
+                queue_max_ms=settings.avatar_queue_max_ms,
+                startup_timeout_ms=settings.avatar_startup_timeout_ms,
+            )
+        managed_voice_session = getattr(app.state, "voice_session", None)
+        if isinstance(managed_voice_session, LocalVoiceSession):
+            managed_voice_session.set_avatar_observer(app.state.avatar_video_service)
         yield
+        await app.state.avatar_video_service.close()
         await app.state.signaling_service.close()
         managed_voice_session = getattr(app.state, "voice_session", None)
         if isinstance(managed_voice_session, LocalVoiceSession):
@@ -126,7 +143,10 @@ def create_app(
         application.state.voice_profile_store = voice_profile_store
     if voice_reference_transcriber is not None:
         application.state.voice_reference_transcriber = voice_reference_transcriber
+    if avatar_video_service is not None:
+        application.state.avatar_video_service = avatar_video_service
     application.include_router(auth_router)
+    application.include_router(avatar_router)
     application.include_router(knowledge_router)
     application.include_router(memory_router)
     application.include_router(tools_router)

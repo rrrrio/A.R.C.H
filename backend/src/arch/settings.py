@@ -56,6 +56,58 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8080",
         validation_alias=AliasChoices("ARCH_SEARXNG_ENDPOINT", "LVA_SEARXNG_ENDPOINT"),
     )
+    video_avatar_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ARCH_VIDEO_AVATAR_ENABLED", "LVA_VIDEO_AVATAR_ENABLED"),
+    )
+    avatar_runtime_dir: Path = Field(
+        default=PROJECT_ROOT / "data/runtime/avatar",
+        validation_alias=AliasChoices("ARCH_AVATAR_RUNTIME_DIR", "LVA_AVATAR_RUNTIME_DIR"),
+    )
+    avatar_socket_path: Path = Field(
+        default=PROJECT_ROOT / "data/runtime/avatar/avatar.sock",
+        validation_alias=AliasChoices("ARCH_AVATAR_SOCKET_PATH", "LVA_AVATAR_SOCKET_PATH"),
+    )
+    avatar_source_video: Path = Field(
+        default=PROJECT_ROOT / "data/avatars/idle.mp4",
+        validation_alias=AliasChoices("ARCH_AVATAR_SOURCE_VIDEO", "LVA_AVATAR_SOURCE_VIDEO"),
+    )
+    avatar_model: str = Field(
+        default="musetalk-1.5",
+        validation_alias=AliasChoices("ARCH_AVATAR_MODEL", "LVA_AVATAR_MODEL"),
+    )
+    avatar_worker_backend: str = Field(
+        default="musetalk",
+        validation_alias=AliasChoices(
+            "ARCH_AVATAR_WORKER_BACKEND", "LVA_AVATAR_WORKER_BACKEND"
+        ),
+    )
+    avatar_fps: int = Field(
+        default=25,
+        ge=1,
+        le=60,
+        validation_alias=AliasChoices("ARCH_AVATAR_FPS", "LVA_AVATAR_FPS"),
+    )
+    avatar_queue_max_ms: int = Field(
+        default=500,
+        ge=100,
+        le=5000,
+        validation_alias=AliasChoices("ARCH_AVATAR_QUEUE_MAX_MS", "LVA_AVATAR_QUEUE_MAX_MS"),
+    )
+    avatar_startup_timeout_ms: int = Field(
+        default=15000,
+        ge=1000,
+        le=120000,
+        validation_alias=AliasChoices(
+            "ARCH_AVATAR_STARTUP_TIMEOUT_MS", "LVA_AVATAR_STARTUP_TIMEOUT_MS"
+        ),
+    )
+    avatar_vram_budget_mb: int = Field(
+        default=22000,
+        ge=1024,
+        le=24564,
+        validation_alias=AliasChoices("ARCH_AVATAR_VRAM_BUDGET_MB", "LVA_AVATAR_VRAM_BUDGET_MB"),
+    )
 
     @field_validator("data_dir")
     @classmethod
@@ -115,6 +167,18 @@ class Settings(BaseSettings):
             raise ValueError("ARCH_SEARXNG_ENDPOINT must be a bare HTTP loopback origin.")
         return value.rstrip("/")
 
+    @field_validator("avatar_runtime_dir", "avatar_socket_path", "avatar_source_video")
+    @classmethod
+    def avatar_paths_must_be_under_project_data(cls, value: Path) -> Path:
+        """Keep avatar runtime state and operator-provided media inside ``data``."""
+        candidate = value if value.is_absolute() else PROJECT_ROOT / value
+        resolved = candidate.resolve()
+        allowed_root = (PROJECT_ROOT / "data").resolve()
+        if resolved != allowed_root and allowed_root not in resolved.parents:
+            message = f"Avatar paths must be inside {allowed_root}, got {resolved}"
+            raise ValueError(message)
+        return resolved
+
     def ensure_runtime_directories(self) -> None:
         """Create the bounded runtime directories required by the application."""
         for relative_path in (
@@ -124,6 +188,8 @@ class Settings(BaseSettings):
             "knowledge/inbox",
             "logs",
             "models",
+            "avatars",
+            "runtime/avatar",
             "workspace",
             "voices",
         ):
@@ -162,6 +228,11 @@ class Settings(BaseSettings):
     def terminal_workspace_path(self) -> Path:
         """Return the only writable root exposed to the first terminal tool release."""
         return self.data_dir / "workspace"
+
+    @property
+    def avatar_socket(self) -> Path:
+        """Return the bounded local IPC endpoint for the avatar worker."""
+        return self.avatar_socket_path
 
 
 @lru_cache

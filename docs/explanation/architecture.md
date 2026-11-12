@@ -20,8 +20,12 @@
                                    |                 |
                        memory / RAG / tools          v
                                               OutputMux -> browser audio
-                                                           \
-                                                            -> future avatar
+                                                  |
+                                                  +--> passive PCM observer
+                                                         |
+                                                         +--> Unix socket --> MuseTalk worker
+                                                                                 |
+                                              browser video WebRTC <-------------+
 
 当前输入与输出分别为 16 kHz 和 24 kHz。ASR 使用本地 Faster-Whisper；首次媒体会话启动受后端拥有的 loopback llama.cpp，后续媒体重连复用该服务，应用关闭时释放；未选择声音参考时 TTS 使用 Kokoro 中文声线，并经本地 Misaki v1.1 生成中文音素。选择有效 profile 后使用隔离 Qwen worker。Qwen3 请求与 llama.cpp 服务均关闭 reasoning，避免推理内容占满实时工具调用的输出预算。
 
@@ -56,3 +60,5 @@
 Agent Core 可以为下一段 TTS 输出提供 `neutral`、`warm`、`calm` 或 `urgent` 中的一个受限标签。媒体边界会把其他值归一为 `neutral`，并在用户插话时重置为 `neutral`。该标签只传入 `OutputMux.begin`，供未来数字人或兼容 TTS 适配器使用；它不是 Qwen Base 的任意风格参数，当前直接浏览器音频也不会向客户端暴露表达事件。后续数字人适配器可以消费带时间戳的 PCM、音量、口型和该受限标签，并在 `avatar_av` 模式拥有最终音频，避免重音或口型漂移。真实数字人后端、浏览器表达渲染和设备级验收仍未完成。
 
 浏览器数字人预览是独立于 `avatar_av` 的第一条实现路径。它使用浏览器本地选择的 VRM 文件和 WebGL 渲染；模型不经过 API、不写入 `data/`，也不进入备份。WebRTC 路径从已接收的音频统计读取能量，WebSocket PCM 路径从收到的 PCM 计算能量，两者都不会增加音频 destination 或第二路播放。该能量驱动 fallback 或具有 `aa` 元音表情的 VRM 的基础嘴部开合；当前没有服务器视频轨、浏览器表达事件或可接受的设备帧率/音画同步证据。直接音频仍是唯一输出所有者。
+
+真人视频数字人沿用同一音频唯一所有权，但新增独立的视频 WebRTC。`OutputMux` 仍先把 PCM 交给直接音频 adapter，只有被接受的同一 `utterance_id` 才复制给 video observer。observer、Unix socket、worker 队列和浏览器视频 track 都遵守同一取消 fence；worker 或视频 peer 失败不会阻断语音。当前仓库已实现信令、鉴权、静音视频客户端、passive observer、preview worker 和 VRM 回退；MuseTalk 权重与预处理缓存尚未在目标 RTX 4090 主机完成设备验证，因此不能把 preview 画面视为已完成口型同步。

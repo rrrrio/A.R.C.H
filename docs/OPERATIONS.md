@@ -11,6 +11,7 @@
           |
           +-- local llama.cpp child process during a voice session
 
+[Avatar worker: data/runtime/avatar/avatar.sock] <-- optional video only
 [SearXNG: 127.0.0.1:8080] <-- optional web_search
 [Ollama: 127.0.0.1:11434]  <-- optional model adapter
 ```
@@ -86,11 +87,18 @@ Ollama 和 SearXNG 不阻塞后端就绪，因为它们不是每次语音会话�
     systemctl --user daemon-reload
     systemctl --user enable --now arch-backend.service arch-gateway.service
 
+视频数字人是独立可选服务，不会因安装后端和网关而自动占用 GPU：
+
+    systemctl --user enable --now arch-avatar.service
+
+只有 `.env` 中 `ARCH_VIDEO_AVATAR_ENABLED=true` 且 avatar worker 能访问已准备的素材和模型时，浏览器才会显示可用的视频开关。`ARCH_AVATAR_WORKER_BACKEND=preview` 仅用于 WebRTC 和网页 smoke，不提供真实口型。
+
 安装器默认拒绝覆盖现有 unit。确认本机修改后的 unit 需要替换时，使用 `SYSTEMD_FLAGS=--replace`。`arch-backend.service` 在失败时重启，并在 `/api/ready` 成功前视为未启动；`arch-gateway.service` 等待 Caddy 容器健康，再检查 HTTPS 到后端的同一路径。它们均不启动搜索或 Ollama。
 
 后端日志进入用户 journal：
 
     journalctl --user -u arch-backend.service -n 100 --no-pager
+    journalctl --user -u arch-avatar.service -n 100 --no-pager
 
 Compose 容器使用 Docker `local` 日志驱动，每个容器最多保留三个 10 MiB 文件。Caddy 的
 `127.0.0.1:2019/healthz` 仅供容器健康检查使用，不是局域网入口，也不应转发或暴露给浏览器。
@@ -109,6 +117,9 @@ unit（必要时 `SYSTEMD_FLAGS=--replace`）。安装器拒绝包含换行或�
 
 `healthy` 只证明相应服务能回答其本地探针；它不替代浏览器登录、模型加载、麦克风、可听首音
 或人工插话验收。
+
+avatar worker 另有 8 GiB `MemoryHigh`、12 GiB `MemoryMax` 和 512 个任务的 unit 上限；实际 MuseTalk
+显存峰值必须在目标主机上单独测量。视频服务失败时，音频服务应继续可用。
 
 ## 备份与恢复
 

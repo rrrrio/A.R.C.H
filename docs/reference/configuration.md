@@ -67,6 +67,16 @@ gateway:
 | `ARCH_HTTPS_PORT` | `int` / `8443` | 有效 TCP 端口 | Caddy 的 HTTPS 监听端口。 |
 | `ARCH_SEARCH_ENABLED` | `bool` / `false` | 布尔值 | 是否创建本地 SearXNG 搜索客户端。 |
 | `ARCH_SEARXNG_ENDPOINT` | `str` / `http://127.0.0.1:8080` | 仅 `127.0.0.1`、`localhost` 或 `::1`；不得含路径、查询或凭据 | 本地 SearXNG JSON 服务。 |
+| `ARCH_VIDEO_AVATAR_ENABLED` | `bool` / `false` | 布尔值；默认关闭 | 是否向已认证浏览器提供真人视频数字人接口。 |
+| `ARCH_AVATAR_RUNTIME_DIR` | `Path` / `data/runtime/avatar` | 必须在 `data/` 内 | 独立 avatar worker 的运行状态目录。 |
+| `ARCH_AVATAR_SOCKET_PATH` | `Path` / `data/runtime/avatar/avatar.sock` | 必须在 `data/` 内 | A.R.C.H. 后端与 GPU worker 之间的 Unix socket。 |
+| `ARCH_AVATAR_SOURCE_VIDEO` | `Path` / `data/avatars/idle.mp4` | 必须在 `data/` 内，必须有可解码视频帧 | 管理员提供的固定真人参考视频。 |
+| `ARCH_AVATAR_MODEL` | `str` / `musetalk-1.5` | 由独立 worker 解释 | 视频口型模型标识。 |
+| `ARCH_AVATAR_WORKER_BACKEND` | `str` / `musetalk` | `musetalk` 或 `preview` | 正式口型 worker 或仅用于传输 smoke 的循环预览。 |
+| `ARCH_AVATAR_FPS` | `int` / `25` | 1 到 60 | 视频轨道目标帧率。 |
+| `ARCH_AVATAR_QUEUE_MAX_MS` | `int` / `500` | 100 到 5000 | 视频帧和 PCM 迟到时使用的有界队列预算。 |
+| `ARCH_AVATAR_STARTUP_TIMEOUT_MS` | `int` / `15000` | 1000 到 120000 | avatar worker 启动等待上限。 |
+| `ARCH_AVATAR_VRAM_BUDGET_MB` | `int` / `22000` | 1024 到 24564 | 目标 RTX 4090 上为语音模型保留余量的显存预算记录。 |
 | `ARCH_BACKEND_CPU_QUOTA` | `str` / `800%` | 正整数加 `%`；由 systemd 安装器渲染 | 后端 user unit 的 CPU 上限。 |
 | `ARCH_BACKEND_MEMORY_HIGH` | `str` / `10G` | 正整数加 `K`、`M`、`G` 或 `T`；不得高于 `ARCH_BACKEND_MEMORY_MAX` | 后端开始回收内存的 systemd 阈值。 |
 | `ARCH_BACKEND_MEMORY_MAX` | `str` / `12G` | 正整数加 `K`、`M`、`G` 或 `T` | 后端 user unit 的硬内存上限。 |

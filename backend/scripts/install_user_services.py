@@ -8,9 +8,10 @@ import re
 import shutil
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from arch.settings import PROJECT_ROOT, Settings
+
 TEMPLATE_DIRECTORY = PROJECT_ROOT / "deploy" / "systemd"
-UNIT_NAMES = ("arch-backend.service", "arch-gateway.service")
+UNIT_NAMES = ("arch-backend.service", "arch-avatar.service", "arch-gateway.service")
 RESOURCE_DEFAULTS = {
     "ARCH_BACKEND_CPU_QUOTA": "800%",
     "ARCH_BACKEND_MEMORY_HIGH": "10G",
@@ -23,6 +24,7 @@ RESOURCE_PATTERNS = {
     "ARCH_BACKEND_MEMORY_MAX": re.compile(r"[1-9][0-9]*[KMGT]"),
     "ARCH_BACKEND_TASKS_MAX": re.compile(r"[1-9][0-9]*"),
 }
+AVATAR_BACKENDS = {"musetalk", "preview"}
 
 
 def _quote(value: str) -> str:
@@ -66,6 +68,10 @@ def render_units(project_root: Path, uv_binary: Path, docker_binary: Path) -> di
     """Render unit templates with paths known to the local checkout."""
     execution_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     resource_values = _resource_values(project_root)
+    avatar_settings = Settings()
+    avatar_backend = avatar_settings.avatar_worker_backend
+    if avatar_backend not in AVATAR_BACKENDS:
+        raise ValueError(f"ARCH_AVATAR_WORKER_BACKEND has an invalid value: {avatar_backend!r}")
     replacements = {
         "@WORKING_DIRECTORY@": _escape_unit_path(str(project_root.resolve())),
         "@PROJECT_ROOT@": _quote(str(project_root.resolve())),
@@ -76,6 +82,12 @@ def render_units(project_root: Path, uv_binary: Path, docker_binary: Path) -> di
         "@BACKEND_MEMORY_HIGH@": resource_values["ARCH_BACKEND_MEMORY_HIGH"],
         "@BACKEND_MEMORY_MAX@": resource_values["ARCH_BACKEND_MEMORY_MAX"],
         "@BACKEND_TASKS_MAX@": resource_values["ARCH_BACKEND_TASKS_MAX"],
+        "@AVATAR_RUNTIME_DIR@": _escape_unit_path(str(avatar_settings.avatar_runtime_dir)),
+        "@AVATAR_SOCKET@": _quote(str(avatar_settings.avatar_socket)),
+        "@AVATAR_SOURCE_VIDEO@": _quote(str(avatar_settings.avatar_source_video)),
+        "@AVATAR_SOURCE_PATH@": _escape_unit_path(str(avatar_settings.avatar_source_video)),
+        "@AVATAR_FPS@": str(avatar_settings.avatar_fps),
+        "@AVATAR_WORKER_BACKEND@": avatar_backend,
     }
     rendered: dict[str, str] = {}
     for name in UNIT_NAMES:

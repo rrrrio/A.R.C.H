@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Awaitable, Callable
+from typing import cast
 
 from pipecat.frames.frames import (
     Frame,
@@ -16,10 +18,12 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from arch.avatar.adapter import NullAvatarAdapter
+from arch.avatar.adapter import AvatarAdapter, NullAvatarAdapter
 from arch.voice.cancellation import CancellationController
 from arch.voice.emotion import DEFAULT_EMOTION, Emotion, EmotionFrame
 from arch.voice.output_mux import OutputMux
+
+logger = logging.getLogger(__name__)
 
 
 class PipecatDirectAudioOutput:
@@ -57,11 +61,16 @@ class PipecatDirectAudioOutput:
 class PipecatOutputMuxProcessor(FrameProcessor):
     """Replace raw TTS frames with output-mux-routed frames for one Pipecat pipeline."""
 
-    def __init__(self, output_sample_rate: int) -> None:
+    def __init__(
+        self,
+        output_sample_rate: int,
+        avatar_observer: AvatarAdapter | None = None,
+    ) -> None:
         super().__init__()
         self._cancellation = CancellationController()
         self._direct_audio = PipecatDirectAudioOutput(self._emit_audio)
         self._mux = OutputMux(self._cancellation, self._direct_audio, NullAvatarAdapter())
+        self._avatar_observer = avatar_observer
         self._output_sample_rate = output_sample_rate
         self._context_utterances: dict[str, str] = {}
         self._cancelled_context_ids: set[str] = set()
@@ -90,6 +99,9 @@ class PipecatOutputMuxProcessor(FrameProcessor):
             await self._mux.begin(
                 started_utterance_id, self._output_sample_rate, self._pending_emotion
             )
+            await self._observe_avatar(
+                "begin", started_utterance_id, self._output_sample_rate, self._pending_emotion
+            )
             await self.push_frame(
                 OutputTransportMessageUrgentFrame(
                     message={
@@ -106,7 +118,12 @@ class PipecatOutputMuxProcessor(FrameProcessor):
                 return
             audio_utterance_id = self._utterance_for_audio(frame)
             if audio_utterance_id is not None:
-                await self._mux.push_audio(audio_utterance_id, frame.audio, self._timestamp(frame))
+                timestamp = self._timestamp(frame)
+                accepted = await self._mux.push_audio(audio_utterance_id, frame.audio, timestamp)
+                if accepted:
+                    await self._observe_avatar(
+                        "audio", audio_utterance_id, frame.audio, timestamp
+                    )
             return
         if isinstance(frame, TTSStoppedFrame):
             if self._is_cancelled_context(frame.context_id):
@@ -116,6 +133,7 @@ class PipecatOutputMuxProcessor(FrameProcessor):
             if stopped_utterance_id is None or not await self._mux.end(stopped_utterance_id):
                 self._discard_stopped_context(frame.context_id, stopped_utterance_id)
                 return
+            await self._observe_avatar("end", stopped_utterance_id)
             self._discard_stopped_context(frame.context_id, stopped_utterance_id)
             await self.push_frame(frame, direction)
             return
@@ -132,6 +150,7 @@ class PipecatOutputMuxProcessor(FrameProcessor):
         utterance_id = self._cancellation.active_utterance_id
         if utterance_id is not None:
             await self._mux.cancel(utterance_id)
+            await self._observe_avatar("cancel", utterance_id)
             await self.push_frame(
                 OutputTransportMessageUrgentFrame(
                     message={"type": "audio_cancelled", "utterance_id": utterance_id}
@@ -172,3 +191,28 @@ class PipecatOutputMuxProcessor(FrameProcessor):
     @staticmethod
     def _timestamp(frame: TTSAudioRawFrame) -> int:
         return frame.pts if frame.pts is not None else time.monotonic_ns()
+
+    async def _observe_avatar(self, kind: str, utterance_id: str, *payload: object) -> None:
+        """Keep renderer failures off the direct-audio critical path."""
+        observer = self._avatar_observer
+        if observer is None:
+            return
+        try:
+            if kind == "begin":
+                await observer.begin(
+                    utterance_id,
+                    cast(int, payload[0]),
+                    cast(str, payload[1]),
+                )
+            elif kind == "audio":
+                await observer.push_audio(
+                    utterance_id,
+                    cast(bytes, payload[0]),
+                    cast(int, payload[1]),
+                )
+            elif kind == "cancel":
+                await observer.cancel(utterance_id)
+            elif kind == "end":
+                await observer.end(utterance_id)
+        except Exception:
+            logger.exception("Avatar video observer failed for %s.", kind)

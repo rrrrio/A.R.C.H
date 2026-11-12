@@ -14,6 +14,8 @@ Caddy 是唯一允许面向局域网的浏览器入口，默认使用 `https://a
 
 `ARCH_DATA_DIR` 与 `ARCH_ARTIFACT_DIR` 受应用限制，只能位于仓库 `data/` 中。应用状态由该目录保存，但 Caddy 的容器状态位于受忽略的 `deploy/caddy-data/` 与 `deploy/caddy-config/`；这两处也需要本机文件权限保护。
 
+视频数字人不会开放浏览器上传或任意素材 URL。`ARCH_AVATAR_SOURCE_VIDEO`、模型和 Unix socket 都必须位于 `data/` 下；avatar worker 不对 LAN 监听，浏览器只能通过已认证、同源的 A.R.C.H. `/api/avatar/*` 路由建立视频 WebRTC。视频轨道不包含音频，避免 worker 与现有语音播放重复发声。固定真人 MP4、参考音频和模型权重均由操作者负责授权与访问控制。
+
 ## 工具与搜索
 
 模型只能请求通用 `terminal_exec`（argv）或 `terminal_shell`（脚本），并声明当前用户拥有的工作目录、读写级别及显式 capability。每个新调用都需要同一已登录浏览器会话批准；已成功完成的完全相同调用可在该会话复用 30 分钟，参数、脚本、目录、读写级别或 capability 任一变化都会再次批准。注销、服务重启、过期和用户撤销都会使授权失效。

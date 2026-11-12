@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from fastapi import WebSocket
+from pipecat.pipeline.worker import PipelineWorker
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.workers.runner import WorkerRunner
 
+from arch.avatar.adapter import AvatarAdapter
 from arch.memory.store import MemoryStore
 from arch.rag.embeddings import SentenceTransformerEmbedder
 from arch.rag.retriever import LocalKnowledgeRetriever, Retriever
@@ -39,6 +42,7 @@ class LocalVoiceSession:
         tool_gateway: ToolGateway | None = None,
         voice_profile_store: VoiceProfileStore | None = None,
         data_dir: Path | None = None,
+        avatar_observer: AvatarAdapter | None = None,
     ) -> None:
         self._paths = paths
         self._memory_store = memory_store
@@ -47,6 +51,7 @@ class LocalVoiceSession:
         self._tool_gateway = tool_gateway
         self._voice_profile_store = voice_profile_store
         self._data_dir = data_dir
+        self._avatar_observer = avatar_observer
         self._clone_runtime: QwenCloneRuntime | None = None
         self._retriever: Retriever | None = None
         self._llama = LlamaCppServer(paths)
@@ -67,23 +72,18 @@ class LocalVoiceSession:
                 profile = await self._start_selected_clone_runtime()
                 await self._llama.start()
                 self._retriever = await asyncio.to_thread(self._create_retriever)
-                worker_arguments = (
+                session_id = getattr(connection, "_arch_session_id", None)
+                worker = self._create_webrtc_worker(
                     connection,
                     self._paths,
                     self._llama.endpoint,
                     self._memory_store,
                     self._retriever,
                     self._tool_gateway,
-                    self._set_agent_processor,
                     profile,
                     self._clone_runtime.synthesize if self._clone_runtime is not None else None,
                     self._clone_runtime.cancel if self._clone_runtime is not None else None,
-                )
-                session_id = getattr(connection, "_arch_session_id", None)
-                worker = (
-                    create_pipeline_worker(*worker_arguments, session_id=session_id)
-                    if session_id is not None
-                    else create_pipeline_worker(*worker_arguments)
+                    session_id,
                 )
                 runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
                 ready = asyncio.Event()
@@ -127,16 +127,30 @@ class LocalVoiceSession:
                 profile = await self._start_selected_clone_runtime()
                 await self._llama.start()
                 self._retriever = await asyncio.to_thread(self._create_retriever)
-                worker = create_websocket_pipeline_worker(
-                    websocket, send_event, self._paths, self._llama.endpoint, self._memory_store,
+                worker_arguments = (
+                    websocket,
+                    send_event,
+                    self._paths,
+                    self._llama.endpoint,
+                    self._memory_store,
                     self._retriever,
                     self._tool_gateway,
                     self._set_agent_processor,
                     profile,
                     self._clone_runtime.synthesize if self._clone_runtime is not None else None,
                     self._clone_runtime.cancel if self._clone_runtime is not None else None,
-                    session_id=session_id,
                 )
+                if self._avatar_observer is None:
+                    worker = create_websocket_pipeline_worker(
+                        *worker_arguments,
+                        session_id=session_id,
+                    )
+                else:
+                    worker = create_websocket_pipeline_worker(
+                        *worker_arguments,
+                        session_id=session_id,
+                        avatar_observer=self._avatar_observer,
+                    )
                 runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
                 ready = asyncio.Event()
 
@@ -185,6 +199,49 @@ class LocalVoiceSession:
     def _set_agent_processor(self, processor: PipecatAgentProcessor) -> None:
         """Expose only the continuation boundary, not the full media pipeline, to this session."""
         self._agent_processor = processor
+
+    def set_avatar_observer(self, observer: AvatarAdapter | None) -> None:
+        """Attach or detach the optional video observer before the next pipeline starts."""
+        self._avatar_observer = observer
+
+    def _create_webrtc_worker(
+        self,
+        connection: SmallWebRTCConnection,
+        paths: VoiceModelPaths,
+        llama_endpoint: str,
+        memory_store: MemoryStore | None,
+        retriever: Retriever | None,
+        tool_gateway: ToolGateway | None,
+        profile: VoiceProfile | None,
+        clone_synthesize: Callable[[str, VoiceProfile], Awaitable[tuple[bytes, int]]] | None,
+        clone_cancel: Callable[[], Awaitable[None]] | None,
+        session_id: str | None,
+    ) -> PipelineWorker:
+        """Pass the optional observer without changing test-factory call shapes."""
+        arguments = (
+            connection,
+            paths,
+            llama_endpoint,
+            memory_store,
+            retriever,
+            tool_gateway,
+            self._set_agent_processor,
+            profile,
+            clone_synthesize,
+            clone_cancel,
+        )
+        observer = self._avatar_observer
+        if observer is None and session_id is None:
+            return create_pipeline_worker(*arguments)
+        if observer is None:
+            return create_pipeline_worker(*arguments, session_id=session_id)
+        if session_id is None:
+            return create_pipeline_worker(*arguments, avatar_observer=observer)
+        return create_pipeline_worker(
+            *arguments,
+            session_id=session_id,
+            avatar_observer=observer,
+        )
 
     async def _start_selected_clone_runtime(self) -> VoiceProfile | None:
         """Start or reuse Qwen for a currently selected, locally valid clone profile."""

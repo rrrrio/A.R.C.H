@@ -1,10 +1,13 @@
 .workspace-shell {
+  position: relative;
   min-height: 100svh;
   background: #f6f7f8;
   color: #17212b;
 }
 
 .topbar {
+  position: relative;
+  z-index: 2;
   display: flex;
   min-height: 54px;
   align-items: center;
@@ -35,6 +38,8 @@
 }
 
 .setup-panel {
+  position: relative;
+  z-index: 1;
   width: min(100% - 40px, 620px);
   margin: 18vh auto 0;
   padding: 28px;
@@ -263,6 +268,69 @@ button:disabled {
   padding-top: 20px;
 }
 
+.avatar-video-control {
+  position: relative;
+  z-index: 2;
+  margin-top: 20px;
+  border-top: 1px solid #d7dde2;
+  padding-top: 20px;
+}
+
+.avatar-video-control-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.avatar-video-control h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.avatar-video-status {
+  margin: 8px 0 0;
+  color: #4d5965;
+  font-size: 14px;
+}
+
+.avatar-video-status[data-avatar-state='connected'] { color: #116149; }
+.avatar-video-status[data-avatar-state='error'],
+.avatar-video-status[data-avatar-state='unavailable'] { color: #9b2c2c; }
+
+.avatar-video-layer {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  background: #050607;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 420ms ease;
+}
+
+.avatar-video-layer--live { opacity: 1; }
+
+.avatar-video-layer::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(48vw, 720px);
+  background: linear-gradient(90deg, rgba(5, 6, 7, 0), rgba(5, 6, 7, .72) 72%, #050607);
+  content: '';
+}
+
+.avatar-video-layer video {
+  position: absolute;
+  top: 0;
+  right: -4%;
+  width: auto;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  object-position: 78% 50%;
+}
+
 .avatar-preview__heading {
   display: flex;
   align-items: flex-start;
@@ -383,5 +451,17 @@ button:disabled {
     width: min(100% - 32px, 620px);
     margin-top: 12vh;
     padding: 22px;
+  }
+
+  .avatar-video-layer video {
+    right: -22%;
+    height: 62%;
+    top: 38%;
+  }
+
+  .avatar-video-layer::after {
+    inset: 38% 0 0;
+    width: 100%;
+    background: linear-gradient(180deg, rgba(5, 6, 7, 0), rgba(5, 6, 7, .75));
   }
 }

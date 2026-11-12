@@ -62,6 +62,30 @@ def test_rendered_backend_unit_uses_validated_resource_overrides(
     assert "check_service_readiness.py --target gateway" in rendered["arch-gateway.service"]
 
 
+def test_rendered_avatar_unit_uses_application_avatar_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_script()
+    monkeypatch.setenv("ARCH_AVATAR_RUNTIME_DIR", "data/runtime/custom-avatar")
+    monkeypatch.setenv("ARCH_AVATAR_SOCKET_PATH", "data/runtime/custom-avatar/worker.sock")
+    monkeypatch.setenv("ARCH_AVATAR_SOURCE_VIDEO", "data/avatars/operator.mp4")
+    monkeypatch.setenv("ARCH_AVATAR_FPS", "20")
+    monkeypatch.setenv("ARCH_AVATAR_WORKER_BACKEND", "preview")
+
+    rendered = module.render_units(
+        module.PROJECT_ROOT,
+        module.PROJECT_ROOT / "uv",
+        module.PROJECT_ROOT / "docker",
+    )
+
+    avatar = rendered["arch-avatar.service"]
+    root = module.PROJECT_ROOT
+    assert f'--socket "{root / "data/runtime/custom-avatar/worker.sock"}"' in avatar
+    assert f'--source "{root / "data/avatars/operator.mp4"}"' in avatar
+    assert "--fps 20 --backend preview" in avatar
+    assert f"ReadWritePaths={root / 'data/runtime/custom-avatar'}" in avatar
+
+
 def test_rendering_rejects_unsafe_resource_overrides(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
