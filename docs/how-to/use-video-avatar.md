@@ -21,6 +21,8 @@
 
 `musetalk` 是正式渲染后端；`preview` 只循环 `idle.mp4`，用于验证 WebRTC、网页构图和连接关闭，不会对口型。当前仓库不会把下载包中的 `wav2lip256.pth` 自动加载为正式模型。
 
+在准备窗口前运行 `make musetalk-dry-run` 查看固定源码 revision、目标目录和资源前置条件。该命令不下载任何制品；当前没有通过审计的完整权重哈希清单，因此不提供写入模式。
+
 查看将要安装的服务：
 
     make systemd-dry-run
