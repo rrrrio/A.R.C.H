@@ -45,6 +45,18 @@ class ToolApprovalDecision(BaseModel):
     action: Literal["approved", "rejected"]
 
 
+class TerminalGrantResponse(BaseModel):
+    """Browser-safe view of one active exact-call terminal authorization."""
+
+    id: str
+    tool_name: Literal["terminal_exec", "terminal_shell"]
+    working_directory: str
+    access: Literal["read", "write"]
+    capabilities: list[str]
+    created_at: str
+    expires_at: str
+
+
 def get_approval_store(request: Request) -> ApprovalStore:
     """Read the application-scoped tool approval repository."""
     return cast(ApprovalStore, request.app.state.approval_store)
@@ -93,9 +105,7 @@ async def decide_approval(
     if existing is None:
         raise HTTPException(status_code=404, detail="Unknown tool approval.")
     if payload.action == "approved" and existing.request_arguments_json is None:
-        raise HTTPException(
-            status_code=409, detail="This legacy tool approval cannot be safely replayed."
-        )
+        raise HTTPException(status_code=409, detail="This tool approval cannot be replayed safely.")
     try:
         approval = store.decide(approval_id, payload.action, session_id)
     except KeyError as error:
@@ -116,6 +126,36 @@ async def decide_approval(
     if consumed is None:
         raise RuntimeError("Consumed tool approval was not found.")
     return _approval_response(consumed, outcome)
+
+
+@router.get("/grants", response_model=list[TerminalGrantResponse])
+def grants(
+    request: Request, auth: AuthServiceDependency, store: ApprovalStoreDependency
+) -> list[TerminalGrantResponse]:
+    """List only the active session's short-lived terminal grants."""
+    session_id, _ = auth.require_session(request)
+    return [
+        TerminalGrantResponse(
+            id=grant.id,
+            tool_name=grant.tool_name,  # type: ignore[arg-type]
+            working_directory=grant.working_directory,
+            access=grant.access,  # type: ignore[arg-type]
+            capabilities=sorted(grant.capabilities),
+            created_at=grant.created_at,
+            expires_at=grant.expires_at,
+        )
+        for grant in store.list_grants(session_id)
+    ]
+
+
+@router.delete("/grants/{grant_id}", status_code=204)
+def revoke_grant(
+    grant_id: str, request: Request, auth: AuthServiceDependency, store: ApprovalStoreDependency
+) -> None:
+    """Revoke only the current browser session's grant after CSRF validation."""
+    session_id, _ = auth.require_csrf(request)
+    if not store.revoke_grant(grant_id, session_id):
+        raise HTTPException(status_code=404, detail="Unknown terminal grant.")
 
 
 def _approval_response(

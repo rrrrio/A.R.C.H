@@ -101,7 +101,13 @@ gateway:
 | `data/models/qwen3-tts/<revision>/` | 可选 Qwen Base 模型、speech tokenizer 与 provenance | 仅由 `make qwen-tts-prepare APPLY=1` 写入；不存在或未验证时不得被未来克隆运行时使用。 |
 | `data/runtime/` | llama.cpp 和 SearXNG 运行时状态 | 受 Git 忽略；`searxng.env` 必须为 `0600`。 |
 | `data/runtime/qwen-tts/` | 可选 Qwen TTS 的隔离 Python 环境 | 仅由明确准备命令创建；不属于当前 A.R.C.H. 后端依赖环境。 |
-| `data/workspace/` | 受限终端工具的唯一工作根目录 | 工具策略拒绝其外部路径。 |
+| `data/workspace/` | 主机 Agent 的默认工作区 | 相对目录以这里解析；工作目录必须归当前用户所有，敏感路径始终拒绝。所有新调用均需浏览器审批。 |
+
+## 主机 Agent 授权
+
+模型只能调用 `terminal_exec`（argv）或 `terminal_shell`（脚本），并同时声明工作目录、读写级别和可选 `network`、`hardware`、`service`、`docker` capability。省略工作目录时使用 `data/workspace/`；本地模型产生的固定占位值 `/home/user` 会在工作目录或 argv 路径参数中规范化为当前服务用户的真实 home。经批准的只读调用可使用 `/` 作为工作目录来检查根文件系统。没有自然语言关键字或预置任务目录；GPU 查询、项目检查和文件排序都经同一接口校验。
+
+每个首次调用都在浏览器中显示完整 argv 或脚本、目录、读写级别与 capability。批准成功的完全相同调用仅在该登录会话中复用 30 分钟；登录结束、服务重启、过期或撤销都会使其失效。Docker 即使是状态查询也要求“主机操作”档位及浏览器确认。详情见[使用本机主机 Agent](../how-to/use-host-agent.md)。
 
 ## 知识库文件格式
 

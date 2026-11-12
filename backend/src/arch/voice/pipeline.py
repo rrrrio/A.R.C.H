@@ -54,6 +54,7 @@ def create_pipeline_worker(
     clone_profile: VoiceProfile | None = None,
     clone_synthesize: CloneSynthesize | None = None,
     clone_cancel: CloneCancel | None = None,
+    session_id: str | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
     transport = SmallWebRTCTransport(
@@ -68,6 +69,7 @@ def create_pipeline_worker(
     return _create_pipeline_worker(
         transport, connection.send_app_message, paths, llama_endpoint, memory_store, retriever,
         tool_gateway, on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
+        session_id=session_id,
         on_interruption=lambda: clear_queued_webrtc_audio(transport.output()),
     )
 
@@ -84,6 +86,7 @@ def create_websocket_pipeline_worker(
     clone_profile: VoiceProfile | None = None,
     clone_synthesize: CloneSynthesize | None = None,
     clone_cancel: CloneCancel | None = None,
+    session_id: str | None = None,
 ) -> PipelineWorker:
     """Build the same worker over authenticated same-origin PCM WebSocket media."""
     transport = FastAPIWebsocketTransport(
@@ -100,6 +103,7 @@ def create_websocket_pipeline_worker(
     return _create_pipeline_worker(
         transport, send_event, paths, llama_endpoint, memory_store, retriever, tool_gateway,
         on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
+        session_id=session_id,
         ordered_transport_events=True,
     )
 
@@ -116,6 +120,7 @@ def _create_pipeline_worker(
     clone_profile: VoiceProfile | None,
     clone_synthesize: CloneSynthesize | None,
     clone_cancel: CloneCancel | None,
+    session_id: str | None = None,
     on_interruption: Callable[[], bool] | None = None,
     ordered_transport_events: bool = False,
 ) -> PipelineWorker:
@@ -138,8 +143,10 @@ def _create_pipeline_worker(
         memory_store=memory_store,
         candidate_extractor=LlamaCppMemoryCandidateExtractor(llama_endpoint),
         on_memory_candidates_ready=lambda: send_event({"type": "memory_candidates_ready"}),
+        on_tool_approvals_ready=lambda: send_event({"type": "tool_approvals_ready"}),
         retriever=retriever,
         tool_gateway=tool_gateway,
+        session_id=session_id,
     )
     if on_agent_processor is not None:
         on_agent_processor(agent)

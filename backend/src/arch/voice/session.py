@@ -64,7 +64,7 @@ class LocalVoiceSession:
         runner_task: asyncio.Task[None] | None = None
         try:
             self._retriever = await asyncio.to_thread(self._create_retriever)
-            worker = create_pipeline_worker(
+            worker_arguments = (
                 connection,
                 self._paths,
                 self._llama.endpoint,
@@ -75,6 +75,12 @@ class LocalVoiceSession:
                 profile,
                 self._clone_runtime.synthesize if self._clone_runtime is not None else None,
                 self._clone_runtime.cancel if self._clone_runtime is not None else None,
+            )
+            session_id = getattr(connection, "_arch_session_id", None)
+            worker = (
+                create_pipeline_worker(*worker_arguments, session_id=session_id)
+                if session_id is not None
+                else create_pipeline_worker(*worker_arguments)
             )
             runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
             ready = asyncio.Event()
@@ -99,7 +105,7 @@ class LocalVoiceSession:
             await self._stop_clone_runtime()
             raise
 
-    async def start_websocket(self, websocket: WebSocket) -> None:
+    async def start_websocket(self, websocket: WebSocket, session_id: str | None = None) -> None:
         """Start the sole local media worker using a same-origin PCM WebSocket."""
         if self._runner_task is not None:
             raise RuntimeError("Voice session is in use.")
@@ -121,6 +127,7 @@ class LocalVoiceSession:
                 profile,
                 self._clone_runtime.synthesize if self._clone_runtime is not None else None,
                 self._clone_runtime.cancel if self._clone_runtime is not None else None,
+                session_id=session_id,
             )
             runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
             ready = asyncio.Event()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Request, Response, WebSocket, status
@@ -60,14 +61,17 @@ async def stream(websocket: WebSocket) -> None:
     """Carry fallback PCM media through the authenticated HTTPS origin."""
     auth = cast(AuthService, websocket.app.state.auth_service)
     try:
-        _, session = auth.require_websocket_csrf(websocket)
+        session_id, session = auth.require_websocket_csrf(websocket)
     except Exception:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     await websocket.accept(subprotocol=f"arch-csrf.{session.csrf_token}")
     voice_session = websocket.app.state.voice_session
     try:
-        await voice_session.start_websocket(websocket)
+        if "session_id" in inspect.signature(voice_session.start_websocket).parameters:
+            await voice_session.start_websocket(websocket, session_id)
+        else:
+            await voice_session.start_websocket(websocket)
     except Exception:
         await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
 

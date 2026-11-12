@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
 from arch.agent.core import ToolRequest
 from arch.tools.approvals import ApprovalStore
-from arch.tools.policy import PolicyDecision, TerminalToolPolicy
+from arch.tools.policy import PolicyDecision, TerminalProfile, TerminalToolPolicy
 from arch.tools.search import SearchResult, SearxngSearchClient
 from arch.tools.terminal import TerminalExecutor, TerminalResult
 
@@ -27,6 +28,9 @@ class ToolOutcome:
     approval_id: str | None = None
 
 
+ProfileProvider = Callable[[str | None], TerminalProfile]
+
+
 class ToolGateway:
     """Own policy evaluation, approval consumption, and bounded terminal execution."""
 
@@ -37,6 +41,7 @@ class ToolGateway:
         executor: TerminalExecutor,
         search_client: SearxngSearchClient | None = None,
         max_concurrency: int = 1,
+        profile_provider: ProfileProvider | None = None,
     ) -> None:
         if max_concurrency < 1:
             raise ValueError("Tool concurrency must be positive.")
@@ -46,19 +51,37 @@ class ToolGateway:
         self._search_client = search_client
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._approval_lock = asyncio.Lock()
+        self._profile_provider = profile_provider
 
-    async def dispatch(self, request: ToolRequest) -> ToolOutcome:
+    async def dispatch(
+        self,
+        request: ToolRequest,
+        session_id: str | None = None,
+    ) -> ToolOutcome:
         """Execute auto-safe work or persist a reviewable request with no side effect."""
         if request.name == "web_search":
             return await self._dispatch_search(request)
-        policy_result = self._policy.evaluate(request)
+        profile = (
+            self._profile_provider(session_id) if self._profile_provider is not None else "assist"
+        )
+        policy_result = self._policy.evaluate_host(request, profile)
         if policy_result.decision is PolicyDecision.DENIED:
             return ToolOutcome("denied", policy_result.reason)
         if policy_result.command is None:
             return ToolOutcome("denied", "The requested tool has no safe command adapter.")
+        if self._approvals.has_grant(session_id, request, policy_result.command):
+            async with self._semaphore:
+                result = await self._executor.execute_host(policy_result.command, approved=True)
+            return ToolOutcome("completed", "本地主机工具已在当前授权范围内完成。", result=result)
         if policy_result.decision is PolicyDecision.APPROVAL_REQUIRED:
             approval_task = asyncio.create_task(
-                asyncio.to_thread(self._approvals.create, request, self._policy)
+                asyncio.to_thread(
+                    self._approvals.create,
+                    request,
+                    self._policy,
+                    profile=profile,
+                    session_id=session_id,
+                )
             )
             try:
                 approval = await asyncio.shield(approval_task)
@@ -78,7 +101,7 @@ class ToolGateway:
                 approval_id=approval.id,
             )
         async with self._semaphore:
-            result = await self._executor.execute(policy_result.command)
+            result = await self._executor.execute_host(policy_result.command, approved=False)
         return ToolOutcome("completed", "Local tool action completed.", result=result)
 
     async def _dispatch_search(self, request: ToolRequest) -> ToolOutcome:
@@ -104,7 +127,8 @@ class ToolGateway:
         self, approval_id: str, request: ToolRequest, actor: str
     ) -> ToolOutcome:
         """Consume one exact approved request before its constrained side effect can begin."""
-        policy_result = self._policy.evaluate(request)
+        profile = self._profile_provider(actor) if self._profile_provider is not None else "assist"
+        policy_result = self._policy.evaluate_host(request, profile)
         if (
             policy_result.decision is not PolicyDecision.APPROVAL_REQUIRED
             or policy_result.command is None
@@ -124,8 +148,14 @@ class ToolGateway:
                 return ToolOutcome(
                     "denied", "The approved command no longer matches the stored request."
                 )
+            if approval.session_id != actor:
+                return ToolOutcome("denied", "The browser session no longer owns this approval.")
             async with self._semaphore:
-                result = await self._executor._execute_approved(policy_result.command)
+                result = await self._executor.execute_host(policy_result.command, approved=True)
+            if result.exit_code == 0:
+                await asyncio.to_thread(
+                    self._approvals.grant_for, actor, request, policy_result.command
+                )
         return ToolOutcome("completed", "Approved local tool action completed.", result=result)
 
     async def cancel_pending(self, approval_id: str) -> None:

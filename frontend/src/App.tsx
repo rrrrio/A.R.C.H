@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { AvatarPreview } from './AvatarPreview'
-import { fetchAuthStatus, fetchCsrfToken, login, logout } from './auth'
+import { fetchAuthStatus, fetchCsrfToken, hasCurrentAuthContract, login, logout, reissueTerminalLease, setTerminalProfile } from './auth'
 import { fetchKnowledgeStatus, rebuildKnowledgeIndex, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
-import { decideToolApproval, fetchToolApprovals, type ToolApproval } from './tools'
+import { decideToolApproval, fetchTerminalGrants, fetchToolApprovals, revokeTerminalGrant, type TerminalGrant, type ToolApproval } from './tools'
 import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceConnection, type VoiceEvent, VoiceClient, WebSocketVoiceClient } from './voice'
 import { createVoiceProfile, deleteVoiceProfile, fetchVoiceProfiles, selectVoiceProfile, type VoiceProfile } from './voices'
 import './App.css'
@@ -14,7 +14,7 @@ type SessionState =
   | { kind: 'unconfigured' }
   | { kind: 'anonymous' }
   | { kind: 'signing-in' }
-  | { kind: 'authenticated'; csrfToken: string }
+  | { kind: 'authenticated'; csrfToken: string; terminalLeaseExpiresAt: string | null; terminalLeaseScopes: string[]; terminalProfile: 'observe' | 'assist' | 'operator' }
   | { kind: 'error' }
 
 type ConversationState = {
@@ -48,6 +48,9 @@ const latencyLabels: Record<LatencyStage, string> = {
 function App() {
   const [session, setSession] = useState<SessionState>({ kind: 'loading' })
   const [password, setPassword] = useState('')
+  const [leasePassword, setLeasePassword] = useState('')
+  const [leaseBusy, setLeaseBusy] = useState(false)
+  const [leaseError, setLeaseError] = useState(false)
   const [voiceState, setVoiceState] = useState<'idle' | 'connecting' | 'preparing' | 'ready' | 'disconnected' | 'error'>('idle')
   const [conversation, setConversation] = useState<ConversationState>(initialConversation)
   const [audioInputs, setAudioInputs] = useState<AudioInput[]>([])
@@ -60,6 +63,7 @@ function App() {
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({})
   const [candidateActionId, setCandidateActionId] = useState<string | null>(null)
   const [toolApprovals, setToolApprovals] = useState<ToolApproval[]>([])
+  const [terminalGrants, setTerminalGrants] = useState<TerminalGrant[]>([])
   const [toolActionId, setToolActionId] = useState<string | null>(null)
   const [voiceProfiles, setVoiceProfiles] = useState<VoiceProfile[]>([])
   const [selectedVoiceProfileId, setSelectedVoiceProfileId] = useState<string | null>(null)
@@ -123,6 +127,14 @@ function App() {
     }
   }
 
+  async function refreshTerminalGrants() {
+    try {
+      setTerminalGrants(await fetchTerminalGrants())
+    } catch {
+      setTerminalGrants([])
+    }
+  }
+
   async function refreshVoiceProfiles() {
     try {
       const profiles = await fetchVoiceProfiles()
@@ -139,13 +151,22 @@ function App() {
       const status = await fetchAuthStatus()
       if (!status.configured) {
         setSession({ kind: 'unconfigured' })
-      } else if (status.authenticated) {
+      } else if (status.authenticated && hasCurrentAuthContract(status)) {
         const csrfToken = await fetchCsrfToken()
-        setSession({ kind: 'authenticated', csrfToken })
+        setSession({
+          kind: 'authenticated',
+          csrfToken,
+          terminalLeaseExpiresAt: status.terminal_lease_expires_at ?? null,
+          terminalLeaseScopes: status.terminal_lease_scopes ?? [],
+          terminalProfile: status.terminal_profile ?? 'assist',
+        })
         void refreshMemoryCandidates()
         void refreshKnowledgeStatus()
         void refreshToolApprovals()
+        void refreshTerminalGrants()
         void refreshVoiceProfiles()
+      } else if (status.authenticated) {
+        setSession({ kind: 'error' })
       } else {
         setSession({ kind: 'anonymous' })
       }
@@ -172,10 +193,19 @@ function App() {
     setSession({ kind: 'signing-in' })
     try {
       const csrfToken = (await login(password)).csrf_token
-      setSession({ kind: 'authenticated', csrfToken })
+      const status = await fetchAuthStatus()
+      if (!hasCurrentAuthContract(status)) throw new Error('The backend session was not established.')
+      setSession({
+        kind: 'authenticated',
+        csrfToken,
+        terminalLeaseExpiresAt: status.terminal_lease_expires_at ?? null,
+        terminalLeaseScopes: status.terminal_lease_scopes ?? [],
+        terminalProfile: status.terminal_profile ?? 'assist',
+      })
       void refreshMemoryCandidates()
       void refreshKnowledgeStatus()
       void refreshToolApprovals()
+      void refreshTerminalGrants()
       void refreshVoiceProfiles()
       setPassword('')
     } catch {
@@ -193,8 +223,31 @@ function App() {
     setKnowledgeStatus(null)
     setCandidateDrafts({})
     setToolApprovals([])
+    setTerminalGrants([])
     setVoiceProfiles([])
     setSelectedVoiceProfileId(null)
+    setLeasePassword('')
+    setLeaseError(false)
+  }
+
+  async function renewTerminalLease(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (session.kind !== 'authenticated' || leaseBusy) return
+    setLeaseBusy(true)
+    setLeaseError(false)
+    try {
+      const result = await reissueTerminalLease(session.csrfToken, leasePassword)
+      setSession({
+        ...session,
+        terminalLeaseExpiresAt: result.terminal_lease_expires_at,
+        terminalLeaseScopes: result.terminal_lease_scopes,
+      })
+      setLeasePassword('')
+    } catch {
+      setLeaseError(true)
+    } finally {
+      setLeaseBusy(false)
+    }
   }
 
   async function connectVoice() {
@@ -243,6 +296,10 @@ function App() {
     if (event.type === 'voice_input_ready') clearInputReadyTimer()
     if (event.type === 'memory_candidates_ready') {
       void refreshMemoryCandidates()
+      return
+    }
+    if (event.type === 'tool_approvals_ready') {
+      void refreshToolApprovals()
       return
     }
     if (event.type === 'voice_ready' || event.type === 'voice_input_ready') {
@@ -320,9 +377,27 @@ function App() {
     try {
       await decideToolApproval(session.csrfToken, approvalId, action)
       await refreshToolApprovals()
+      await refreshTerminalGrants()
     } finally {
       setToolActionId(null)
     }
+  }
+
+  async function updateTerminalProfile(profile: 'observe' | 'assist' | 'operator') {
+    if (session.kind !== 'authenticated') return
+    const status = await setTerminalProfile(session.csrfToken, profile)
+    setSession({
+      ...session,
+      terminalLeaseExpiresAt: status.terminal_lease_expires_at ?? null,
+      terminalLeaseScopes: status.terminal_lease_scopes ?? [],
+      terminalProfile: status.terminal_profile ?? profile,
+    })
+  }
+
+  async function revokeGrant(grantId: string) {
+    if (session.kind !== 'authenticated') return
+    await revokeTerminalGrant(session.csrfToken, grantId)
+    await refreshTerminalGrants()
   }
 
   async function createProfile(event: FormEvent<HTMLFormElement>) {
@@ -391,6 +466,49 @@ function App() {
         <section className="setup-panel" aria-labelledby="voice-title">
           <p className="eyebrow">语音会话</p>
           <h1 id="voice-title">{voiceHeading(voiceState, conversation.activity)}</h1>
+          <p className="tool-detail">
+            终端只读租约：{session.terminalLeaseExpiresAt ? `有效至 ${formatTimestamp(session.terminalLeaseExpiresAt)}` : '已失效'}
+          </p>
+          <form className="lease-renewal" onSubmit={renewTerminalLease}>
+            <label htmlFor="terminal-lease-password">管理员密码</label>
+            <input
+              id="terminal-lease-password"
+              type="password"
+              autoComplete="current-password"
+              value={leasePassword}
+              onChange={(event) => setLeasePassword(event.target.value)}
+              required
+              disabled={leaseBusy}
+            />
+            <button type="submit" className="secondary-button" disabled={leaseBusy}>
+              {leaseBusy ? '正在获取' : '重新获取终端租约'}
+            </button>
+            {leaseError ? <p className="form-error">无法获取终端租约，请检查密码并确认当前使用 HTTPS 入口。</p> : null}
+          </form>
+          <section className="terminal-policy" aria-labelledby="terminal-policy-title">
+            <h2 id="terminal-policy-title">主机 Agent 权限</h2>
+            <label htmlFor="terminal-profile">当前档位</label>
+            <select
+              id="terminal-profile"
+              value={session.terminalProfile}
+              onChange={(event) => void updateTerminalProfile(event.target.value as 'observe' | 'assist' | 'operator')}
+            >
+              <option value="observe">观察</option>
+              <option value="assist">协助</option>
+              <option value="operator">主机操作</option>
+            </select>
+            {terminalGrants.length ? (
+              <div className="terminal-grant-list">
+                {terminalGrants.map((grant) => (
+                  <div key={grant.id} className="terminal-grant">
+                    <code>{grant.tool_name} · {grant.access} · {grant.working_directory}</code>
+                    <p>{grant.capabilities.length ? grant.capabilities.join('、') : '无额外 capability'}，有效至 {formatTimestamp(grant.expires_at)}</p>
+                    <button type="button" className="secondary-button" onClick={() => void revokeGrant(grant.id)}>撤销</button>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="memory-empty">暂无活动终端授权。</p>}
+          </section>
           {voiceState === 'error' ? <p>无法建立语音连接。</p> : null}
           {voiceState === 'disconnected' ? <p>媒体连接已断开，请重新连接。</p> : null}
           {voiceState === 'preparing' || voiceState === 'ready' ? (
@@ -481,9 +599,10 @@ function App() {
                 {toolApprovals.map((approval) => {
                   const busy = toolActionId === approval.id
                   return <div key={approval.id} className="tool-approval">
-                    <code>{approval.argv_json}</code>
+                    <pre className="tool-command-preview">{approval.argv_json}</pre>
                     <p>{approval.reason}</p>
                     <p className="tool-detail">工作目录：{approval.working_directory}</p>
+                    <p className="tool-detail">批准后将以当前普通用户权限执行一次。</p>
                     <p className="tool-detail">将在 {formatTimestamp(approval.expires_at)} 过期</p>
                     <div className="candidate-actions">
                       <button type="button" disabled={busy} onClick={() => void decideTool(approval.id, 'approved')}>批准并执行</button>
@@ -561,7 +680,7 @@ function App() {
           <p className="eyebrow">本机管理员</p>
           <h1 id="login-title">登录</h1>
           {session.kind === 'unconfigured' ? <p>管理员密码尚未初始化。</p> : null}
-          {session.kind === 'error' ? <p>无法连接后端。</p> : null}
+          {session.kind === 'error' ? <p>无法读取登录状态或终端租约，请使用 HTTPS 入口并刷新页面。</p> : null}
           {session.kind !== 'unconfigured' && session.kind !== 'loading' && session.kind !== 'error' ? (
             <form onSubmit={submitLogin} className="login-form">
               <label htmlFor="password">密码</label>

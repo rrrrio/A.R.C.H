@@ -23,8 +23,11 @@ from arch.voice.webrtc import WebRTCSignalingService
 PUBLIC_ORIGIN = "https://voice.test:8443"
 
 
-def _request(argv: list[str]) -> ToolRequest:
-    return ToolRequest("terminal", json.dumps({"argv": argv, "cwd": "."}))
+def _request(argv: list[str], mode: str = "observe") -> ToolRequest:
+    return ToolRequest(
+        "terminal_exec",
+        json.dumps({"argv": argv, "cwd": ".", "access": "write" if mode == "mutate" else "read"}),
+    )
 
 
 def _application(tmp_path: Path) -> tuple[FastAPI, ToolGateway, Path]:
@@ -64,9 +67,7 @@ def test_tool_approval_api_requires_login_and_csrf_then_executes_exactly_once(
     tmp_path: Path,
 ) -> None:
     app, gateway, workspace = _application(tmp_path)
-    request = _request(["touch", "report.txt"])
-    pending = asyncio.run(gateway.dispatch(request))
-    assert pending.approval_id is not None
+    request = _request(["touch", "report.txt"], "mutate")
 
     with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
         anonymous = client.get("/api/tools/approvals")
@@ -76,6 +77,10 @@ def test_tool_approval_api_requires_login_and_csrf_then_executes_exactly_once(
             json={"password": "correct-horse-battery-staple"},
         )
         csrf_token = login.json()["csrf_token"]
+        session_id = client.cookies.get("arch_session")
+        assert session_id is not None
+        pending = asyncio.run(gateway.dispatch(request, session_id=session_id))
+        assert pending.approval_id is not None
         listed = client.get("/api/tools/approvals")
         missing_csrf = client.patch(
             f"/api/tools/approvals/{pending.approval_id}",
@@ -105,8 +110,7 @@ def test_tool_approval_api_requires_login_and_csrf_then_executes_exactly_once(
 
 def test_tool_approval_api_rejection_has_no_side_effect(tmp_path: Path) -> None:
     app, gateway, workspace = _application(tmp_path)
-    pending = asyncio.run(gateway.dispatch(_request(["mkdir", "reports"])))
-    assert pending.approval_id is not None
+    request = _request(["mkdir", "reports"], "mutate")
 
     with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
         login = client.post(
@@ -114,6 +118,10 @@ def test_tool_approval_api_rejection_has_no_side_effect(tmp_path: Path) -> None:
             headers={"Origin": PUBLIC_ORIGIN},
             json={"password": "correct-horse-battery-staple"},
         )
+        session_id = client.cookies.get("arch_session")
+        assert session_id is not None
+        pending = asyncio.run(gateway.dispatch(request, session_id=session_id))
+        assert pending.approval_id is not None
         rejected = client.patch(
             f"/api/tools/approvals/{pending.approval_id}",
             headers={"Origin": PUBLIC_ORIGIN, "X-CSRF-Token": login.json()["csrf_token"]},
@@ -132,8 +140,7 @@ def test_tool_approval_api_forwards_only_consumed_execution_to_active_voice_sess
     continuation = FakeApprovalContinuation()
     app.state.voice_session = continuation
     app.state.signaling_service = WebRTCSignalingService()
-    pending = asyncio.run(gateway.dispatch(_request(["touch", "report.txt"])))
-    assert pending.approval_id is not None
+    request = _request(["touch", "report.txt"], "mutate")
 
     with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
         login = client.post(
@@ -141,6 +148,10 @@ def test_tool_approval_api_forwards_only_consumed_execution_to_active_voice_sess
             headers={"Origin": PUBLIC_ORIGIN},
             json={"password": "correct-horse-battery-staple"},
         )
+        session_id = client.cookies.get("arch_session")
+        assert session_id is not None
+        pending = asyncio.run(gateway.dispatch(request, session_id=session_id))
+        assert pending.approval_id is not None
         approved = client.patch(
             f"/api/tools/approvals/{pending.approval_id}",
             headers={"Origin": PUBLIC_ORIGIN, "X-CSRF-Token": login.json()["csrf_token"]},

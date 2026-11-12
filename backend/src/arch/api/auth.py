@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Request, Response, status
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, SecretStr
 
 from arch.auth.service import SESSION_COOKIE_NAME, AuthService
 
@@ -23,12 +23,34 @@ class AuthStatusResponse(BaseModel):
 
     configured: bool
     authenticated: bool
+    terminal_lease_expires_at: str | None = None
+    terminal_lease_scopes: list[str] = Field(default_factory=list)
+    terminal_profile: Literal["observe", "assist", "operator"] | None = None
 
 
 class LoginResponse(BaseModel):
     """CSRF token returned after a successful login for subsequent mutations."""
 
     csrf_token: str
+
+
+class TerminalLeaseReissueRequest(BaseModel):
+    """Password payload used to rotate an expired read-only terminal lease."""
+
+    password: SecretStr
+
+
+class TerminalLeaseResponse(BaseModel):
+    """Current non-sensitive read-only terminal lease metadata."""
+
+    terminal_lease_expires_at: str
+    terminal_lease_scopes: list[str]
+
+
+class TerminalProfileRequest(BaseModel):
+    """A browser-selected session-only ceiling for local host tools."""
+
+    profile: Literal["observe", "assist", "operator"]
 
 
 class CsrfResponse(BaseModel):
@@ -48,8 +70,16 @@ AuthServiceDependency = Annotated[AuthService, Depends(get_auth_service)]
 @router.get("/status", response_model=AuthStatusResponse)
 def auth_status(request: Request, auth: AuthServiceDependency) -> AuthStatusResponse:
     """Expose provisioning state without disclosing any credential material."""
-    authenticated = auth.sessions.get(request.cookies.get(SESSION_COOKIE_NAME)) is not None
-    return AuthStatusResponse(configured=auth.is_configured, authenticated=authenticated)
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    authenticated = auth.sessions.get(session_id) is not None
+    lease = auth.terminal_lease(session_id)
+    return AuthStatusResponse(
+        configured=auth.is_configured,
+        authenticated=authenticated,
+        terminal_lease_expires_at=None if lease is None else lease.expires_at_iso,
+        terminal_lease_scopes=[] if lease is None else list(lease.scopes),
+        terminal_profile=None if not authenticated else auth.terminal_profile(session_id),
+    )
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -78,6 +108,38 @@ def csrf(request: Request, auth: AuthServiceDependency) -> CsrfResponse:
     """Return the per-session token without changing server-side state."""
     _, session = auth.require_session(request)
     return CsrfResponse(csrf_token=session.csrf_token)
+
+
+@router.post("/terminal-lease/reissue", response_model=TerminalLeaseResponse)
+def reissue_terminal_lease(
+    payload: TerminalLeaseReissueRequest,
+    request: Request,
+    auth: AuthServiceDependency,
+) -> TerminalLeaseResponse:
+    """Rotate the current session's read-only lease after password re-authentication."""
+    session = auth.reissue_terminal_lease(request, payload.password.get_secret_value())
+    lease = session.terminal_lease
+    assert lease is not None
+    return TerminalLeaseResponse(
+        terminal_lease_expires_at=lease.expires_at_iso,
+        terminal_lease_scopes=list(lease.scopes),
+    )
+
+
+@router.put("/terminal-profile", response_model=AuthStatusResponse)
+def set_terminal_profile(
+    payload: TerminalProfileRequest, request: Request, auth: AuthServiceDependency
+) -> AuthStatusResponse:
+    """Set a profile only for the currently authenticated browser session."""
+    session = auth.set_terminal_profile(request, payload.profile)
+    lease = session.terminal_lease
+    return AuthStatusResponse(
+        configured=auth.is_configured,
+        authenticated=True,
+        terminal_lease_expires_at=None if lease is None else lease.expires_at_iso,
+        terminal_lease_scopes=[] if lease is None else list(lease.scopes),
+        terminal_profile=payload.profile,
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

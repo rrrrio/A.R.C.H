@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from arch.agent.core import ToolRequest
-from arch.memory.migrations import MigrationRunner
+from arch.memory.migrations import MIGRATIONS, MigrationRunner
 from arch.tools.approvals import ApprovalStore
 from arch.tools.policy import TerminalToolPolicy
 
@@ -23,8 +23,11 @@ class _Clock:
         return self.value
 
 
-def _request(argv: list[str], cwd: str = ".") -> ToolRequest:
-    return ToolRequest("terminal", json.dumps({"argv": argv, "cwd": cwd}))
+def _request(argv: list[str], cwd: str = ".", mode: str = "observe") -> ToolRequest:
+    return ToolRequest(
+        "terminal_exec",
+        json.dumps({"argv": argv, "cwd": cwd, "access": "write" if mode == "mutate" else "read"}),
+    )
 
 
 def _store(tmp_path: Path, clock: _Clock) -> tuple[ApprovalStore, TerminalToolPolicy, Path]:
@@ -38,9 +41,9 @@ def _store(tmp_path: Path, clock: _Clock) -> tuple[ApprovalStore, TerminalToolPo
 def test_create_records_exact_normalized_request_and_audit_event(tmp_path: Path) -> None:
     clock = _Clock()
     store, policy, database_path = _store(tmp_path, clock)
-    request = _request(["touch", "report.txt"])
+    request = _request(["touch", "report.txt"], mode="mutate")
 
-    approval = store.create(request, policy)
+    approval = store.create(request, policy, session_id="executor")
 
     assert approval.status == "pending"
     assert json.loads(approval.argv_json) == ["touch", "report.txt"]
@@ -55,12 +58,15 @@ def test_create_records_exact_normalized_request_and_audit_event(tmp_path: Path)
 def test_approval_is_one_time_and_bound_to_exact_request(tmp_path: Path) -> None:
     clock = _Clock()
     store, policy, _ = _store(tmp_path, clock)
-    request = _request(["touch", "report.txt"])
-    approval = store.create(request, policy)
+    request = _request(["touch", "report.txt"], mode="mutate")
+    approval = store.create(request, policy, session_id="executor")
 
     assert store.consume(approval.id, request, "executor") is None
     assert store.decide(approval.id, "approved", "administrator").status == "approved"
-    assert store.consume(approval.id, _request(["touch", "other.txt"]), "executor") is None
+    assert (
+        store.consume(approval.id, _request(["touch", "other.txt"], mode="mutate"), "executor")
+        is None
+    )
     consumed = store.consume(approval.id, request, "executor")
 
     assert consumed is not None
@@ -72,7 +78,7 @@ def test_interruption_revokes_a_browser_approved_but_unconsumed_request(tmp_path
     """Cancellation wins over a pending execution because both state changes are atomic."""
     clock = _Clock()
     store, policy, _ = _store(tmp_path, clock)
-    request = _request(["touch", "report.txt"])
+    request = _request(["touch", "report.txt"], mode="mutate")
     approval = store.create(request, policy)
 
     assert store.decide(approval.id, "approved", "administrator").status == "approved"
@@ -87,7 +93,7 @@ def test_interruption_revokes_a_browser_approved_but_unconsumed_request(tmp_path
 def test_expiry_invalidates_pending_approval_and_is_audited(tmp_path: Path) -> None:
     clock = _Clock()
     store, policy, database_path = _store(tmp_path, clock)
-    request = _request(["mkdir", "reports"])
+    request = _request(["mkdir", "reports"], mode="mutate")
     approval = store.create(request, policy, ttl_seconds=10)
     clock.value += timedelta(seconds=10)
 
@@ -105,7 +111,7 @@ def test_expiry_invalidates_pending_approval_and_is_audited(tmp_path: Path) -> N
 def test_unknown_or_invalid_decisions_are_rejected(tmp_path: Path) -> None:
     clock = _Clock()
     store, policy, _ = _store(tmp_path, clock)
-    request = _request(["cat", "report.txt"])
+    request = _request(["cat", "report.txt"], mode="mutate")
     approval = store.create(request, policy)
 
     with pytest.raises(KeyError, match="Unknown tool approval"):
@@ -116,12 +122,23 @@ def test_unknown_or_invalid_decisions_are_rejected(tmp_path: Path) -> None:
         store.decide(approval.id, "approved", "")
 
 
-def test_auto_or_denied_request_cannot_be_forced_into_the_approval_store(tmp_path: Path) -> None:
+def test_denied_request_cannot_be_forced_into_the_approval_store(tmp_path: Path) -> None:
     """The store owns policy evaluation so callers cannot pair one request with another command."""
     clock = _Clock()
     store, policy, _ = _store(tmp_path, clock)
 
     with pytest.raises(ValueError, match="approval-required executable"):
-        store.create(_request(["pwd"]), policy)
-    with pytest.raises(ValueError, match="approval-required executable"):
-        store.create(_request(["rm", "report.txt"]), policy)
+        store.create(_request(["sudo", "id"], mode="mutate"), policy)
+
+
+def test_host_grant_migration_creates_the_session_bound_table(tmp_path: Path) -> None:
+    """Existing approval databases gain exact-call grant storage without a plan runtime."""
+    database_path = tmp_path / "voice.sqlite3"
+    MigrationRunner(database_path, MIGRATIONS[:6]).migrate()
+
+    assert MigrationRunner(database_path).migrate() == (7,)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'terminal_grants'"
+        ).fetchone() == ("terminal_grants",)

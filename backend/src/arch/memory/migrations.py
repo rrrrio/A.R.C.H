@@ -130,6 +130,75 @@ MIGRATIONS: tuple[Migration, ...] = (
         ALTER TABLE tool_approvals ADD COLUMN request_arguments_json TEXT;
         """,
     ),
+    Migration(
+        6,
+        "add terminal plan audit records and revoke legacy approvals",
+        """
+        ALTER TABLE tool_approvals ADD COLUMN plan_json TEXT;
+        ALTER TABLE tool_approvals ADD COLUMN plan_sha256 TEXT;
+        ALTER TABLE tool_approvals ADD COLUMN audit_id TEXT;
+        ALTER TABLE tool_approvals ADD COLUMN session_id TEXT;
+        CREATE TABLE terminal_plan_runs (
+            audit_id TEXT PRIMARY KEY,
+            plan_json TEXT NOT NULL,
+            plan_sha256 TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (
+                status IN ('running', 'pending_approval', 'completed', 'failed', 'cancelled')
+            ),
+            created_at TEXT NOT NULL,
+            completed_at TEXT,
+            result_sha256 TEXT
+        );
+        CREATE TABLE terminal_plan_steps (
+            audit_id TEXT NOT NULL REFERENCES terminal_plan_runs(audit_id),
+            step_index INTEGER NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('command', 'operation')),
+            argv_json TEXT,
+            working_directory TEXT,
+            operation_json TEXT,
+            status TEXT NOT NULL CHECK (
+                status IN ('running', 'completed', 'failed', 'skipped', 'cancelled')
+            ),
+            exit_code INTEGER,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            stdout_bytes INTEGER NOT NULL DEFAULT 0,
+            stderr_bytes INTEGER NOT NULL DEFAULT 0,
+            result_sha256 TEXT,
+            error TEXT,
+            PRIMARY KEY (audit_id, step_index)
+        );
+        CREATE INDEX terminal_plan_steps_by_audit ON terminal_plan_steps(audit_id, step_index);
+        INSERT INTO tool_approval_events(approval_id, action, actor, created_at)
+        SELECT id, 'rejected', 'protocol_migration', datetime('now')
+        FROM tool_approvals
+        WHERE status IN ('pending', 'approved');
+        UPDATE tool_approvals
+        SET status = 'rejected', decided_at = datetime('now'), decided_by = 'protocol_migration'
+        WHERE status IN ('pending', 'approved');
+        """,
+    ),
+    Migration(
+        7,
+        "create exact session-bound terminal grants",
+        """
+        CREATE TABLE terminal_grants (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            request_sha256 TEXT NOT NULL,
+            tool_name TEXT NOT NULL CHECK (tool_name IN ('terminal_exec', 'terminal_shell')),
+            working_directory TEXT NOT NULL,
+            access TEXT NOT NULL CHECK (access IN ('read', 'write')),
+            capabilities_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            revoked_at TEXT
+        );
+        CREATE INDEX terminal_grants_by_session_expiry
+            ON terminal_grants(session_id, expires_at);
+        """,
+    ),
 )
 
 

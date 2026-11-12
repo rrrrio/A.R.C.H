@@ -125,6 +125,8 @@ class WebRTCSignalingService:
     async def _activate_connection(self, connection: SmallWebRTCConnection) -> None:
         """Begin WebRTC immediately and load local media models in the background."""
 
+        setattr(connection, "_arch_session_id", self._owner_session_id)  # noqa: B010
+
         @connection.event_handler("closed")  # type: ignore[untyped-decorator]
         async def release_closed_connection(closed: SmallWebRTCConnection) -> None:
             if closed.pc_id == self._owner_pc_id:

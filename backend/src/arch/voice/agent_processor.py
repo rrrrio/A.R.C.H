@@ -38,7 +38,11 @@ from arch.voice.emotion import EmotionFrame, normalize_emotion
 class ToolDispatcher(Protocol):
     """Minimal tool boundary needed by the media-facing processor."""
 
-    async def dispatch(self, request: ToolRequest) -> ToolOutcome:
+    async def dispatch(
+        self,
+        request: ToolRequest,
+        session_id: str | None = None,
+    ) -> ToolOutcome:
         """Classify and execute only tool requests admitted by application policy."""
 
     async def cancel_pending(self, approval_id: str) -> None:
@@ -66,8 +70,10 @@ class PipecatAgentProcessor(FrameProcessor):
         memory_store: MemoryStore | None = None,
         candidate_extractor: MemoryCandidateExtractor | None = None,
         on_memory_candidates_ready: Callable[[], None] | None = None,
+        on_tool_approvals_ready: Callable[[], None] | None = None,
         retriever: Retriever | None = None,
         tool_gateway: ToolDispatcher | None = None,
+        session_id: str | None = None,
     ) -> None:
         super().__init__()
         self._agent = agent
@@ -77,8 +83,10 @@ class PipecatAgentProcessor(FrameProcessor):
         self._memory_store = memory_store
         self._candidate_extractor = candidate_extractor
         self._on_memory_candidates_ready = on_memory_candidates_ready
+        self._on_tool_approvals_ready = on_tool_approvals_ready
         self._retriever = retriever
         self._tool_gateway = tool_gateway
+        self._session_id = session_id
         self._candidate_task: asyncio.Task[None] | None = None
         self._response_task: asyncio.Task[object] | None = None
         self._pending_tool_continuation: _PendingToolContinuation | None = None
@@ -283,7 +291,17 @@ class PipecatAgentProcessor(FrameProcessor):
         if request is None:
             await self.push_frame(LLMTextFrame("工具请求无效，未执行任何操作。"))
             return None
-        return await self._tool_gateway.dispatch(request)
+        if self._session_id is None:
+            outcome = await self._tool_gateway.dispatch(request)
+        else:
+            outcome = await self._tool_gateway.dispatch(request, self._session_id)
+        if outcome.status == "approval_required" and self._on_tool_approvals_ready is not None:
+            try:
+                self._on_tool_approvals_ready()
+            except Exception:
+                # The approval is durable even if the transient browser notification is lost.
+                pass
+        return outcome
 
     async def _continue_after_completed_tool(
         self,
@@ -293,13 +311,16 @@ class PipecatAgentProcessor(FrameProcessor):
         assistant_history_parts: list[str],
         generation: int,
     ) -> bool:
-        """Let capable Agent Cores summarize one automatic result without exposing it as history."""
+        """Let the model summarize non-terminal results without retaining terminal facts."""
         if (
             outcome.status != "completed"
             or tool_request is None
             or tool_request.call_id is None
             or not isinstance(self._agent, ToolResultAgentCore)
         ):
+            return False
+        if tool_request.name in {"terminal_exec", "terminal_shell"}:
+            # Terminal stdout is the source of truth; a second model pass can invent metrics.
             return False
         result = ToolResult(tool_request, outcome.status, _tool_result_for_agent(outcome))
         emitted = False

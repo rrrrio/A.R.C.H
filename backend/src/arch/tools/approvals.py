@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from arch.agent.core import ToolRequest
-from arch.tools.policy import PolicyDecision, ToolPolicy
+from arch.tools.policy import HostCommand, PolicyDecision, TerminalProfile, TerminalToolPolicy
 
 ApprovalStatus = Literal["pending", "approved", "rejected", "expired", "consumed"]
 ApprovalAction = Literal["approved", "rejected"]
@@ -34,6 +34,23 @@ class ToolApproval:
     expires_at: str
     decided_at: str | None
     decided_by: str | None
+    session_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalGrant:
+    """A short-lived exact-call authorization owned by one browser session."""
+
+    id: str
+    session_id: str
+    request_sha256: str
+    tool_name: str
+    working_directory: str
+    access: str
+    capabilities: frozenset[str]
+    created_at: str
+    expires_at: str
+    revoked_at: str | None
 
 
 class ApprovalStore:
@@ -44,10 +61,15 @@ class ApprovalStore:
         self._clock = clock or _now
 
     def create(
-        self, request: ToolRequest, policy: ToolPolicy, ttl_seconds: int = 120
+        self,
+        request: ToolRequest,
+        policy: TerminalToolPolicy,
+        ttl_seconds: int = 120,
+        profile: TerminalProfile = "assist",
+        session_id: str | None = None,
     ) -> ToolApproval:
         """Re-evaluate and persist one pending approval for an approval-required request."""
-        result = policy.evaluate(request)
+        result = policy.evaluate_host(request, profile)
         if result.decision is not PolicyDecision.APPROVAL_REQUIRED or result.command is None:
             raise ValueError("Only approval-required executable requests can be approved.")
         if ttl_seconds < 1:
@@ -66,6 +88,7 @@ class ApprovalStore:
             (now + timedelta(seconds=ttl_seconds)).isoformat(),
             None,
             None,
+            session_id,
         )
         with self._connect() as connection:
             connection.execute(
@@ -73,8 +96,8 @@ class ApprovalStore:
                 INSERT INTO tool_approvals(
                     id, request_sha256, tool_name, request_arguments_json, argv_json,
                     working_directory, reason,
-                    status, created_at, expires_at, decided_at, decided_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, created_at, expires_at, decided_at, decided_by, session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval.id,
@@ -89,10 +112,112 @@ class ApprovalStore:
                     approval.expires_at,
                     approval.decided_at,
                     approval.decided_by,
+                    session_id,
                 ),
             )
             _record_event(connection, approval.id, "created", "system", approval.created_at)
         return approval
+
+    def grant_for(
+        self, session_id: str, request: ToolRequest, command: HostCommand
+    ) -> TerminalGrant:
+        """Store a 30-minute grant tied to the complete approved tool call."""
+        now = self._clock()
+        grant = TerminalGrant(
+            str(uuid.uuid4()),
+            session_id,
+            _request_hash(request),
+            request.name,
+            str(command.working_directory),
+            command.access,
+            command.capabilities,
+            now.isoformat(),
+            (now + timedelta(minutes=30)).isoformat(),
+            None,
+        )
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO terminal_grants(
+                    id, session_id, request_sha256, tool_name, working_directory, access,
+                    capabilities_json, created_at, expires_at, revoked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    grant.id, grant.session_id, grant.request_sha256, grant.tool_name,
+                    grant.working_directory, grant.access,
+                    json.dumps(sorted(grant.capabilities)), grant.created_at, grant.expires_at,
+                    None,
+                ),
+            )
+        return grant
+
+    def has_grant(
+        self, session_id: str | None, request: ToolRequest, command: HostCommand
+    ) -> bool:
+        """Match an unmodified request to a live grant owned by its current browser session."""
+        if session_id is None:
+            return False
+        now = self._clock().isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE terminal_grants SET revoked_at = ? "
+                "WHERE revoked_at IS NULL AND expires_at <= ?",
+                (now, now),
+            )
+            row = connection.execute(
+                """
+                SELECT id FROM terminal_grants
+                WHERE session_id = ? AND request_sha256 = ? AND tool_name = ?
+                  AND working_directory = ? AND access = ? AND capabilities_json = ?
+                  AND revoked_at IS NULL AND expires_at > ?
+                """,
+                (
+                    session_id,
+                    _request_hash(request),
+                    request.name,
+                    str(command.working_directory),
+                    command.access, json.dumps(sorted(command.capabilities)), now,
+                ),
+            ).fetchone()
+        return row is not None
+
+    def list_grants(self, session_id: str) -> tuple[TerminalGrant, ...]:
+        """List the authenticated session's remaining exact-call authorizations."""
+        now = self._clock().isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE terminal_grants SET revoked_at = ? "
+                "WHERE revoked_at IS NULL AND expires_at <= ?",
+                (now, now),
+            )
+            rows = connection.execute(
+                """
+                SELECT id, session_id, request_sha256, tool_name, working_directory, access,
+                       capabilities_json, created_at, expires_at, revoked_at
+                FROM terminal_grants WHERE session_id = ? AND revoked_at IS NULL AND expires_at > ?
+                ORDER BY created_at DESC
+                """,
+                (session_id, now),
+            ).fetchall()
+        return tuple(
+            TerminalGrant(
+                row[0], row[1], row[2], row[3], row[4], row[5],
+                frozenset(json.loads(row[6])), row[7], row[8], row[9]
+            )
+            for row in rows
+        )
+
+    def revoke_grant(self, grant_id: str, session_id: str) -> bool:
+        """Revoke one grant only for the browser session that owns it."""
+        now = self._clock().isoformat()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE terminal_grants SET revoked_at = ? "
+                "WHERE id = ? AND session_id = ? AND revoked_at IS NULL",
+                (now, grant_id, session_id),
+            )
+        return cursor.rowcount == 1
 
     def list_pending(self) -> tuple[ToolApproval, ...]:
         """Return live pending records after persistently expiring stale approvals."""
@@ -102,7 +227,7 @@ class ApprovalStore:
                 """
                 SELECT id, request_sha256, tool_name, request_arguments_json, argv_json,
                        working_directory, reason,
-                       status, created_at, expires_at, decided_at, decided_by
+                       status, created_at, expires_at, decided_at, decided_by, session_id
                 FROM tool_approvals WHERE status = 'pending'
                 ORDER BY created_at DESC, id DESC
                 """
@@ -168,8 +293,9 @@ class ApprovalStore:
                 """
                 UPDATE tool_approvals SET status = 'consumed', decided_at = ?, decided_by = ?
                 WHERE id = ? AND request_sha256 = ? AND status = 'approved' AND expires_at > ?
+                  AND session_id = ?
                 """,
-                (now, actor, approval_id, _request_hash(request), now),
+                (now, actor, approval_id, _request_hash(request), now, actor),
             )
             if cursor.rowcount != 1:
                 return None
@@ -197,7 +323,6 @@ class ApprovalStore:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
-
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -219,7 +344,7 @@ def _get_approval(connection: sqlite3.Connection, approval_id: str) -> tuple[obj
         """
         SELECT id, request_sha256, tool_name, request_arguments_json, argv_json,
                working_directory, reason,
-               status, created_at, expires_at, decided_at, decided_by
+               status, created_at, expires_at, decided_at, decided_by, session_id
         FROM tool_approvals WHERE id = ?
         """,
         (approval_id,),
@@ -249,6 +374,7 @@ def _approval(row: tuple[object, ...] | None) -> ToolApproval:
         expires_at,
         decided_at,
         decided_by,
+        session_id,
     ) = row
     if not (
         isinstance(approval_id, str)
@@ -263,6 +389,7 @@ def _approval(row: tuple[object, ...] | None) -> ToolApproval:
         and isinstance(expires_at, str)
         and (decided_at is None or isinstance(decided_at, str))
         and (decided_by is None or isinstance(decided_by, str))
+        and (session_id is None or isinstance(session_id, str))
     ):
         raise RuntimeError("SQLite returned an invalid tool approval row.")
     return ToolApproval(
@@ -278,6 +405,7 @@ def _approval(row: tuple[object, ...] | None) -> ToolApproval:
         expires_at,
         decided_at,
         decided_by,
+        session_id,
     )
 
 

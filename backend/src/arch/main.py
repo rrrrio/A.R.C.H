@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
@@ -59,23 +60,25 @@ def create_app(
                 settings.rag_model_path,
                 app.state.knowledge_store,
             )
+        if not hasattr(app.state, "auth_service"):
+            app.state.auth_service = AuthService(settings.credential_path, settings.public_origin)
         if not hasattr(app.state, "approval_store"):
             app.state.approval_store = ApprovalStore(settings.database_path)
         if not hasattr(app.state, "tool_gateway"):
+            workspace = settings.terminal_workspace_path
             app.state.tool_gateway = ToolGateway(
-                TerminalToolPolicy(settings.terminal_workspace_path),
+                TerminalToolPolicy(workspace, home_root=Path.home()),
                 app.state.approval_store,
-                TerminalExecutor(settings.terminal_workspace_path),
+                TerminalExecutor(workspace),
                 search_client=(
                     SearxngSearchClient(settings.searxng_endpoint)
                     if settings.search_enabled
                     else None
                 ),
+                profile_provider=app.state.auth_service.terminal_profile,
             )
         if not hasattr(app.state, "voice_profile_store"):
             app.state.voice_profile_store = VoiceProfileStore(settings.data_dir)
-        if not hasattr(app.state, "auth_service"):
-            app.state.auth_service = AuthService(settings.credential_path, settings.public_origin)
         if not hasattr(app.state, "signaling_service"):
             voice_session = LocalVoiceSession(
                 VoiceModelPaths.from_data_dir(settings.artifact_data_dir),

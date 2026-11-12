@@ -19,6 +19,14 @@ from arch.memory.context import bounded_approved_memories
 DEFAULT_SYSTEM_PROMPT = (
     "你是本机语音助手。用简洁的中文回答，避免展示推理过程。"
     "每轮可能提供本地文档检索片段；存在片段时，必须据其回答，不得声称无法查看本地资料。"
+    "用户询问当前时间、GPU 利用率、显存占用或其他实时主机信息时，必须调用受限终端工具，"
+    "不得根据训练数据猜测或声称无法调用。阅读、概览或总结本地资料时直接依据检索片段回答，"
+    "不得为此调用工具。"
+    "普通本机命令调用 terminal_exec，只提交 argv；cwd、access 和 capabilities 均为可选字段，"
+    "除非绝对必要必须省略。find、ls、date 等本地只读命令不得声明任何 capability；"
+    "只有管道、重定向、循环或脚本不可拆分时调用 terminal_shell。"
+    "access 为 read 或 write；capabilities 只能从 network、hardware、service、docker 中选择。"
+    "工具层会决定是否需要浏览器批准。不得编造结果、使用提权或请求 root 权限。"
 )
 
 
@@ -44,14 +52,14 @@ class LlamaCppAgentCore:
             "model": self._model,
             "messages": self._conversation_messages(request),
             "stream": True,
-            "temperature": 0.2 if request.retrieved_context else 0.6,
+            # Tool schemas are structured output; lower sampling avoids invented optional fields.
+            "temperature": 0.2,
             "top_p": 0.95,
             "max_tokens": 256,
             "chat_template_kwargs": {"enable_thinking": False},
         }
-        if not request.retrieved_context:
-            payload["tools"] = [_terminal_tool_definition(), _web_search_tool_definition()]
-            payload["tool_choice"] = "auto"
+        payload["tools"] = [*_terminal_tool_definitions(), _web_search_tool_definition()]
+        payload["tool_choice"] = "auto"
         try:
             async for event in self._stream(request.utterance_id, payload, _StreamToolCall()):
                 yield event
@@ -236,7 +244,7 @@ class _StreamToolCall:
                     return
 
     def complete(self) -> ToolRequest | None:
-        """Return the sole complete call once, leaving syntax validation to ToolPolicy."""
+        """Return the sole complete call once, leaving syntax validation to the policy layer."""
         if self._completed:
             return None
         self._completed = True
@@ -245,31 +253,59 @@ class _StreamToolCall:
         return ToolRequest(self._name, "".join(self._arguments), self._call_id)
 
 
-def _terminal_tool_definition() -> dict[str, object]:
-    """Describe the only model-visible tool; policy still validates every requested argv."""
-    return {
+def _terminal_tool_definitions() -> tuple[dict[str, object], dict[str, object]]:
+    """Describe generic argv and shell tools; the gateway owns authorization."""
+    common = {
+        "cwd": {"type": "string", "description": "可选；省略时使用默认工作区。"},
+        "access": {
+            "type": "string",
+            "enum": ["read", "write"],
+            "description": "可选；省略时为 read。",
+        },
+        "capabilities": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["network", "hardware", "service", "docker"]},
+            "uniqueItems": True,
+            "description": "可选；普通本地只读命令必须省略。",
+        },
+    }
+    exec_tool: dict[str, object] = {
         "type": "function",
         "function": {
-            "name": "terminal",
-            "description": "在本机受限工作目录中执行一个受策略控制的终端命令。",
+            "name": "terminal_exec",
+            "description": (
+                "在本机受控环境执行一个 argv 命令。优先使用本工具，不使用 shell 语法。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "argv": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "命令和参数；不能使用 shell 语法。",
+                        "minItems": 1,
+                        "maxItems": 32,
                     },
-                    "cwd": {
-                        "type": "string",
-                        "description": "相对于受限工作目录的工作目录；省略时为当前目录。",
-                    },
+                    **common,
                 },
                 "required": ["argv"],
                 "additionalProperties": False,
             },
         },
     }
+    shell_tool: dict[str, object] = {
+        "type": "function",
+        "function": {
+            "name": "terminal_shell",
+            "description": "在已获浏览器授权的受控 shell 中运行不可拆分的脚本。",
+            "parameters": {
+                "type": "object",
+                "properties": {"script": {"type": "string", "maxLength": 8192}, **common},
+                "required": ["script"],
+                "additionalProperties": False,
+            },
+        },
+    }
+    return exec_tool, shell_tool
 
 
 def _web_search_tool_definition() -> dict[str, object]:

@@ -62,6 +62,7 @@ def test_login_logout_and_csrf_protection(tmp_path: Path) -> None:
             "/api/auth/login", headers=headers, json={"password": "correct-horse-battery-staple"}
         )
         csrf_token = accepted.json()["csrf_token"]
+        logged_in_status = client.get("/api/auth/status")
         refreshed_csrf = client.get("/api/auth/csrf")
         cookie = accepted.headers["set-cookie"]
         no_csrf = client.post("/api/auth/logout", headers=headers)
@@ -72,6 +73,12 @@ def test_login_logout_and_csrf_protection(tmp_path: Path) -> None:
 
     assert rejected.status_code == 401
     assert accepted.status_code == 200
+    assert logged_in_status.json()["authenticated"] is True
+    assert logged_in_status.json()["terminal_lease_scopes"] == [
+        "registered_observe",
+        "home_metadata",
+    ]
+    assert logged_in_status.json()["terminal_lease_expires_at"]
     assert refreshed_csrf.json() == {"csrf_token": csrf_token}
     assert SESSION_COOKIE_NAME in cookie
     assert "HttpOnly" in cookie
@@ -79,4 +86,44 @@ def test_login_logout_and_csrf_protection(tmp_path: Path) -> None:
     assert "SameSite=strict" in cookie
     assert no_csrf.status_code == 403
     assert logged_out.status_code == 204
-    assert status_after_logout.json() == {"configured": True, "authenticated": False}
+    assert status_after_logout.json() == {
+        "configured": True,
+        "authenticated": False,
+        "terminal_lease_expires_at": None,
+        "terminal_lease_scopes": [],
+        "terminal_profile": None,
+    }
+
+
+def test_terminal_lease_can_be_reissued_with_password_and_csrf(tmp_path: Path) -> None:
+    """An authenticated browser can rotate an expired read-only lease without logging out."""
+    credential_path = tmp_path / "admin.json"
+    provision_credentials(credential_path, "correct-horse-battery-staple")
+    service = AuthService(credential_path, PUBLIC_ORIGIN)
+    headers = {"Origin": PUBLIC_ORIGIN}
+    with TestClient(create_app(service), base_url=PUBLIC_ORIGIN) as client:
+        login = client.post(
+            "/api/auth/login", headers=headers, json={"password": "correct-horse-battery-staple"}
+        )
+        csrf_token = login.json()["csrf_token"]
+        renewed = client.post(
+            "/api/auth/terminal-lease/reissue",
+            headers={**headers, "X-CSRF-Token": csrf_token},
+            json={"password": "correct-horse-battery-staple"},
+        )
+        no_csrf = client.post(
+            "/api/auth/terminal-lease/reissue",
+            headers=headers,
+            json={"password": "correct-horse-battery-staple"},
+        )
+        wrong_password = client.post(
+            "/api/auth/terminal-lease/reissue",
+            headers={**headers, "X-CSRF-Token": csrf_token},
+            json={"password": "wrong"},
+        )
+
+    assert renewed.status_code == 200
+    assert renewed.json()["terminal_lease_expires_at"]
+    assert renewed.json()["terminal_lease_scopes"] == ["registered_observe", "home_metadata"]
+    assert no_csrf.status_code == 403
+    assert wrong_password.status_code == 401

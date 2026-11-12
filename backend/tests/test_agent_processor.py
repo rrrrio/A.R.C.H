@@ -60,6 +60,7 @@ class InspectingAgentProcessor(PipecatAgentProcessor):
         memory_store: MemoryStore | None = None,
         candidate_extractor: MemoryCandidateExtractor | None = None,
         on_memory_candidates_ready: Callable[[], None] | None = None,
+        on_tool_approvals_ready: Callable[[], None] | None = None,
         retriever: Retriever | None = None,
         tool_gateway: ToolDispatcher | None = None,
     ) -> None:
@@ -68,6 +69,7 @@ class InspectingAgentProcessor(PipecatAgentProcessor):
             memory_store=memory_store,
             candidate_extractor=candidate_extractor,
             on_memory_candidates_ready=on_memory_candidates_ready,
+            on_tool_approvals_ready=on_tool_approvals_ready,
             retriever=retriever,
             tool_gateway=tool_gateway,
         )
@@ -308,7 +310,7 @@ class ToolRequestAgent:
         yield AgentResponseEvent(
             request.utterance_id,
             AgentResponseKind.TOOL_REQUEST,
-            tool_request=ToolRequest("terminal", '{"argv":["pwd"],"cwd":"."}'),
+            tool_request=ToolRequest("terminal_exec", '{"argv":["pwd"],"cwd":"."}'),
         )
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
 
@@ -320,7 +322,11 @@ class FakeToolGateway:
         self.requests: list[ToolRequest] = []
         self.cancelled_approval_ids: list[str] = []
 
-    async def dispatch(self, request: ToolRequest) -> ToolOutcome:
+    async def dispatch(
+        self,
+        request: ToolRequest,
+        session_id: str | None = None,
+    ) -> ToolOutcome:
         self.requests.append(request)
         return self.outcome
 
@@ -339,7 +345,7 @@ class ContinuingToolAgent:
             request.utterance_id,
             AgentResponseKind.TOOL_REQUEST,
             tool_request=ToolRequest(
-                "terminal", '{"argv":["pwd"],"cwd":"."}', call_id="call-1"
+                "web_search", '{"query":"current directory"}', call_id="call-1"
             ),
         )
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
@@ -349,6 +355,29 @@ class ContinuingToolAgent:
     ) -> AsyncIterator[AgentResponseEvent]:
         self.results.append(result)
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.TEXT, "当前目录已确认。")
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+
+class HallucinatingTerminalAgent(ContinuingToolAgent):
+    """Try to replace terminal facts with a fabricated answer after approval."""
+
+    async def respond(self, request: AgentRequest) -> AsyncIterator[AgentResponseEvent]:
+        yield AgentResponseEvent(
+            request.utterance_id,
+            AgentResponseKind.TOOL_REQUEST,
+            tool_request=ToolRequest(
+                "terminal_exec", '{"argv":["nvidia-smi"]}', call_id="gpu-1"
+            ),
+        )
+        yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+    async def respond_to_tool_result(
+        self, request: AgentRequest, result: ToolResult
+    ) -> AsyncIterator[AgentResponseEvent]:
+        self.results.append(result)
+        yield AgentResponseEvent(
+            request.utterance_id, AgentResponseKind.TEXT, "当前 GPU 使用率为 0%。"
+        )
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
 
 
@@ -423,7 +452,7 @@ def test_agent_processor_routes_tool_requests_through_gateway_and_renders_bounde
 
     asyncio.run(exercise())
 
-    assert [request.name for request in gateway.requests] == ["terminal"]
+    assert [request.name for request in gateway.requests] == ["terminal_exec"]
     text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
     assert text_frames == ["本地操作结果：workspace\n"]
     conversation_id = processor.conversation_id
@@ -436,7 +465,12 @@ def test_agent_processor_routes_tool_requests_through_gateway_and_renders_bounde
 def test_agent_processor_leaves_approval_required_tool_without_side_effect() -> None:
     """Approval-required requests only instruct the user to review them in the browser."""
     gateway = FakeToolGateway(ToolOutcome("approval_required", "review", approval_id="approval-1"))
-    processor = InspectingAgentProcessor(ToolRequestAgent(), tool_gateway=gateway)
+    notifications: list[str] = []
+    processor = InspectingAgentProcessor(
+        ToolRequestAgent(),
+        tool_gateway=gateway,
+        on_tool_approvals_ready=lambda: notifications.append("ready"),
+    )
 
     async def exercise() -> None:
         await processor.process_frame(
@@ -447,6 +481,7 @@ def test_agent_processor_leaves_approval_required_tool_without_side_effect() -> 
 
     text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
     assert text_frames == ["此本地操作已提交，请在浏览器中批准。"]
+    assert notifications == ["ready"]
 
 
 def test_agent_processor_continues_once_after_browser_approval(tmp_path: Path) -> None:
@@ -482,6 +517,37 @@ def test_agent_processor_continues_once_after_browser_approval(tmp_path: Path) -
         ("user", "创建文件"),
         ("assistant", "当前目录已确认。"),
     ]
+
+
+def test_agent_processor_renders_terminal_stdout_without_model_rewriting(tmp_path: Path) -> None:
+    """A model cannot replace approved GPU output with an invented metric or diagnosis."""
+    gateway = FakeToolGateway(ToolOutcome("approval_required", "review", approval_id="approval-1"))
+    agent = HallucinatingTerminalAgent()
+    store = MemoryStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    processor = InspectingAgentProcessor(agent, memory_store=store, tool_gateway=gateway)
+    result = TerminalResult(0, "75, 10945, 24564\n", "", False, False)
+
+    async def exercise() -> None:
+        await processor.process_frame(
+            TranscriptionFrame("看一下 GPU 使用率", "user", "timestamp"), FrameDirection.DOWNSTREAM
+        )
+        assert await processor.continue_after_approved_tool(
+            "approval-1", ToolOutcome("completed", "done", result=result)
+        )
+        response_task = processor._response_task
+        assert response_task is not None
+        await response_task
+
+    asyncio.run(exercise())
+
+    assert agent.results == []
+    text_frames = [frame.text for frame in processor.forwarded if isinstance(frame, LLMTextFrame)]
+    assert text_frames[-1] == "本地操作结果：75, 10945, 24564\n"
+    conversation_id = processor.conversation_id
+    assert conversation_id is not None
+    messages = [(message.role, message.content) for message in store.list_messages(conversation_id)]
+    assert messages == [("user", "看一下 GPU 使用率")]
 
 
 def test_agent_processor_routes_emotion_from_a_completed_tool_continuation() -> None:
@@ -624,7 +690,11 @@ class BlockingToolGateway:
         self.started = asyncio.Event()
         self.cancelled = asyncio.Event()
 
-    async def dispatch(self, request: ToolRequest) -> ToolOutcome:
+    async def dispatch(
+        self,
+        request: ToolRequest,
+        session_id: str | None = None,
+    ) -> ToolOutcome:
         self.started.set()
         try:
             await asyncio.Event().wait()
@@ -646,7 +716,11 @@ class DelayedCancellationGateway:
         self.cleanup_started = asyncio.Event()
         self.release_cleanup = asyncio.Event()
 
-    async def dispatch(self, request: ToolRequest) -> ToolOutcome:
+    async def dispatch(
+        self,
+        request: ToolRequest,
+        session_id: str | None = None,
+    ) -> ToolOutcome:
         self.started.set()
         try:
             await asyncio.Event().wait()

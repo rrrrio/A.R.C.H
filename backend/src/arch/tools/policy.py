@@ -1,13 +1,13 @@
-"""Parse and classify constrained terminal invocations before they can execute."""
+"""Classify direct, non-root terminal invocations before they can execute."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Literal
 
 from arch.agent.core import ToolRequest
 
@@ -20,12 +20,21 @@ class PolicyDecision(StrEnum):
     DENIED = "denied"
 
 
-@dataclass(frozen=True, slots=True)
-class TerminalCommand:
-    """A normalized, root-confined command that the terminal executor may accept."""
+TerminalProfile = Literal["observe", "assist", "operator"]
+TerminalAccess = Literal["read", "write"]
 
+
+@dataclass(frozen=True, slots=True)
+class HostCommand:
+    """A generic exec or shell request normalized by trusted code."""
+
+    kind: Literal["exec", "shell"]
     argv: tuple[str, ...]
+    script: str | None
     working_directory: Path
+    access: TerminalAccess
+    capabilities: frozenset[str]
+    home_root: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,158 +43,189 @@ class PolicyResult:
 
     decision: PolicyDecision
     reason: str
-    command: TerminalCommand | None = None
-
-
-class ToolPolicy(Protocol):
-    """Classify an untrusted Agent Core request before any tool side effect."""
-
-    def evaluate(self, request: ToolRequest) -> PolicyResult:
-        """Return an explicit disposition without executing the request."""
+    command: HostCommand | None = None
 
 
 class TerminalToolPolicy:
-    """Admit only a small, inspectable terminal grammar within one workspace root."""
+    """Allow direct non-root commands while blocking composition and privilege boundaries."""
 
     _hard_denied = frozenset(
         {
             "bash",
             "bwrap",
-            "chgrp",
-            "chmod",
-            "chown",
-            "dd",
+            "capsh",
+            "chroot",
+            "dash",
+            "docker",
+            "doas",
+            "ed",
             "env",
             "fish",
-            "halt",
-            "mkfs",
+            "findmnt",
+            "awk",
+            "less",
             "mount",
+            "nano",
             "node",
+            "nsenter",
             "perl",
             "php",
-            "poweroff",
+            "pkexec",
+            "podman",
             "python",
             "python3",
-            "reboot",
-            "rm",
             "ruby",
+            "sed",
             "sh",
-            "shutdown",
             "sudo",
             "su",
-            "tee",
+            "systemd-run",
+            "unshare",
             "umount",
-            "useradd",
-            "usermod",
+            "vi",
+            "vim",
             "zsh",
+            "xargs",
         }
     )
+    _host_capabilities = frozenset({"network", "hardware", "service", "docker"})
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        home_root: Path | None = None,
+    ) -> None:
         self._workspace_root = workspace_root.resolve()
+        self._home_root = (home_root or Path.home()).resolve()
 
     def evaluate(self, request: ToolRequest) -> PolicyResult:
-        """Parse an untrusted request into a decision without allowing syntax bypasses."""
-        if request.name != "terminal":
+        """Evaluate one supported generic host tool request."""
+        if request.name not in {"terminal_exec", "terminal_shell"}:
             return PolicyResult(PolicyDecision.DENIED, "Unsupported tool name.")
-        parsed = _parse_terminal_arguments(request.arguments_json)
-        if parsed is None:
-            return PolicyResult(
-                PolicyDecision.DENIED, "Terminal arguments must contain argv and cwd."
-            )
-        argv, requested_cwd = parsed
-        command_name, *arguments = argv
-        if command_name in self._hard_denied:
-            return PolicyResult(PolicyDecision.DENIED, "This command is permanently blocked.")
-        working_directory = self._resolve_workspace_path(requested_cwd)
-        if working_directory is None or not working_directory.is_dir():
-            return PolicyResult(
-                PolicyDecision.DENIED, "Working directory is outside the terminal workspace."
-            )
-        if command_name == "pwd" and not arguments:
-            return PolicyResult(
-                PolicyDecision.AUTO,
-                "pwd reads the confined working directory.",
-                TerminalCommand(argv, working_directory),
-            )
-        if command_name == "ls" and all(
-            argument in {"-a", "-l", "-al", "-la"} for argument in arguments
-        ):
-            return PolicyResult(
-                PolicyDecision.AUTO,
-                "ls only lists the confined working directory.",
-                TerminalCommand(argv, working_directory),
-            )
-        if command_name in {"touch", "cat"} and arguments and all(
-            _is_confined_operand(argument, self._resolve_workspace_path) for argument in arguments
-        ):
-            return PolicyResult(
-                PolicyDecision.APPROVAL_REQUIRED,
-                f"{command_name} accesses workspace files.",
-                TerminalCommand(argv, working_directory),
-            )
-        if command_name == "mkdir" and _mkdir_paths_are_confined(
-            arguments, self._resolve_workspace_path
-        ):
-            return PolicyResult(
-                PolicyDecision.APPROVAL_REQUIRED,
-                "mkdir creates workspace directories.",
-                TerminalCommand(argv, working_directory),
-            )
-        if command_name not in {"pwd", "ls", "touch", "cat", "mkdir"}:
-            return PolicyResult(
-                PolicyDecision.APPROVAL_REQUIRED,
-                "This command requires approval and a future constrained command adapter.",
-            )
-        return PolicyResult(
-            PolicyDecision.DENIED, "Command arguments are outside the allowed terminal grammar."
-        )
+        return self.evaluate_host(request)
 
-    def _resolve_workspace_path(self, raw_path: str) -> Path | None:
-        """Resolve an existing or future relative path while rejecting all root escapes."""
-        candidate = Path(raw_path)
-        if candidate.is_absolute():
+    def evaluate_host(
+        self, request: ToolRequest, profile: TerminalProfile = "assist"
+    ) -> PolicyResult:
+        """Validate generic host calls and auto-run only a confined read-only argv request."""
+        if profile not in ("observe", "assist", "operator"):
+            return PolicyResult(PolicyDecision.DENIED, "终端权限档位无效。")
+        command = self._parse_host_command(request)
+        if command is None:
+            return PolicyResult(PolicyDecision.DENIED, "终端工具参数无效。")
+        if (
+            command.kind == "exec"
+            and command.argv[0] in self._hard_denied
+            and not (command.argv[0] == "docker" and "docker" in command.capabilities)
+        ):
+            return PolicyResult(PolicyDecision.DENIED, "该命令不能绕过主机权限边界。")
+        if command.kind == "shell" and profile == "observe":
+            return PolicyResult(PolicyDecision.DENIED, "观察档位不允许 shell。", command)
+        if profile == "observe" and (command.access != "read" or command.capabilities):
+            return PolicyResult(PolicyDecision.DENIED, "观察档位只允许无能力的只读执行。", command)
+        if command.capabilities & {"service", "docker"} and profile != "operator":
+            return PolicyResult(PolicyDecision.DENIED, "该主机控制能力需要主机操作档位。", command)
+        return PolicyResult(PolicyDecision.APPROVAL_REQUIRED, "该操作需要浏览器授权。", command)
+
+    def _parse_host_command(self, request: ToolRequest) -> HostCommand | None:
+        try:
+            value = json.loads(request.arguments_json)
+        except json.JSONDecodeError:
             return None
-        resolved = (self._workspace_root / candidate).resolve()
-        if resolved == self._workspace_root or self._workspace_root in resolved.parents:
-            return resolved
-        return None
-
-
-def _parse_terminal_arguments(arguments_json: str) -> tuple[tuple[str, ...], str] | None:
-    """Accept one bounded object shape and reject scalar, shell, and malformed inputs."""
-    try:
-        value = json.loads(arguments_json)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(value, dict) or set(value) - {"argv", "cwd"}:
-        return None
-    argv = value.get("argv")
-    cwd = value.get("cwd", ".")
-    if (
-        not isinstance(argv, list)
-        or not 1 <= len(argv) <= 16
-        or not all(
-            isinstance(item, str) and item and len(item) <= 256 and "\x00" not in item
-            for item in argv
+        if not isinstance(value, dict):
+            return None
+        access = value.get("access", "read")
+        raw_capabilities = value.get("capabilities", [])
+        if access not in ("read", "write") or not isinstance(raw_capabilities, list):
+            return None
+        cwd = self._resolve_host_directory(
+            value.get("cwd", str(self._workspace_root)), access
         )
-        or not isinstance(cwd, str)
-        or not cwd
-        or len(cwd) > 256
-        or "\x00" in cwd
-    ):
-        return None
-    return tuple(argv), cwd
+        if cwd is None:
+            return None
+        if not all(
+            isinstance(item, str) and item in self._host_capabilities for item in raw_capabilities
+        ):
+            return None
+        capabilities = frozenset(raw_capabilities)
+        if request.name == "terminal_exec":
+            if set(value) - {"argv", "cwd", "access", "capabilities"} or "argv" not in value:
+                return None
+            raw_argv = value["argv"]
+            if (
+                not isinstance(raw_argv, list)
+                or not 1 <= len(raw_argv) <= 32
+                or not all(isinstance(item, str) and 0 < len(item) <= 256 for item in raw_argv)
+            ):
+                return None
+            argv = tuple(self._normalize_model_home_placeholder(item) for item in raw_argv)
+            if any("\x00" in item or any(char in item for char in "\n\r;&|<>`$") for item in argv):
+                return None
+            if "/" in argv[0] or argv[0].startswith("-"):
+                return None
+            return HostCommand("exec", argv, None, cwd, access, capabilities, self._home_root)
+        if set(value) - {"script", "cwd", "access", "capabilities"} or "script" not in value:
+            return None
+        script = value["script"]
+        if (
+            not isinstance(script, str)
+            or not script.strip()
+            or len(script) > 8192
+            or "\x00" in script
+        ):
+            return None
+        return HostCommand("shell", (), script, cwd, access, capabilities, self._home_root)
 
+    def _normalize_model_home_placeholder(self, value: str) -> str:
+        """Replace the local model's `/home/user` placeholder with the real user home.
 
-def _mkdir_paths_are_confined(
-    arguments: list[str], resolve_path: Callable[[str], Path | None]
-) -> bool:
-    """Allow mkdir's sole supported flag only when every operand stays in the workspace."""
-    paths = arguments[1:] if arguments[:1] == ["-p"] else arguments
-    return bool(paths) and all(_is_confined_operand(path, resolve_path) for path in paths)
+        Only lexical child paths are converted; traversal remains an untrusted command argument.
+        """
+        if value == "/home/user":
+            return str(self._home_root)
+        prefix = "/home/user/"
+        if not value.startswith(prefix):
+            return value
+        relative = Path(value.removeprefix(prefix))
+        if any(part in {"", ".", ".."} for part in relative.parts):
+            return value
+        return str(self._home_root / relative)
 
+    def _resolve_host_directory(self, raw_path: object, access: TerminalAccess) -> Path | None:
+        if (
+            not isinstance(raw_path, str)
+            or not raw_path
+            or len(raw_path) > 4096
+            or "\x00" in raw_path
+        ):
+            return None
+        if raw_path == "/home/user":
+            return self._workspace_root
+        candidate = Path(raw_path)
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (self._workspace_root / candidate).resolve()
+        )
+        try:
+            if not resolved.is_dir():
+                return None
+            if resolved == Path("/") and access == "read":
+                return resolved
+            if resolved.stat().st_uid != os.getuid():
+                return None
+        except OSError:
+            return None
+        if _is_sensitive_path(resolved, self._home_root):
+            return None
+        return resolved
 
-def _is_confined_operand(raw_path: str, resolve_path: Callable[[str], Path | None]) -> bool:
-    """Reject program options so only a path operand can reach a filesystem command."""
-    return not raw_path.startswith("-") and resolve_path(raw_path) is not None
+def _is_sensitive_path(path: Path, home_root: Path) -> bool:
+    """Keep credential-bearing home directories outside every terminal scope."""
+    try:
+        relative = path.relative_to(home_root)
+    except ValueError:
+        return False
+    return any(
+        part in {".ssh", ".aws", ".gnupg", ".config", ".docker", ".kube"} for part in relative.parts
+    )
