@@ -71,6 +71,9 @@ gateway:
 | `ARCH_AVATAR_RUNTIME_DIR` | `Path` / `data/runtime/avatar` | 必须在 `data/` 内 | 独立 avatar worker 的运行状态目录。 |
 | `ARCH_AVATAR_SOCKET_PATH` | `Path` / `data/runtime/avatar/avatar.sock` | 必须在 `data/` 内 | A.R.C.H. 后端与 GPU worker 之间的 Unix socket。 |
 | `ARCH_AVATAR_SOURCE_VIDEO` | `Path` / `data/avatars/idle.mp4` | 必须在 `data/` 内，必须有可解码视频帧 | 管理员提供的固定真人参考视频。 |
+| `ARCH_AVATAR_MODEL_ROOT` | `Path` / `data/models/musetalk/2bcb936e2fddb4d86db4c62fd45b387d0c061571` | 必须在 `data/` 内；只读 | 固定 MuseTalk V1.5 权重与附属模型目录。 |
+| `ARCH_AVATAR_CACHE_DIR` | `Path` / `data/runtime/avatar/preprocessed` | 必须在 `data/` 内；worker 可写 | 由固定 MP4 内容、模型 revision 和裁切参数寻址的预处理缓存根目录。 |
+| `ARCH_AVATAR_MUSETALK_SOURCE` | `Path` / `data/runtime/musetalk/source` | 必须在 `data/` 内；只读 | 隔离 CUDA runtime 使用的固定 MuseTalk 源码 checkout。 |
 | `ARCH_AVATAR_MODEL` | `str` / `musetalk-1.5` | 由独立 worker 解释 | 视频口型模型标识。 |
 | `ARCH_AVATAR_WORKER_BACKEND` | `str` / `musetalk` | `musetalk` 或 `preview` | 正式口型 worker 或仅用于传输 smoke 的循环预览。 |
 | `ARCH_AVATAR_FPS` | `int` / `25` | 1 到 60 | 视频轨道目标帧率。 |

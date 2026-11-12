@@ -5,7 +5,6 @@ from __future__ import annotations
 import unittest
 
 import numpy as np
-
 from avatar_runtime.audio import StreamingPcmResampler
 
 

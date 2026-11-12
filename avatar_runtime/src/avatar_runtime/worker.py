@@ -39,6 +39,12 @@ class Renderer(Protocol):
     def frames(self) -> AsyncIterator[bytes]: ...
 
 
+class CompletedUtteranceEngine(Protocol):
+    """Synchronous model boundary kept behind the async worker protocol."""
+
+    def render(self, pcm: bytes) -> list[bytes]: ...
+
+
 class PreviewRenderer:
     """Loop the fixed portrait source as a transport and layout smoke test."""
 
@@ -89,7 +95,13 @@ class MuseTalkRenderer:
     """Run a pinned MuseTalk engine after a complete, cancellable utterance arrives."""
 
     def __init__(
-        self, source: Path, fps: int, model_root: Path, cache_dir: Path, source_root: Path
+        self,
+        source: Path,
+        fps: int,
+        model_root: Path,
+        cache_dir: Path,
+        source_root: Path,
+        engine: CompletedUtteranceEngine | None = None,
     ) -> None:
         identity = AvatarCacheIdentity(
             source_sha256=sha256_file(source),
@@ -102,10 +114,12 @@ class MuseTalkRenderer:
         cache_dir = cache_dir / identity.key
         if cache_dir.exists():
             identity.write_manifest(cache_dir)
-        # Keep heavyweight CUDA and upstream imports outside the normal preview path.
-        from avatar_runtime.musetalk import MuseTalkEngine
+        if engine is None:
+            # Keep heavyweight CUDA and upstream imports outside the normal preview path.
+            from avatar_runtime.musetalk import MuseTalkEngine
 
-        self._engine = MuseTalkEngine(source_root, model_root, cache_dir, fps)
+            engine = MuseTalkEngine(source_root, model_root, cache_dir, fps)
+        self._engine = engine
         self._buffers: dict[str, bytearray] = {}
         self._generation = 0
         self._frames: asyncio.Queue[bytes] = asyncio.Queue(maxsize=max(fps * 2, 8))

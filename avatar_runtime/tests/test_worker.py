@@ -6,14 +6,14 @@ import asyncio
 import base64
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
 import av
 import numpy as np
-
 from avatar_runtime.audio import StreamingPcmResampler
-from avatar_runtime.worker import AvatarWorkerConnection, PreviewRenderer
+from avatar_runtime.worker import AvatarWorkerConnection, MuseTalkRenderer, PreviewRenderer
 
 
 class RecordingRenderer:
@@ -56,6 +56,19 @@ class RecordingWriter:
 
     async def wait_closed(self) -> None:
         return
+
+
+class BlockingEngine:
+    """Hold one completed GPU batch until the test applies cancellation."""
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def render(self, pcm: bytes) -> list[bytes]:
+        self.started.set()
+        self.release.wait(timeout=1)
+        return [b"stale-frame"]
 
 
 class PreviewRendererTests(unittest.TestCase):
@@ -124,3 +137,36 @@ class AvatarWorkerConnectionTests(unittest.TestCase):
             ],
         )
         self.assertEqual(writer.messages, [{"type": "ready"}])
+
+
+class MuseTalkRendererTests(unittest.TestCase):
+    """Verify renderer-local cancellation after a synchronous GPU batch starts."""
+
+    def test_cancel_discards_completed_stale_gpu_batch(self) -> None:
+        """A renderer task that finishes after cancel must not publish its JPEG frames."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "avatar.mp4"
+            source.write_bytes(b"fixed-source")
+            engine = BlockingEngine()
+            renderer = MuseTalkRenderer(
+                source,
+                fps=25,
+                model_root=root / "models",
+                cache_dir=root / "cache",
+                source_root=root / "source",
+                engine=engine,
+            )
+
+            async def exercise() -> None:
+                await renderer.begin("old", 16000, "neutral")
+                await renderer.push_audio("old", b"\x00\x00" * 1600, 0)
+                await renderer.end("old")
+                await asyncio.to_thread(engine.started.wait, 1)
+                await renderer.cancel("old")
+                engine.release.set()
+                await asyncio.sleep(0.02)
+                with self.assertRaises(TimeoutError):
+                    await asyncio.wait_for(anext(renderer.frames()), timeout=0.02)
+
+            asyncio.run(exercise())
