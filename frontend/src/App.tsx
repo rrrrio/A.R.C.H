@@ -5,7 +5,7 @@ import { fetchAuthStatus, fetchCsrfToken, hasCurrentAuthContract, login, logout,
 import { fetchKnowledgeStatus, rebuildKnowledgeIndex, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
 import { decideToolApproval, fetchTerminalGrants, fetchToolApprovals, revokeTerminalGrant, type TerminalGrant, type ToolApproval } from './tools'
-import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceConnection, type VoiceEvent, VoiceClient, WebSocketVoiceClient } from './voice'
+import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceConnection, type VoiceEvent, type VoiceTransport, VoiceClient, WebSocketVoiceClient } from './voice'
 import { createVoiceProfile, deleteVoiceProfile, fetchVoiceProfiles, handleReferenceFileSelection, restartVoiceSessionForProfileSelection, selectVoiceProfile, transcribeReferenceAudio, type VoiceProfile, validateReferenceAudio } from './voices'
 import './App.css'
 
@@ -75,6 +75,7 @@ function App() {
   const [profileTranscribing, setProfileTranscribing] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
   const voiceClient = useRef<VoiceConnection | null>(null)
+  const preferredVoiceTransport = useRef<VoiceTransport>('webrtc')
   const inputReadyTimer = useRef<number | null>(null)
   const profileTranscriptionRequest = useRef(0)
   const avatarEnergySink = useRef<(energy: number) => void>(() => undefined)
@@ -252,14 +253,42 @@ function App() {
     }
   }
 
+  async function connectWebSocketVoice(csrfToken: string) {
+    setVoiceState('preparing')
+    const client = new WebSocketVoiceClient(
+      csrfToken,
+      (event) => { if (voiceClient.current === client) handleVoiceEvent(event) },
+      audioDeviceId || undefined,
+      () => handleVoiceDisconnect(client),
+      (energy) => avatarEnergySink.current(energy),
+    )
+    voiceClient.current = client
+    try {
+      await client.connect()
+      if (voiceClient.current !== client) await client.close().catch(() => undefined)
+    } catch {
+      if (voiceClient.current === client) {
+        voiceClient.current = null
+        setVoiceState('error')
+      }
+      await client.close().catch(() => undefined)
+    }
+  }
+
   async function connectVoice() {
     if (session.kind !== 'authenticated') return
     setVoiceState('connecting')
     setConversation(initialConversation)
+    if (preferredVoiceTransport.current === 'websocket') {
+      await connectWebSocketVoice(session.csrfToken)
+      return
+    }
     const client = new VoiceClient(
       session.csrfToken,
       (event) => {
-        if (voiceClient.current === client) handleVoiceEvent(event)
+        if (voiceClient.current !== client) return
+        if (event.type === 'voice_input_ready') preferredVoiceTransport.current = 'webrtc'
+        handleVoiceEvent(event)
       },
       audioDeviceId || undefined,
       () => handleVoiceDisconnect(client),
@@ -295,7 +324,7 @@ function App() {
   function handleVoiceDisconnect(client: VoiceConnection) {
     if (voiceClient.current !== client) return
     voiceClient.current = null
-    setVoiceState('disconnected')
+    setVoiceState((current) => current === 'connecting' || current === 'preparing' ? 'error' : 'disconnected')
     setConversation(initialConversation)
     void client.close().catch(() => undefined)
   }
@@ -348,27 +377,8 @@ function App() {
     if (voiceClient.current !== webRtcClient) return
     await webRtcClient.close().catch(() => undefined)
     if (voiceClient.current !== webRtcClient) return
-    setVoiceState('preparing')
-    const client = new WebSocketVoiceClient(
-      csrfToken,
-      (event) => { if (voiceClient.current === client) handleVoiceEvent(event) },
-      audioDeviceId || undefined,
-      () => handleVoiceDisconnect(client),
-      (energy) => avatarEnergySink.current(energy),
-    )
-    voiceClient.current = client
-    try {
-      await client.connect()
-      if (voiceClient.current !== client) {
-        await client.close().catch(() => undefined)
-      }
-    } catch {
-      if (voiceClient.current === client) {
-        voiceClient.current = null
-        setVoiceState('error')
-      }
-      await client.close().catch(() => undefined)
-    }
+    preferredVoiceTransport.current = 'websocket'
+    await connectWebSocketVoice(csrfToken)
   }
 
   async function updateCandidate(candidateId: string, update: { content?: string; action?: 'approved' | 'rejected' | 'deleted' }) {
@@ -704,13 +714,13 @@ function App() {
             </button>
           </div>
           <div className="action-row">
-            {voiceState === 'preparing' || voiceState === 'ready' ? (
+            {voiceState === 'ready' ? (
               <button type="button" className="secondary-button" onClick={() => void disconnectVoice()}>
                 断开
               </button>
             ) : (
-              <button type="button" onClick={() => void connectVoice()} disabled={voiceState === 'connecting'}>
-                {voiceState === 'connecting' ? '正在连接' : '连接语音'}
+              <button type="button" onClick={() => void connectVoice()} disabled={voiceState === 'connecting' || voiceState === 'preparing'}>
+                {voiceState === 'connecting' ? '正在连接' : voiceState === 'preparing' ? '正在准备' : '连接语音'}
               </button>
             )}
             <button type="button" className="secondary-button" onClick={() => void signOut()}>

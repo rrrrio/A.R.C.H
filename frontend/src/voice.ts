@@ -21,13 +21,16 @@ type AudioGenerationEvent = {
 
 export type AudioInput = { deviceId: string; label: string }
 export type OutputEnergyHandler = (energy: number) => void
+export type VoiceTransport = 'webrtc' | 'websocket'
 
 export interface VoiceConnection {
+  readonly transport: VoiceTransport
   connect(): Promise<void>
   close(): Promise<void>
 }
 
 export class VoiceClient {
+  readonly transport = 'webrtc' as const
   private readonly connection = new RTCPeerConnection()
   private readonly audio = new Audio()
   private readonly csrfToken: string
@@ -224,6 +227,7 @@ export class VoiceClient {
 }
 
 export class WebSocketVoiceClient implements VoiceConnection {
+  readonly transport = 'websocket' as const
   private readonly csrfToken: string
   private readonly onEvent: (event: VoiceEvent) => void
   private readonly audioDeviceId: string | undefined
@@ -237,6 +241,8 @@ export class WebSocketVoiceClient implements VoiceConnection {
   private captureSink: GainNode | null = null
   private nextPlaybackTime = 0
   private closing = false
+  private readyResolve: (() => void) | null = null
+  private readyReject: ((error: Error) => void) | null = null
   private readonly onOutputEnergy: OutputEnergyHandler
   private activeAudioUtteranceId: string | null = null
   private readonly cancelledAudioUtteranceIds = new Set<string>()
@@ -265,15 +271,29 @@ export class WebSocketVoiceClient implements VoiceConnection {
       `arch-csrf.${this.csrfToken}`,
     )
     socket.binaryType = 'arraybuffer'
-    await new Promise<void>((resolve, reject) => {
-      socket.onopen = () => resolve()
-      socket.onerror = () => reject(new Error('Voice fallback connection failed.'))
-    })
     this.socket = socket
-    socket.onmessage = (message) => this.handleMessage(message)
+    let opened = false
+    let rejectOpen: ((error: Error) => void) | null = null
+    await new Promise<void>((resolve, reject) => {
+      rejectOpen = reject
+      socket.onopen = () => resolve()
+      socket.onerror = () => {
+        reject(new Error('Voice fallback connection failed.'))
+      }
+      socket.onclose = () => {
+        if (!opened) rejectOpen?.(new Error('Voice fallback connection closed before it opened.'))
+      }
+    })
+    opened = true
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      this.readyResolve = resolve
+      this.readyReject = reject
+    })
     socket.onclose = () => {
+      this.readyReject?.(new Error('Voice fallback connection closed before it was ready.'))
       if (!this.closing) this.onConnectionClosed()
     }
+    socket.onmessage = (message) => this.handleMessage(message)
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: voiceCaptureConstraints(this.audioDeviceId),
       video: false,
@@ -291,6 +311,17 @@ export class WebSocketVoiceClient implements VoiceConnection {
     }
     this.source.connect(this.processor)
     this.processor.connect(this.captureSink)
+    try {
+      await Promise.race([
+        readyPromise,
+        new Promise<never>((_, reject) => {
+          globalThis.setTimeout(() => reject(new Error('Voice fallback startup timed out.')), 20_000)
+        }),
+      ])
+    } finally {
+      this.readyResolve = null
+      this.readyReject = null
+    }
   }
 
   async close(): Promise<void> {
@@ -307,8 +338,12 @@ export class WebSocketVoiceClient implements VoiceConnection {
     this.captureSink = null
     await this.context?.close()
     this.context = null
-    this.socket?.close()
+    const socket = this.socket
     this.socket = null
+    this.readyReject?.(new Error('Voice fallback connection was closed.'))
+    this.readyResolve = null
+    this.readyReject = null
+    if (socket !== null) await waitForWebSocketClose(socket)
     this.onOutputEnergy(0)
   }
 
@@ -319,6 +354,7 @@ export class WebSocketVoiceClient implements VoiceConnection {
         if (isAudioGenerationEvent(event)) {
           this.handleAudioGeneration(event)
         } else if (isVoiceEvent(event)) {
+          if (event.type === 'voice_ready') this.readyResolve?.()
           // The VAD state is the earliest browser-visible cancellation signal. Do not wait
           // for a later transport interruption frame while old PCM remains scheduled.
           if (event.type === 'voice_state' && event.state === 'user-speaking') {
@@ -379,6 +415,26 @@ export class WebSocketVoiceClient implements VoiceConnection {
     this.nextPlaybackTime = this.context.currentTime
     this.onOutputEnergy(0)
   }
+}
+
+async function waitForWebSocketClose(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.CLOSED) return
+  await new Promise<void>((resolve) => {
+    let finished = false
+    const finish = () => {
+      if (finished) return
+      finished = true
+      resolve()
+    }
+    const previousOnClose = socket.onclose
+    socket.onclose = (event) => {
+      previousOnClose?.call(socket, event)
+      finish()
+    }
+    socket.close()
+    if (socket.readyState === WebSocket.CLOSED) finish()
+    globalThis.setTimeout(finish, 1000)
+  })
 }
 
 export function normalizeAudioLevel(value: unknown): number {

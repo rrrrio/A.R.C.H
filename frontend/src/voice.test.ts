@@ -382,6 +382,48 @@ describe('WebSocketVoiceClient', () => {
     expect(onOutputEnergy).toHaveBeenCalledWith(0)
     expect(onEvent).toHaveBeenCalledWith({ type: 'voice_state', state: 'user-speaking' })
   })
+
+  it('waits for the fallback socket to close before releasing the client', async () => {
+    vi.stubGlobal('WebSocket', { CLOSED: 3 })
+    const socket = {
+      readyState: 1,
+      onclose: null as ((event: CloseEvent) => void) | null,
+      close: vi.fn(),
+    } as unknown as WebSocket
+    const client = Object.create(WebSocketVoiceClient.prototype) as {
+      socket: WebSocket | null
+      stream: MediaStream | null
+      processor: ScriptProcessorNode | null
+      source: AudioNode | null
+      gain: GainNode | null
+      captureSink: GainNode | null
+      context: Pick<AudioContext, 'close'> | null
+      closing: boolean
+      onOutputEnergy(energy: number): void
+      close(): Promise<void>
+    }
+    client.socket = socket
+    client.stream = null
+    client.processor = null
+    client.source = null
+    client.gain = null
+    client.captureSink = null
+    client.context = null
+    client.closing = false
+    client.onOutputEnergy = vi.fn()
+
+    let settled = false
+    const closing = client.close().then(() => { settled = true })
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(socket.close).toHaveBeenCalledOnce()
+    expect(settled).toBe(false)
+
+    ;(socket as unknown as { readyState: number }).readyState = 3
+    socket.onclose?.({} as CloseEvent)
+    await closing
+
+    expect(settled).toBe(true)
+  })
 })
 
 function framedPCM(utteranceId: string): ArrayBuffer {

@@ -102,6 +102,9 @@ def create_app(
             )
         yield
         await app.state.signaling_service.close()
+        managed_voice_session = getattr(app.state, "voice_session", None)
+        if isinstance(managed_voice_session, LocalVoiceSession):
+            await managed_voice_session.close()
         app.state.voice_reference_transcriber.close()
 
     application = FastAPI(title="A.R.C.H.", version="0.1.0", lifespan=lifespan)

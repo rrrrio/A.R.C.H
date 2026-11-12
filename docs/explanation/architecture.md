@@ -23,9 +23,9 @@
                                                            \
                                                             -> future avatar
 
-当前输入与输出分别为 16 kHz 和 24 kHz。ASR 使用本地 Faster-Whisper；会话创建时启动受后端拥有的 loopback llama.cpp；未选择声音参考时 TTS 使用 Kokoro 中文声线，并经本地 Misaki v1.1 生成中文音素。选择有效 profile 后使用隔离 Qwen worker。Qwen3 请求与 llama.cpp 服务均关闭 reasoning，避免推理内容占满实时工具调用的输出预算。
+当前输入与输出分别为 16 kHz 和 24 kHz。ASR 使用本地 Faster-Whisper；首次媒体会话启动受后端拥有的 loopback llama.cpp，后续媒体重连复用该服务，应用关闭时释放；未选择声音参考时 TTS 使用 Kokoro 中文声线，并经本地 Misaki v1.1 生成中文音素。选择有效 profile 后使用隔离 Qwen worker。Qwen3 请求与 llama.cpp 服务均关闭 reasoning，避免推理内容占满实时工具调用的输出预算。
 
-当 WebRTC 信令成功但服务器没有收到麦克风媒体时，浏览器会释放 WebRTC，并通过同一 HTTPS origin 建立受认证的 WSS PCM 通道。回退通道输入为 16 kHz PCM16、输出为 24 kHz PCM16，后续仍进入同一条 Pipecat 流水线。两条采集路径都会请求浏览器回声消除、降噪和自动增益，并静音本地麦克风监控，防止扬声器反馈被误判为插话；这不影响服务器语音输出。它不能修复被操作者选为输入的系统回环设备。服务器确认收到第一帧输入后，正常 LAN 连接继续使用 WebRTC；只有未确认输入的连接才会自动回退。
+当 WebRTC 信令成功但服务器没有收到麦克风媒体时，浏览器会释放 WebRTC，并通过同一 HTTPS origin 建立受认证的 WSS PCM 通道。回退通道输入为 16 kHz PCM16、输出为 24 kHz PCM16，后续仍进入同一条 Pipecat 流水线。两条采集路径都会请求浏览器回声消除、降噪和自动增益，并静音本地麦克风监控，防止扬声器反馈被误判为插话；这不影响服务器语音输出。它不能修复被操作者选为输入的系统回环设备。服务器确认收到第一帧输入后，正常 LAN 连接继续使用 WebRTC；只有未确认输入的连接才会自动回退。当前页面一旦确认使用 WSS 回退，profile 切换或语音重连会继续使用 WSS，不再重复等待 WebRTC 的输入确认；之后某次 WebRTC 真实收到输入时才恢复 WebRTC 偏好。每条新传输还必须等待后端发送 `voice_ready` 才算连接成功；同一登录会话的旧 WSS runner 若仍在收尾，会先被安全取消并等待释放，再创建新 pipeline，不会因短暂的旧会话占用而反复失败；不同登录会话仍被拒绝。
 
 ## 取消与单会话约束
 
@@ -51,7 +51,7 @@
 
 ## 为音色克隆和数字人保留的接口
 
-`OutputMux` 在 `direct_audio` 与未来 `avatar_av` 输出模式间保持互斥。浏览器直接播放 Kokoro 或已选择 profile 的 Qwen 24 kHz PCM。Qwen worker 只在会话启动时有有效选择才进入隔离环境，通过 Unix socket 接收不含路径的 profile ID；Qwen 适配器按终止标点或 120 字符边界依次合成，并在每个句子的 PCM 完成后立即输出。缺少制品、启动失败或格式错误会使会话失败，绝不替换为 Kokoro。Pipecat 取消正在合成的 Qwen 请求时会终止对应隔离 worker，防止旧生成继续占用资源或重新输出。一次本地合成 WAV smoke 已观察到 worker 输出 PCM，但尚未证明浏览器可听音色、首音或插话指标。
+`OutputMux` 在 `direct_audio` 与未来 `avatar_av` 输出模式间保持互斥。浏览器直接播放 Kokoro 或已选择 profile 的 Qwen 24 kHz PCM。Qwen worker 由 `LocalVoiceSession` 持有，只在首次需要有效选择时进入隔离环境；媒体 profile 重连复用 Qwen worker 和 loopback LLM，通过 Unix socket 接收不含路径的 profile ID，应用关闭时释放服务。Qwen 适配器按终止标点或 120 字符边界依次合成，并在每个句子的 PCM 完成后立即输出。缺少制品、启动失败或格式错误会使会话失败，绝不替换为 Kokoro。Pipecat 取消正在合成的 Qwen 请求时会终止对应隔离 worker，防止旧生成继续占用资源或重新输出。一次本地合成 WAV smoke 已观察到 worker 输出 PCM，但尚未证明浏览器可听音色、首音或插话指标。
 
 Agent Core 可以为下一段 TTS 输出提供 `neutral`、`warm`、`calm` 或 `urgent` 中的一个受限标签。媒体边界会把其他值归一为 `neutral`，并在用户插话时重置为 `neutral`。该标签只传入 `OutputMux.begin`，供未来数字人或兼容 TTS 适配器使用；它不是 Qwen Base 的任意风格参数，当前直接浏览器音频也不会向客户端暴露表达事件。后续数字人适配器可以消费带时间戳的 PCM、音量、口型和该受限标签，并在 `avatar_av` 模式拥有最终音频，避免重音或口型漂移。真实数字人后端、浏览器表达渲染和设备级验收仍未完成。
 

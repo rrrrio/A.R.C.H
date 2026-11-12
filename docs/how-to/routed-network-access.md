@@ -15,7 +15,7 @@
 2. 登录，选择麦克风后点击“连接语音”。
 3. 等待页面显示“可以说话”，再说一句完整的话。
 
-浏览器优先使用 WebRTC。若服务器在短暂等待内没有确认收到麦克风 PCM，页面会自动关闭该媒体会话，并通过同一 HTTPS 域名建立受认证的 WebSocket 音频通道。这个过程不要求重新登录、再次授权麦克风或手动切换模式。
+浏览器优先使用 WebRTC。若服务器在短暂等待内没有确认收到麦克风 PCM，页面会自动关闭该媒体会话，并通过同一 HTTPS 域名建立受认证的 WebSocket 音频通道。当前页面确认使用该回退后，声音 profile 切换会直接重连 WebSocket，不会每次重复等待 WebRTC 超时；新连接在收到后端 `voice_ready` 前不会被视为可用。如果旧 WebSocket 尚未完成服务端收尾，同一登录会话会先安全释放旧 runner 再重建，避免页面在“断开/连接语音”之间反复切换；这个过程不要求重新登录、再次授权麦克风或手动切换模式。
 
 ## 验收
 
@@ -36,4 +36,4 @@ systemctl --user status arch-backend.service --no-pager
 journalctl --user -u arch-backend.service -n 120 --no-pager
 ```
 
-日志中的 `FastAPIWebsocketInputTransport`、`User started speaking` 和 `Transcription:` 依次表示回退通道已建立、服务器收到语音、识别已完成。若没有 WebSocket 或 WebRTC 建连记录，问题位于名称解析、证书、穿透路由或浏览器代理设置，而不是语音模型。
+日志中的 `FastAPIWebsocketInputTransport`、`Voice WebSocket session failed`、`User started speaking` 和 `Transcription:` 分别表示回退通道已建立、连接启动或收尾异常、服务器收到语音、识别已完成。若没有 WebSocket 或 WebRTC 建连记录，问题位于名称解析、证书、穿透路由或浏览器代理设置，而不是语音模型。

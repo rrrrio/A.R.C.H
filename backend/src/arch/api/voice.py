@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Request, Response, WebSocket, status
@@ -14,6 +15,7 @@ from arch.auth.service import AuthService
 from arch.voice.webrtc import WebRTCSignalingService
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
+logger = logging.getLogger(__name__)
 
 
 class OfferRequest(BaseModel):
@@ -73,6 +75,7 @@ async def stream(websocket: WebSocket) -> None:
         else:
             await voice_session.start_websocket(websocket)
     except Exception:
+        logger.exception("Voice WebSocket session failed during startup or shutdown.")
         await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
 
 
