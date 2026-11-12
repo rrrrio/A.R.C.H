@@ -1,6 +1,6 @@
 # 文档导航
 
-本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。固定 MP4 真人视频数字人的鉴权视频桥接和 preview worker 已实现，但 MuseTalk 实时口型 renderer 仍在准备中，不能把预览画面视为同步口型。
+本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。固定 MP4 真人视频数字人的鉴权视频桥接、MuseTalk 增量 renderer 和 preview worker 已实现，并完成主机 IPC/GPU smoke；浏览器设备上的持续帧率和音画同步尚未验收。
 
 ## 按任务阅读
 

@@ -41,9 +41,9 @@
 
 worker 会为每个有效播报轮次将 A.R.C.H. 的 24 kHz PCM 连续转换为 MuseTalk 所需 16 kHz 输入；取消后的旧轮次不会继续进入 renderer，任意 IPC 分块不会改变输出采样时间线。MuseTalk worker 现已加载固定 UNet、VAE 与 Whisper 并通过官方扩散/混合路径生成 JPEG 帧，不会落盘临时 WAV 或 MP4。
 
-这一版的真实 renderer 在 `end` 后处理一个完整 utterance，而不是逐 PCM chunk 实时出帧；这是为了保留官方 Whisper 上下文并确保取消可丢弃整批旧帧。每个固定 MP4 都必须在维护窗口生成自己的 face crop、latent、mask 缓存。缓存路径由 MP4 SHA-256、MuseTalk revision、FPS 和裁切参数共同寻址，位于 `ARCH_AVATAR_CACHE_DIR/<cache-key>`。没有完整缓存时 worker 会拒绝启动，既有语音不会被阻断。
+真实 renderer 在积累至少 8 帧的稳定音频后就启动 GPU batch；为保留 Whisper 右侧上下文，最近 2 帧会暂存，并在后续音频或 `end` 时 flush。取消或连接关闭会 fence 已在运行的 batch，因此旧回答不会将 JPEG 帧发布给下一轮。每个固定 MP4 都必须在维护窗口生成自己的 face crop、latent、mask 缓存。缓存路径由 MP4 SHA-256、MuseTalk revision、FPS 和裁切参数共同寻址，位于 `ARCH_AVATAR_CACHE_DIR/<cache-key>`。没有完整缓存时 worker 会拒绝启动，既有语音不会被阻断。
 
-RTX 4090 的首帧时间、稳定 FPS、显存峰值、音视频延迟和浏览器设备表现尚未验证。真实模型制品已准备，但当前共享 GPU 的运行中语音服务没有被停止；完成设备验收后必须记录上述测量值和插话停止时间。
+当前共享 GPU 主机的私有 socket smoke 对 1 秒 24 kHz PCM 在尚未收到 `end` 时返回首个 JPEG，耗时约 0.97 秒，随后共返回 25 帧。这只证明 worker IPC 与 GPU renderer 的主机路径，不证明浏览器视频、持续 FPS、音画延迟、显存峰值或设备体验；完成设备验收后必须记录这些测量值和插话停止时间。
 
 预处理缓存必须由固定 MP4 的内容、MuseTalk revision 和人脸裁切参数共同确定。不要手动将一个视频的 latent、mask 或 face crop 目录复制给另一个视频；worker 会用 manifest 拒绝不匹配缓存。
 

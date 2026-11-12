@@ -34,6 +34,9 @@ class RecordingRenderer:
     async def end(self, utterance_id: str) -> None:
         self.calls.append(("end", utterance_id, ""))
 
+    async def close(self) -> None:
+        return
+
     async def frames(self):
         if False:
             yield b""
@@ -69,6 +72,19 @@ class BlockingEngine:
         self.started.set()
         self.release.wait(timeout=1)
         return [b"stale-frame"]
+
+
+class CountingEngine:
+    """Return stable frame markers for every renderer input snapshot."""
+
+    def __init__(self, fps: int) -> None:
+        self._fps = fps
+        self.calls: list[int] = []
+
+    def render(self, pcm: bytes) -> list[bytes]:
+        frame_count = len(pcm) // 2 * self._fps // 16000
+        self.calls.append(len(pcm))
+        return [f"frame-{index}".encode() for index in range(frame_count)]
 
 
 class PreviewRendererTests(unittest.TestCase):
@@ -168,5 +184,36 @@ class MuseTalkRendererTests(unittest.TestCase):
                 await asyncio.sleep(0.02)
                 with self.assertRaises(TimeoutError):
                     await asyncio.wait_for(anext(renderer.frames()), timeout=0.02)
+
+            asyncio.run(exercise())
+
+    def test_emits_stable_batches_before_utterance_end(self) -> None:
+        """Incremental scheduling must hold right context but not wait for ``end``."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "avatar.mp4"
+            source.write_bytes(b"fixed-source")
+            engine = CountingEngine(fps=10)
+            renderer = MuseTalkRenderer(
+                source,
+                fps=10,
+                model_root=root / "models",
+                cache_dir=root / "cache",
+                source_root=root / "source",
+                engine=engine,
+            )
+
+            async def exercise() -> None:
+                await renderer.begin("turn", 16000, "neutral")
+                await renderer.push_audio("turn", b"\x00\x00" * 16000, 0)
+                await asyncio.sleep(0.02)
+                early = [await asyncio.wait_for(anext(renderer.frames()), 0.1) for _ in range(8)]
+                await renderer.push_audio("turn", b"\x00\x00" * 3200, 1)
+                await renderer.end("turn")
+                tail = [await asyncio.wait_for(anext(renderer.frames()), 0.1) for _ in range(4)]
+                await renderer.close()
+                self.assertEqual(early, [f"frame-{index}".encode() for index in range(8)])
+                self.assertEqual(tail, [f"frame-{index}".encode() for index in range(8, 12)])
+                self.assertEqual(engine.calls, [32000, 38400])
 
             asyncio.run(exercise())

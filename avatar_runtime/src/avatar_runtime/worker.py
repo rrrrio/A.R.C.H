@@ -14,6 +14,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -35,6 +36,8 @@ class Renderer(Protocol):
     async def cancel(self, utterance_id: str) -> None: ...
 
     async def end(self, utterance_id: str) -> None: ...
+
+    async def close(self) -> None: ...
 
     def frames(self) -> AsyncIterator[bytes]: ...
 
@@ -90,9 +93,25 @@ class PreviewRenderer:
     async def end(self, utterance_id: str) -> None:
         """Preview keeps its idle loop alive after speech ends."""
 
+    async def close(self) -> None:
+        """Preview has no background GPU work to release."""
+
+
+@dataclass(slots=True)
+class _UtteranceBuffer:
+    """PCM and publication state for the sole active MuseTalk utterance."""
+
+    pcm: bytearray
+    emitted_frames: int = 0
+    rendering: bool = False
+    ended: bool = False
+
 
 class MuseTalkRenderer:
     """Run a pinned MuseTalk engine after a complete, cancellable utterance arrives."""
+
+    _RIGHT_CONTEXT_FRAMES = 2
+    _MIN_BATCH_FRAMES = 8
 
     def __init__(
         self,
@@ -103,6 +122,7 @@ class MuseTalkRenderer:
         source_root: Path,
         engine: CompletedUtteranceEngine | None = None,
     ) -> None:
+        self._fps = fps
         identity = AvatarCacheIdentity(
             source_sha256=sha256_file(source),
             musetalk_revision="0a89dec45a0192b824e3cf4daf96c239440c5ed8",
@@ -120,7 +140,7 @@ class MuseTalkRenderer:
 
             engine = MuseTalkEngine(source_root, model_root, cache_dir, fps)
         self._engine = engine
-        self._buffers: dict[str, bytearray] = {}
+        self._buffers: dict[str, _UtteranceBuffer] = {}
         self._generation = 0
         self._frames: asyncio.Queue[bytes] = asyncio.Queue(maxsize=max(fps * 2, 8))
         self._tasks: set[asyncio.Task[None]] = set()
@@ -138,14 +158,15 @@ class MuseTalkRenderer:
         self._generation += 1
         self._buffers.clear()
         self._discard_frames()
-        self._buffers[utterance_id] = bytearray()
+        self._buffers[utterance_id] = _UtteranceBuffer(bytearray())
 
     async def push_audio(self, utterance_id: str, pcm: bytes, timestamp_ns: int) -> None:
         """Append bounded PCM; the worker already fenced inactive utterances."""
         del timestamp_ns
         buffer = self._buffers.get(utterance_id)
         if buffer is not None:
-            buffer.extend(pcm)
+            buffer.pcm.extend(pcm)
+            await self._schedule(utterance_id)
 
     async def cancel(self, utterance_id: str) -> None:
         """Fence a GPU batch even when its synchronous call cannot be interrupted."""
@@ -155,22 +176,67 @@ class MuseTalkRenderer:
 
     async def end(self, utterance_id: str) -> None:
         """Render a complete utterance without writing video files or temporary WAVs."""
-        pcm = bytes(self._buffers.pop(utterance_id, b""))
-        if not pcm:
+        buffer = self._buffers.get(utterance_id)
+        if buffer is None or not buffer.pcm:
             return
+        buffer.ended = True
+        await self._schedule(utterance_id, flush=True)
+
+    async def close(self) -> None:
+        """Fence outstanding batches and wait for their tasks before socket teardown."""
+        self._generation += 1
+        self._buffers.clear()
+        self._discard_frames()
+        tasks = tuple(self._tasks)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _schedule(self, utterance_id: str, *, flush: bool = False) -> None:
+        buffer = self._buffers.get(utterance_id)
+        if buffer is None or buffer.rendering:
+            return
+        total_frames = self._frame_count(buffer.pcm)
+        ready_frames = total_frames if flush else max(0, total_frames - self._RIGHT_CONTEXT_FRAMES)
+        if ready_frames <= buffer.emitted_frames:
+            return
+        if not flush and ready_frames - buffer.emitted_frames < self._MIN_BATCH_FRAMES:
+            return
+        buffer.rendering = True
         generation = self._generation
-        task = asyncio.create_task(self._render_completed(pcm, generation))
+        task = asyncio.create_task(
+            self._render_snapshot(utterance_id, bytes(buffer.pcm), ready_frames, generation)
+        )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _render_completed(self, pcm: bytes, generation: int) -> None:
+    async def _render_snapshot(
+        self, utterance_id: str, pcm: bytes, ready_frames: int, generation: int
+    ) -> None:
         frames = await asyncio.to_thread(self._engine.render, pcm)
-        if generation != self._generation:
+        buffer = self._buffers.get(utterance_id)
+        if generation != self._generation or buffer is None:
             return
-        for frame in frames:
+        first_frame = buffer.emitted_frames
+        available_frames = min(ready_frames, len(frames))
+        if available_frames <= first_frame:
+            buffer.rendering = False
+            logger.error(
+                "MuseTalk inference returned no new frames for utterance %s.", utterance_id
+            )
+            return
+        for frame in frames[first_frame:available_frames]:
             if self._frames.full():
                 self._frames.get_nowait()
             self._frames.put_nowait(frame)
+        buffer.emitted_frames = available_frames
+        buffer.rendering = False
+        if buffer.ended and buffer.emitted_frames >= self._frame_count(buffer.pcm):
+            self._buffers.pop(utterance_id, None)
+            return
+        await self._schedule(utterance_id, flush=buffer.ended)
+
+    def _frame_count(self, pcm: bytearray) -> int:
+        return len(pcm) // 2 * self._fps // 16000
 
     def _discard_frames(self) -> None:
         while not self._frames.empty():
@@ -313,6 +379,7 @@ class AvatarWorkerConnection:
         if self._render_task is not None:
             self._render_task.cancel()
             await asyncio.gather(self._render_task, return_exceptions=True)
+        await self._renderer.close()
         self._writer.close()
         await self._writer.wait_closed()
 
