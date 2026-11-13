@@ -126,7 +126,8 @@ const chromeArguments = [
   '--use-fake-ui-for-media-stream',
   '--use-fake-device-for-media-stream',
   '--disable-features=WebRtcHideLocalIpsWithMdns',
-  `--use-file-for-fake-audio-capture=${configuration.audio}`,
+  ...(configuration.audio ? [`--use-file-for-fake-audio-capture=${configuration.audio}`] : []),
+  ...(configuration.host ? [`--host-resolver-rules=MAP ${configuration.host} 127.0.0.1`] : []),
   `--user-data-dir=${configuration.profileDir}`,
   `--remote-debugging-port=${configuration.debugPort}`,
 ]
@@ -194,21 +195,23 @@ try {
     configuration.timeoutSeconds * 1_000,
   )
 
-  await client.evaluate(`(() => {
-    const button = [...document.querySelectorAll('button')]
-      .find((candidate) => candidate.textContent?.trim() === '连接语音')
-    if (!button) throw new Error('voice connection control is missing')
-    button.click()
-  })()`)
-  await waitFor(
-    'voice response PCM',
-    async () => (await client.evaluate(`(() => {
-      const rows = [...document.querySelectorAll('.transcript p')]
-      return rows.some((row) => row.textContent?.startsWith('助手') && row.textContent.trim() !== '助手...') &&
-        rows.some((row) => row.textContent?.startsWith('发送首段音频'))
-    })()`)),
-    configuration.timeoutSeconds * 1_000,
-  )
+  if (!configuration.injectPcm) {
+    await client.evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find((candidate) => candidate.textContent?.trim() === '连接语音')
+      if (!button) throw new Error('voice connection control is missing')
+      button.click()
+    })()`)
+    await waitFor(
+      'voice response PCM',
+      async () => (await client.evaluate(`(() => {
+        const rows = [...document.querySelectorAll('.transcript p')]
+        return rows.some((row) => row.textContent?.startsWith('助手') && row.textContent.trim() !== '助手...') &&
+          rows.some((row) => row.textContent?.startsWith('发送首段音频'))
+      })()`)),
+      configuration.timeoutSeconds * 1_000,
+    )
+  }
 
   const video = await client.evaluate(`(() => new Promise((resolve, reject) => {
     const element = document.querySelector('.avatar-video-layer video')
@@ -246,17 +249,19 @@ try {
     configuration.timeoutSeconds * 1_000,
   )
 
-  await client.evaluate(`(() => {
-    const button = [...document.querySelectorAll('button')]
-      .find((candidate) => candidate.textContent?.trim() === '断开')
-    if (!button) throw new Error('voice disconnect control is missing')
-    button.click()
-  })()`)
-  await waitFor(
-    'voice disconnect',
-    async () => (await client.evaluate("document.body.innerText.includes('连接语音')")),
-    configuration.timeoutSeconds * 1_000,
-  )
+  if (!configuration.injectPcm) {
+    await client.evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find((candidate) => candidate.textContent?.trim() === '断开')
+      if (!button) throw new Error('voice disconnect control is missing')
+      button.click()
+    })()`)
+    await waitFor(
+      'voice disconnect',
+      async () => (await client.evaluate("document.body.innerText.includes('连接语音')")),
+      configuration.timeoutSeconds * 1_000,
+    )
+  }
   console.log(`avatar-browser-smoke: result ${JSON.stringify(video)}`)
   console.log('avatar-browser-smoke: passed')
 } finally {

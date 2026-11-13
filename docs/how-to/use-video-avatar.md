@@ -37,6 +37,14 @@
 
 该命令不会启动或重启后端、网关或 worker，也不会修改 `.env`。它使用一次性 headless Chrome profile、固定本地麦克风 WAV 和已有语音会话驱动 renderer，要求视频元素解码至少三帧，再显式关闭视频和语音会话。它要求服务已在启动时启用 `ARCH_VIDEO_AVATAR_ENABLED=true`，且 `arch-avatar.service` 已运行；若状态显示服务不可用，应先按本文的维护窗口步骤修复运行条件。headless Chrome 证明浏览器 WebRTC 和视频解码，不替代远端设备上的画面、音画同步或听感验收。
 
+不依赖已部署服务的主机验证可运行：
+
+    make avatar-owned-browser-smoke
+
+它临时启动固定 revision 的 MuseTalk worker、最小认证/avatar API 和同源 HTTPS Caddy，再由 headless Chrome 登录并开启视频。harness 在浏览器完成真实 offer 后通过同一服务接口注入 1 秒 24 kHz PCM，要求 `<video>` 解码至少三帧后关闭会话，并删除 worker、socket、临时凭据、Chrome profile 和 Caddy 容器。此命令验证真实 renderer、浏览器 WebRTC 与视频元素解码，但刻意不加载完整语音模型；已部署服务上的端到端 TTS observer 仍应使用上一条 `avatar-browser-smoke` 验证。
+
+当前主机已成功运行拥有式 smoke：浏览器报告 3 个解码帧回调，视频尺寸为 704×896。该结果证明本机 Chrome 可解码真实 renderer 输出；它不证明远端设备画面、持续帧率、音画同步、插话停止时间或听感。
+
 查看将要安装的服务：
 
     make systemd-dry-run
