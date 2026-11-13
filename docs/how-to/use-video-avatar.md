@@ -29,6 +29,14 @@
 
 该命令临时启动 worker，经真实 Unix socket、WebRTC 信令和本地 recvonly peer 解码一帧视频后自行清理。它不验证真实浏览器或设备表现。
 
+要验证已经启用的服务在实际浏览器中完成登录、视频解码和关闭，请提供当前 HTTPS 地址和管理员密码，并运行：
+
+    ARCH_AVATAR_BROWSER_URL=https://arch.local:8443 \\
+    ARCH_AVATAR_BROWSER_PASSWORD='管理员密码' \\
+    make avatar-browser-smoke
+
+该命令不会启动或重启后端、网关或 worker，也不会修改 `.env`。它使用一次性 headless Chrome profile、固定本地麦克风 WAV 和已有语音会话驱动 renderer，要求视频元素解码至少三帧，再显式关闭视频和语音会话。它要求服务已在启动时启用 `ARCH_VIDEO_AVATAR_ENABLED=true`，且 `arch-avatar.service` 已运行；若状态显示服务不可用，应先按本文的维护窗口步骤修复运行条件。headless Chrome 证明浏览器 WebRTC 和视频解码，不替代远端设备上的画面、音画同步或听感验收。
+
 查看将要安装的服务：
 
     make systemd-dry-run

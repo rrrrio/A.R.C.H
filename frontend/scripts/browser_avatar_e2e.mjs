@@ -1,0 +1,265 @@
+#!/usr/bin/env node
+
+import { spawn } from 'node:child_process'
+
+let configurationText = ''
+for await (const chunk of process.stdin) configurationText += chunk
+const configuration = JSON.parse(configurationText)
+
+class CdpClient {
+  constructor(socket) {
+    this.socket = socket
+    this.nextId = 1
+    this.pending = new Map()
+    socket.addEventListener('message', (event) => {
+      const message = JSON.parse(event.data)
+      if (!('id' in message)) return
+      const pending = this.pending.get(message.id)
+      if (!pending) return
+      this.pending.delete(message.id)
+      if (message.error) pending.reject(new Error(message.error.message))
+      else pending.resolve(message.result)
+    })
+    socket.addEventListener('close', () => {
+      for (const pending of this.pending.values()) pending.reject(new Error('avatar-browser-smoke: CDP closed'))
+      this.pending.clear()
+    })
+  }
+
+  command(method, params = {}) {
+    const id = this.nextId++
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new Error(`avatar-browser-smoke: CDP command timed out: ${method}`))
+      }, 15_000)
+      this.pending.set(id, {
+        resolve: (result) => {
+          clearTimeout(timeout)
+          resolve(result)
+        },
+        reject: (error) => {
+          clearTimeout(timeout)
+          reject(error)
+        },
+      })
+      this.socket.send(JSON.stringify({ id, method, params }))
+    })
+  }
+
+  async evaluate(expression) {
+    const response = await this.command('Runtime.evaluate', {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+    })
+    if (response.exceptionDetails) throw new Error(response.exceptionDetails.text)
+    return response.result.value
+  }
+
+  close() {
+    this.socket.close()
+  }
+}
+
+async function waitFor(description, predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let lastError
+  while (Date.now() < deadline) {
+    try {
+      if (await predicate()) return
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  const suffix = lastError instanceof Error ? `: ${lastError.message}` : ''
+  throw new Error(`avatar-browser-smoke: timed out waiting for ${description}${suffix}`)
+}
+
+async function fetchJson(url, options) {
+  const response = await fetch(url, options)
+  if (!response.ok) throw new Error(`avatar-browser-smoke: ${url} returned ${response.status}`)
+  return response.json()
+}
+
+async function openSocket(url) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url)
+    const timeout = setTimeout(() => reject(new Error('avatar-browser-smoke: CDP timed out')), 10_000)
+    socket.addEventListener('open', () => {
+      clearTimeout(timeout)
+      resolve(socket)
+    }, { once: true })
+    socket.addEventListener('error', () => {
+      clearTimeout(timeout)
+      reject(new Error('avatar-browser-smoke: CDP failed'))
+    }, { once: true })
+  })
+}
+
+async function stopChrome(chrome) {
+  if (chrome.exitCode !== null) return
+  const exited = new Promise((resolve) => chrome.once('exit', resolve))
+  try {
+    globalThis.process.kill(-chrome.pid, 'SIGTERM')
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error
+  }
+  await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5_000))])
+  if (chrome.exitCode === null) {
+    try {
+      globalThis.process.kill(-chrome.pid, 'SIGKILL')
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+    }
+  }
+}
+
+const chromeArguments = [
+  '--headless=new',
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--no-proxy-server',
+  '--ignore-certificate-errors',
+  '--autoplay-policy=no-user-gesture-required',
+  '--use-fake-ui-for-media-stream',
+  '--use-fake-device-for-media-stream',
+  '--disable-features=WebRtcHideLocalIpsWithMdns',
+  `--use-file-for-fake-audio-capture=${configuration.audio}`,
+  `--user-data-dir=${configuration.profileDir}`,
+  `--remote-debugging-port=${configuration.debugPort}`,
+]
+
+const chrome = spawn(configuration.chrome, chromeArguments, { detached: true, stdio: 'ignore' })
+let client
+try {
+  const debuggingUrl = `http://127.0.0.1:${configuration.debugPort}`
+  await waitFor('Chrome DevTools', async () => {
+    try {
+      await fetchJson(`${debuggingUrl}/json/version`)
+      return true
+    } catch {
+      return false
+    }
+  }, 20_000)
+
+  const target = await fetchJson(
+    `${debuggingUrl}/json/new?${encodeURIComponent(configuration.url)}`,
+    { method: 'PUT' },
+  )
+  client = new CdpClient(await openSocket(target.webSocketDebuggerUrl))
+  await client.command('Runtime.enable')
+  await waitFor(
+    'login page',
+    async () => (await client.evaluate("document.body.innerText.includes('本机管理员')")),
+    configuration.timeoutSeconds * 1_000,
+  )
+
+  const password = JSON.stringify(configuration.password)
+  await client.evaluate(`(() => {
+    const input = document.querySelector('#password')
+    const form = input?.closest('form')
+    if (!input || !form) throw new Error('login controls are missing')
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    if (!setValue) throw new Error('password value setter is missing')
+    setValue.call(input, ${password})
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    form.requestSubmit()
+  })()`)
+  await waitFor(
+    'authenticated avatar controls',
+    async () => (await client.evaluate("document.body.innerText.includes('已登录') && document.querySelector('.avatar-video-control') !== null")),
+    configuration.timeoutSeconds * 1_000,
+  )
+
+  await waitFor(
+    'enabled avatar service',
+    async () => (await client.evaluate(`(() => {
+      const button = [...document.querySelectorAll('.avatar-video-control button')]
+        .find((candidate) => candidate.textContent?.trim() === '启用视频')
+      return Boolean(button && !button.disabled)
+    })()`)),
+    configuration.timeoutSeconds * 1_000,
+  )
+  await client.evaluate(`(() => {
+    const button = [...document.querySelectorAll('.avatar-video-control button')]
+      .find((candidate) => candidate.textContent?.trim() === '启用视频')
+    if (!button) throw new Error('avatar enable control is missing')
+    button.click()
+  })()`)
+  await waitFor(
+    'avatar WebRTC connection',
+    async () => (await client.evaluate("document.querySelector('[data-avatar-state=\"connected\"]') !== null")),
+    configuration.timeoutSeconds * 1_000,
+  )
+
+  await client.evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')]
+      .find((candidate) => candidate.textContent?.trim() === '连接语音')
+    if (!button) throw new Error('voice connection control is missing')
+    button.click()
+  })()`)
+  await waitFor(
+    'voice response PCM',
+    async () => (await client.evaluate(`(() => {
+      const rows = [...document.querySelectorAll('.transcript p')]
+      return rows.some((row) => row.textContent?.startsWith('助手') && row.textContent.trim() !== '助手...') &&
+        rows.some((row) => row.textContent?.startsWith('发送首段音频'))
+    })()`)),
+    configuration.timeoutSeconds * 1_000,
+  )
+
+  const video = await client.evaluate(`(() => new Promise((resolve, reject) => {
+    const element = document.querySelector('.avatar-video-layer video')
+    if (!(element instanceof HTMLVideoElement)) {
+      reject(new Error('avatar video element is missing'))
+      return
+    }
+    let callbacks = 0
+    const deadline = window.setTimeout(() => reject(new Error('video frames were not decoded')), 12_000)
+    const observe = () => element.requestVideoFrameCallback(() => {
+      callbacks += 1
+      if (callbacks >= 3 && element.videoWidth > 0 && element.videoHeight > 0) {
+        window.clearTimeout(deadline)
+        resolve({ callbacks, width: element.videoWidth, height: element.videoHeight })
+        return
+      }
+      observe()
+    })
+    observe()
+  }))()`)
+
+  await client.evaluate(`(() => {
+    const button = [...document.querySelectorAll('.avatar-video-control button')]
+      .find((candidate) => candidate.textContent?.trim() === '关闭视频')
+    if (!button) throw new Error('avatar close control is missing')
+    button.click()
+  })()`)
+  await waitFor(
+    'avatar session release',
+    async () => (await client.evaluate(`(() => {
+      const status = document.querySelector('[data-avatar-state]')
+      const video = document.querySelector('.avatar-video-layer video')
+      return status?.getAttribute('data-avatar-state') === 'ready' && video?.srcObject === null
+    })()`)),
+    configuration.timeoutSeconds * 1_000,
+  )
+
+  await client.evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')]
+      .find((candidate) => candidate.textContent?.trim() === '断开')
+    if (!button) throw new Error('voice disconnect control is missing')
+    button.click()
+  })()`)
+  await waitFor(
+    'voice disconnect',
+    async () => (await client.evaluate("document.body.innerText.includes('连接语音')")),
+    configuration.timeoutSeconds * 1_000,
+  )
+  console.log(`avatar-browser-smoke: result ${JSON.stringify(video)}`)
+  console.log('avatar-browser-smoke: passed')
+} finally {
+  if (client) client.close()
+  await stopChrome(chrome)
+}
