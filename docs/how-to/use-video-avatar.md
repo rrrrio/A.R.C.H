@@ -23,6 +23,12 @@
 
 在准备窗口前运行 `make musetalk-dry-run` 查看固定源码 revision、目标目录和资源前置条件。生产服务使用隔离的 `data/runtime/musetalk` Python 3.10/CUDA runtime；源码 checkout 固定在 `data/runtime/musetalk/source`，模型目录固定为 `ARCH_AVATAR_MODEL_ROOT`。先在维护窗口运行 `make avatar-musetalk-prepare` 生成固定视频缓存，再运行 `make avatar-musetalk` 启动本机 worker，便于日志和 GPU 诊断。
 
+可在不修改 `.env` 或启动常驻服务的条件下运行服务端 smoke：
+
+    make avatar-musetalk-smoke
+
+该命令临时启动 worker，经真实 Unix socket、WebRTC 信令和本地 recvonly peer 解码一帧视频后自行清理。它不验证真实浏览器或设备表现。
+
 查看将要安装的服务：
 
     make systemd-dry-run
