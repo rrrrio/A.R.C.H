@@ -442,7 +442,7 @@ async def serve(
         connection = AvatarWorkerConnection(writer, renderer)
         await connection.run(reader)
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await asyncio.start_unix_server(handle, path=socket_path, limit=256 * 1024)
     os.chmod(socket_path, 0o600)
     logger.info("avatar worker ready: backend=%s socket=%s", backend, socket_path)
     async with server:

@@ -105,7 +105,8 @@ async def smoke(socket_path: Path) -> tuple[int, int]:
             RTCSessionDescription(sdp=answer["sdp"], type=answer["type"])
         )
         await service.begin("musetalk-smoke", 24000, "neutral")
-        await service.push_audio("musetalk-smoke", b"\x00\x00" * 24000, 0)
+        # Two seconds exceeds the historical 64 KiB line-framing failure boundary.
+        await service.push_audio("musetalk-smoke", b"\x00\x00" * 48000, 0)
         return await asyncio.wait_for(received, timeout=30)
     finally:
         await service.close()

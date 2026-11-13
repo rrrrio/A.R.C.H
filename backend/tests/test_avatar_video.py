@@ -1,6 +1,8 @@
 """Tests for the authenticated video-avatar bridge and passive TTS observer."""
 
 import asyncio
+import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -66,6 +68,29 @@ class FakeWorker:
 
     async def close(self) -> None:
         return
+
+
+class RecordingWriter:
+    """Capture IPC writes without opening a Unix socket."""
+
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    async def drain(self) -> None:
+        return
+
+
+class BrokenPipeWriter(RecordingWriter):
+    """Model a peer that reset its socket before local cleanup."""
+
+    def close(self) -> None:
+        return
+
+    async def wait_closed(self) -> None:
+        raise BrokenPipeError
 
 
 class InspectingOutput(PipecatOutputMuxProcessor):
@@ -156,6 +181,47 @@ def test_unix_worker_reports_unexpected_eof(
     asyncio.run(exercise())
 
     assert "Avatar worker IPC reader stopped." in caplog.text
+
+
+def test_unix_worker_close_ignores_a_peer_reset(tmp_path: Path) -> None:
+    """A prior renderer disconnect must not turn session cleanup into a 500."""
+
+    async def exercise() -> None:
+        worker = UnixSocketAvatarWorker(tmp_path / "avatar.sock")
+        worker._writer = BrokenPipeWriter()  # noqa: SLF001
+        await worker.close()
+
+    asyncio.run(exercise())
+
+
+def test_unix_worker_splits_pcm_before_the_socket_line_limit(tmp_path: Path) -> None:
+    """Large TTS frames must not overflow asyncio's default 64 KiB line reader."""
+
+    async def exercise() -> list[dict[str, object]]:
+        worker = UnixSocketAvatarWorker(tmp_path / "avatar.sock")
+        writer = RecordingWriter()
+        worker._writer = writer  # noqa: SLF001
+        await worker.begin("turn", 24000, "neutral")
+        await worker.push_audio("turn", b"\x01\x00" * 48000, 1_000_000_000)
+        return [json.loads(item) for item in writer.writes]
+
+    messages = asyncio.run(exercise())
+    audio_messages = [message for message in messages if message["type"] == "audio"]
+
+    assert len(audio_messages) == 4
+    assert all(
+        len(json.dumps(message, separators=(",", ":")).encode()) < 64 * 1024
+        for message in audio_messages
+    )
+    assert b"".join(base64.b64decode(message["pcm_b64"]) for message in audio_messages) == (
+        b"\x01\x00" * 48000
+    )
+    assert [message["timestamp_ns"] for message in audio_messages] == [
+        1_000_000_000,
+        1_500_000_000,
+        2_000_000_000,
+        2_500_000_000,
+    ]
 
 
 def test_avatar_signaling_returns_a_video_only_answer() -> None:

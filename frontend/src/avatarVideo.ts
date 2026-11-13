@@ -1,4 +1,4 @@
-export type AvatarVideoState = 'disabled' | 'unavailable' | 'ready' | 'connecting' | 'connected' | 'error'
+export type AvatarVideoState = 'disabled' | 'unavailable' | 'ready' | 'connecting' | 'connected' | 'playing' | 'error'
 
 export type AvatarVideoStatus = {
   enabled: boolean
@@ -54,16 +54,20 @@ export class AvatarVideoClient {
   private serverSessionMayExist = false
   private closing = false
   private connectionClosedNotified = false
+  private videoFrameNotified = false
   private readonly onState: (state: AvatarVideoState) => void
+  private readonly onVideoFrame: () => void
 
   constructor(
     csrfToken: string,
     video: HTMLVideoElement,
     onState: (state: AvatarVideoState) => void = () => undefined,
+    onVideoFrame: () => void = () => undefined,
   ) {
     this.csrfToken = csrfToken
     this.video = video
     this.onState = onState
+    this.onVideoFrame = onVideoFrame
     this.video.muted = true
     this.video.autoplay = true
     this.video.playsInline = true
@@ -71,6 +75,7 @@ export class AvatarVideoClient {
     this.connection.ontrack = (event) => {
       if (event.track.kind !== 'video') return
       this.video.srcObject = event.streams[0] ?? new MediaStream([event.track])
+      this.video.requestVideoFrameCallback(() => this.notifyVideoFrame())
       void this.video.play().catch(() => undefined)
       this.onState('connected')
     }
@@ -104,6 +109,7 @@ export class AvatarVideoClient {
 
   async close(): Promise<void> {
     this.closing = true
+    this.videoFrameNotified = false
     this.video.pause()
     this.video.srcObject = null
     this.connection.close()
@@ -114,6 +120,13 @@ export class AvatarVideoClient {
       }).catch(() => undefined)
     }
     this.serverSessionMayExist = false
+  }
+
+  private notifyVideoFrame(): void {
+    if (this.closing || this.videoFrameNotified) return
+    this.videoFrameNotified = true
+    this.onVideoFrame()
+    this.onState('playing')
   }
 }
 

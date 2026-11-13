@@ -295,7 +295,8 @@ button:disabled {
   font-size: 14px;
 }
 
-.avatar-video-status[data-avatar-state='connected'] { color: #116149; }
+.avatar-video-status[data-avatar-state='connected'],
+.avatar-video-status[data-avatar-state='playing'] { color: #116149; }
 .avatar-video-status[data-avatar-state='error'],
 .avatar-video-status[data-avatar-state='unavailable'] { color: #9b2c2c; }
 

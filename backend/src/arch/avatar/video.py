@@ -20,6 +20,9 @@ from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
+# Keep Base64 JSON audio records well below asyncio's default 64 KiB line limit.
+_MAX_IPC_PCM_CHUNK_BYTES = 24_000
+
 
 class AvatarWorker(Protocol):
     """Minimal control surface between A.R.C.H. and the GPU worker."""
@@ -100,6 +103,7 @@ class UnixSocketAvatarWorker:
         self._ready = asyncio.Event()
         self._write_lock = asyncio.Lock()
         self._closing = False
+        self._sample_rates: dict[str, int] = {}
 
     async def start(self, on_frame: Callable[[bytes], Awaitable[None]]) -> None:
         """Connect to the already supervised worker and wait for its readiness event."""
@@ -117,6 +121,9 @@ class UnixSocketAvatarWorker:
             raise RuntimeError("Avatar worker did not become ready.") from error
 
     async def begin(self, utterance_id: str, sample_rate: int, emotion: str) -> None:
+        if sample_rate <= 0:
+            raise ValueError("Avatar PCM sample rate must be positive.")
+        self._sample_rates[utterance_id] = sample_rate
         await self._send(
             {
                 "type": "begin",
@@ -127,30 +134,48 @@ class UnixSocketAvatarWorker:
         )
 
     async def push_audio(self, utterance_id: str, audio: bytes, timestamp_ns: int) -> None:
-        await self._send(
-            {
-                "type": "audio",
-                "utterance_id": utterance_id,
-                "timestamp_ns": timestamp_ns,
-                "pcm_b64": base64.b64encode(audio).decode("ascii"),
-            }
-        )
+        sample_rate = self._sample_rates.get(utterance_id)
+        if sample_rate is None:
+            raise RuntimeError("Avatar PCM arrived before its utterance started.")
+        if len(audio) % 2:
+            raise ValueError("Avatar PCM must contain whole 16-bit samples.")
+        for offset in range(0, len(audio), _MAX_IPC_PCM_CHUNK_BYTES):
+            chunk = audio[offset : offset + _MAX_IPC_PCM_CHUNK_BYTES]
+            chunk_timestamp_ns = timestamp_ns + (offset // 2) * 1_000_000_000 // sample_rate
+            await self._send(
+                {
+                    "type": "audio",
+                    "utterance_id": utterance_id,
+                    "timestamp_ns": chunk_timestamp_ns,
+                    "pcm_b64": base64.b64encode(chunk).decode("ascii"),
+                }
+            )
 
     async def push_event(self, utterance_id: str, event: str) -> None:
         await self._send({"type": "event", "utterance_id": utterance_id, "event": event})
 
     async def cancel(self, utterance_id: str) -> None:
-        await self._send({"type": "cancel", "utterance_id": utterance_id})
+        try:
+            await self._send({"type": "cancel", "utterance_id": utterance_id})
+        finally:
+            self._sample_rates.pop(utterance_id, None)
 
     async def end(self, utterance_id: str) -> None:
-        await self._send({"type": "end", "utterance_id": utterance_id})
+        try:
+            await self._send({"type": "end", "utterance_id": utterance_id})
+        finally:
+            self._sample_rates.pop(utterance_id, None)
 
     async def close(self) -> None:
         """Close the IPC stream and cancel its reader without killing systemd."""
         self._closing = True
         if self._writer is not None:
             self._writer.close()
-            await self._writer.wait_closed()
+            try:
+                await self._writer.wait_closed()
+            except (BrokenPipeError, ConnectionResetError):
+                # The worker may have already closed after reporting an IPC error.
+                pass
         if self._reader_task is not None and self._reader_task is not asyncio.current_task():
             self._reader_task.cancel()
             await asyncio.gather(self._reader_task, return_exceptions=True)
@@ -158,6 +183,7 @@ class UnixSocketAvatarWorker:
         self._writer = None
         self._reader_task = None
         self._ready.clear()
+        self._sample_rates.clear()
 
     async def _send(self, message: dict[str, object]) -> None:
         if self._writer is None:

@@ -34,7 +34,7 @@
 
     make avatar-musetalk-smoke
 
-该命令临时启动 worker，经真实 Unix socket、WebRTC 信令和本地 recvonly peer 解码一帧视频后自行清理。它不验证真实浏览器或设备表现。
+该命令临时启动 worker，经真实 Unix socket（含超过默认单行 reader 限制的两秒 24 kHz PCM）、WebRTC 信令和本地 recvonly peer 解码一帧视频后自行清理。它不验证真实浏览器或设备表现。
 
 要验证已经启用的服务在实际浏览器中完成登录、视频解码和关闭，请提供当前 HTTPS 地址和管理员密码，并运行：
 
@@ -68,7 +68,7 @@
 
 视频 WebRTC、同源鉴权、音频静音边界、TTS PCM observer、取消旧帧和 VRM 备用模式已经接入自动化测试。独立 worker 具备 preview transport smoke 路径。
 
-worker 会为每个有效播报轮次将 A.R.C.H. 的 24 kHz PCM 连续转换为 MuseTalk 所需 16 kHz 输入；取消后的旧轮次不会继续进入 renderer，任意 IPC 分块不会改变输出采样时间线。MuseTalk worker 现已加载固定 UNet、VAE 与 Whisper 并通过官方扩散/混合路径生成 JPEG 帧，不会落盘临时 WAV 或 MP4。
+worker 会为每个有效播报轮次将 A.R.C.H. 的 24 kHz PCM 连续转换为 MuseTalk 所需 16 kHz 输入；后端会把较大的 TTS PCM 帧拆成受限的 Unix socket JSON 记录，避免 Base64 载荷超过 reader 行长度；取消后的旧轮次不会继续进入 renderer，任意 IPC 分块不会改变输出采样时间线。MuseTalk worker 现已加载固定 UNet、VAE 与 Whisper 并通过官方扩散/混合路径生成 JPEG 帧，不会落盘临时 WAV 或 MP4。
 
 真实 renderer 在积累至少 8 帧的稳定音频后就启动 GPU batch；为保留 Whisper 右侧上下文，最近 2 帧会暂存，并在后续音频或 `end` 时 flush。后续 batch 仅带少量左侧上下文和未发布 PCM，不会从 utterance 起点重算。取消或连接关闭会 fence 已在运行的 batch，因此旧回答不会将 JPEG 帧发布给下一轮。每个固定 MP4 都必须在维护窗口生成自己的 face crop、latent、mask 缓存。缓存路径由 MP4 SHA-256、MuseTalk revision、FPS 和裁切参数共同寻址，位于 `ARCH_AVATAR_CACHE_DIR/<cache-key>`。没有完整缓存时 worker 会拒绝启动，既有语音不会被阻断。
 
@@ -78,4 +78,6 @@ worker 会为每个有效播报轮次将 A.R.C.H. 的 24 kHz PCM 连续转换为
 
 ## 视觉设计
 
-页面参考下载原型的黑底竖屏人物布局：桌面端视频靠右、左边缘渐隐，视频层不拦截聊天和语音控件；移动端视频缩小到下方区域。视频元素始终静音，所有音频都来自 A.R.C.H. 的既有语音连接。
+点击“启用视频”只建立视频 WebRTC 连接。renderer 在已有语音回答产生 TTS PCM 后才会生成首帧；页面在此之前显示“已连接，等待首帧”，不会展示黑色 video layer。收到首个解码帧后才显示视频。
+
+页面参考下载原型的黑底竖屏人物布局：桌面端视频靠右、左边缘渐隐，视频层通过页面根部 layer 放在所有聊天和语音控件之后，不会遮黑或拦截控件；移动端视频缩小到下方区域。视频元素始终静音，所有音频都来自 A.R.C.H. 的既有语音连接。

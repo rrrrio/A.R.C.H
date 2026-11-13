@@ -194,6 +194,19 @@ try {
     async () => (await client.evaluate("document.querySelector('[data-avatar-state=\"connected\"]') !== null")),
     configuration.timeoutSeconds * 1_000,
   )
+  await client.evaluate(`(() => {
+    const layer = document.querySelector('.avatar-video-layer')
+    if (!(layer instanceof HTMLElement)) throw new Error('avatar video layer is missing')
+    if (layer.parentElement !== document.body) {
+      throw new Error('avatar video layer is trapped inside the control stacking context')
+    }
+    if (getComputedStyle(layer).pointerEvents !== 'none') {
+      throw new Error('avatar video layer must not capture page controls')
+    }
+    if (layer.classList.contains('avatar-video-layer--live')) {
+      throw new Error('avatar video layer became visible before its first decoded frame')
+    }
+  })()`)
 
   if (!configuration.injectPcm) {
     await client.evaluate(`(() => {
