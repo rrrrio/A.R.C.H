@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import tempfile
 import wave
 from dataclasses import dataclass
 from io import BytesIO
@@ -55,6 +58,38 @@ def _wav() -> bytes:
     return payload.getvalue()
 
 
+def _m4a() -> bytes:
+    """Build a seek-required M4A fixture with media data before its metadata."""
+    with tempfile.TemporaryDirectory() as directory:
+        output_path = Path(directory) / "reference.m4a"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=24000",
+                "-t",
+                "7.584",
+                "-c:a",
+                "aac",
+                "-f",
+                "ipod",
+                "-y",
+                str(output_path),
+            ],
+            check=True,
+        )
+        return output_path.read_bytes()
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="FFmpeg is required for audio normalization"
+)
 def test_transcriber_returns_editable_text_and_reuses_model(tmp_path: Path) -> None:
     """The local model is loaded once and receives only a temporary normalized WAV."""
     paths = VoiceModelPaths.from_data_dir(tmp_path)
@@ -68,7 +103,7 @@ def test_transcriber_returns_editable_text_and_reuses_model(tmp_path: Path) -> N
 
     transcriber = VoiceReferenceTranscriber(paths, model_factory=factory)
 
-    assert transcriber.transcribe(_wav()) == "这是 参考文本"
+    assert transcriber.transcribe(_m4a()) == "这是 参考文本"
     assert transcriber.transcribe(_wav()) == "这是 参考文本"
 
     assert len(factory_calls) == 1

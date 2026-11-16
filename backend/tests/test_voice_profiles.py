@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 import wave
 from io import BytesIO
 from pathlib import Path
@@ -43,6 +44,59 @@ def _encode(payload: bytes, output_format: str) -> bytes:
         check=True,
     )
     return result.stdout
+
+
+def _encode_m4a(payload: bytes) -> bytes:
+    """Create a seekable M4A fixture with the same container users upload."""
+    with tempfile.TemporaryDirectory() as directory:
+        input_path = Path(directory) / "input.wav"
+        output_path = Path(directory) / "reference.m4a"
+        input_path.write_bytes(payload)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-i",
+                str(input_path),
+                "-c:a",
+                "aac",
+                "-f",
+                "ipod",
+                "-y",
+                str(output_path),
+            ],
+            check=True,
+        )
+        return output_path.read_bytes()
+
+
+def _m4a_with_seek_required_layout() -> bytes:
+    """Build a deterministic 24 kHz M4A whose metadata is stored after media data."""
+    with tempfile.TemporaryDirectory() as directory:
+        input_path = Path(directory) / "input.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=24000",
+                "-t",
+                "7.584",
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                str(input_path),
+            ],
+            check=True,
+        )
+        return _encode_m4a(input_path.read_bytes())
 
 
 def test_profile_store_requires_consent_and_valid_bounded_wav(tmp_path: Path) -> None:
@@ -94,6 +148,25 @@ def test_profile_store_accepts_flac_reference_and_normalizes_it(tmp_path: Path) 
         assert audio.getsampwidth() == 2
         assert audio.getframerate() == 24000
     assert profile.duration_ms == 1000
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="FFmpeg is required for audio normalization"
+)
+def test_profile_store_accepts_m4a_reference_and_normalizes_it(tmp_path: Path) -> None:
+    """Seek-required M4A input is decoded before the local reference is stored."""
+    store = VoiceProfileStore(tmp_path)
+
+    profile = store.create(
+        "M4A 参考", "这是参考文本", _m4a_with_seek_required_layout(), ownership_confirmed=True
+    )
+
+    reference = tmp_path / "voices" / "profiles" / profile.id / "reference.wav"
+    with wave.open(str(reference), "rb") as audio:
+        assert audio.getnchannels() == 1
+        assert audio.getsampwidth() == 2
+        assert audio.getframerate() == 24000
+    assert 7500 <= profile.duration_ms <= 7700
 
 
 def test_profile_store_keeps_audio_local_and_resets_selected_profile_on_delete(

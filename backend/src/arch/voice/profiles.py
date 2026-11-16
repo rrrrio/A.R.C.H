@@ -221,7 +221,9 @@ def _convert_reference_audio(payload: bytes) -> bytes:
     if ffmpeg is None:
         raise ValueError("Audio conversion requires FFmpeg.")
     with tempfile.TemporaryDirectory(prefix="arch-voice-") as directory:
+        input_path = Path(directory) / "input-audio"
         output = Path(directory) / "reference.wav"
+        input_path.write_bytes(payload)
         try:
             result = subprocess.run(
                 [
@@ -231,7 +233,7 @@ def _convert_reference_audio(payload: bytes) -> bytes:
                     "error",
                     "-nostdin",
                     "-i",
-                    "pipe:0",
+                    str(input_path),
                     "-map",
                     "0:a:0",
                     "-vn",
@@ -247,7 +249,6 @@ def _convert_reference_audio(payload: bytes) -> bytes:
                     "wav",
                     str(output),
                 ],
-                input=payload,
                 capture_output=True,
                 check=False,
                 timeout=10,
