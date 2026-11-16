@@ -39,4 +39,19 @@ describe('workspace transcript layout', () => {
   it('styles the native file picker button for the dark workspace', () => {
     expect(stylesheet).toContain(".workspace-shell input[type='file']::file-selector-button")
   })
+
+  it('keeps login and pending-memory editing surfaces inside the dark theme', () => {
+    expect(stylesheet).toContain('.setup-panel { background: #101923;')
+    expect(stylesheet).toContain('.memory-candidate textarea { background: #16222d;')
+    expect(stylesheet).toContain('.memory-candidate textarea:focus-visible')
+  })
+
+  it('synchronizes chamber ring and core colors for connection and activity states', () => {
+    expect(stylesheet).toContain('.voice-chamber--connecting .voice-chamber__orbit, .voice-chamber--preparing .voice-chamber__orbit')
+    expect(stylesheet).toContain('.voice-chamber--connecting .voice-chamber__core, .voice-chamber--preparing .voice-chamber__core')
+    expect(stylesheet).toContain('.voice-chamber--error .voice-chamber__orbit, .voice-chamber--disconnected .voice-chamber__orbit')
+    expect(stylesheet).toContain('.voice-chamber--error .voice-chamber__core, .voice-chamber--disconnected .voice-chamber__core')
+    expect(stylesheet).toContain('.voice-chamber--ready.voice-chamber--thinking .voice-chamber__orbit')
+    expect(stylesheet).toContain('.voice-chamber--ready.voice-chamber--thinking .voice-chamber__core')
+  })
 })
