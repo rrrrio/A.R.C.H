@@ -7,6 +7,8 @@ export type KnowledgeReindexResult = KnowledgeStatus & {
   changed_source_count: number
 }
 
+export type KnowledgeSource = { path: string; updated_at: string }
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -29,6 +31,13 @@ export async function fetchKnowledgeStatus(): Promise<KnowledgeStatus> {
   const status = readKnowledgeStatus(await response.json())
   if (!response.ok || status === null) throw new Error('Knowledge status response was invalid.')
   return status
+}
+
+export async function fetchKnowledgeSources(query = ''): Promise<KnowledgeSource[]> {
+  const response = await fetch(`/api/knowledge/sources?query=${encodeURIComponent(query)}`, { headers: { Accept: 'application/json' } })
+  const payload: unknown = await response.json()
+  if (!response.ok || !Array.isArray(payload) || payload.some((item) => !isRecord(item) || typeof item.path !== 'string' || typeof item.updated_at !== 'string')) throw new Error('Knowledge source response was invalid.')
+  return payload as KnowledgeSource[]
 }
 
 export async function rebuildKnowledgeIndex(csrfToken: string): Promise<KnowledgeReindexResult> {

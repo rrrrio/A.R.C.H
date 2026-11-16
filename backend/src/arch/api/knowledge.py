@@ -33,6 +33,13 @@ class KnowledgeReindexResponse(KnowledgeStatusResponse):
     changed_source_count: int = Field(ge=0)
 
 
+class KnowledgeSourceResponse(BaseModel):
+    """One locally indexed source name and its index timestamp, without contents."""
+
+    path: str
+    updated_at: str
+
+
 def get_knowledge_store(request: Request) -> KnowledgeStore:
     """Read the application-scoped local knowledge repository."""
     return cast(KnowledgeStore, request.app.state.knowledge_store)
@@ -61,6 +68,21 @@ def status(
     auth.require_session(request)
     source_count, indexed_at = store.index_status()
     return KnowledgeStatusResponse(source_count=source_count, indexed_at=indexed_at)
+
+
+@router.get("/sources", response_model=list[KnowledgeSourceResponse])
+def sources(
+    request: Request,
+    auth: AuthServiceDependency,
+    store: KnowledgeStoreDependency,
+    query: str = "",
+) -> list[KnowledgeSourceResponse]:
+    """List locally indexed source metadata for the authenticated archive browser."""
+    auth.require_session(request)
+    return [
+        KnowledgeSourceResponse(path=source.path, updated_at=source.updated_at)
+        for source in store.list_sources(query)
+    ]
 
 
 @router.post("/reindex", response_model=KnowledgeReindexResponse)

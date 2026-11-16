@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { fetchKnowledgeStatus, rebuildKnowledgeIndex, readKnowledgeStatus } from './knowledge'
+import { fetchKnowledgeSources, fetchKnowledgeStatus, rebuildKnowledgeIndex, readKnowledgeStatus } from './knowledge'
 
 describe('readKnowledgeStatus', () => {
   it('accepts a browser-safe local index summary', () => {
@@ -54,5 +54,11 @@ describe('readKnowledgeStatus', () => {
     expect(requests[0].input).toBe('/api/knowledge/reindex')
     expect(requests[0].init?.method).toBe('POST')
     expect(new Headers(requests[0].init?.headers).get('X-CSRF-Token')).toBe('csrf-token')
+  })
+
+  it('lists locally indexed source metadata for the archive view', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () => new Response(JSON.stringify([{ path: 'notes/weekly.md', updated_at: '2026-11-16T00:00:00Z' }]), { status: 200 })
+    try { await expect(fetchKnowledgeSources('weekly')).resolves.toEqual([{ path: 'notes/weekly.md', updated_at: '2026-11-16T00:00:00Z' }]) } finally { globalThis.fetch = originalFetch }
   })
 })

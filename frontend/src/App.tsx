@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type UIEvent } from 'react'
 
 import { AvatarPreview } from './AvatarPreview'
 import { AvatarVideoPreview } from './AvatarVideoPreview'
 import { fetchAuthStatus, fetchCsrfToken, hasCurrentAuthContract, login, logout, reissueTerminalLease, setTerminalProfile } from './auth'
-import { fetchKnowledgeStatus, rebuildKnowledgeIndex, type KnowledgeStatus } from './knowledge'
+import { fetchKnowledgeSources, fetchKnowledgeStatus, rebuildKnowledgeIndex, type KnowledgeSource, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
 import { decideToolApproval, fetchTerminalGrants, fetchToolApprovals, revokeTerminalGrant, type TerminalGrant, type ToolApproval } from './tools'
 import { type LatencyStage, type VoiceActivity } from './voice'
@@ -56,7 +56,11 @@ function App() {
   const [leaseError, setLeaseError] = useState(false)
   const [pendingCandidates, setPendingCandidates] = useState<MemoryCandidate[]>([])
   const [approvedCandidates, setApprovedCandidates] = useState<MemoryCandidate[]>([])
+  const [memoryQuery, setMemoryQuery] = useState('')
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
+  const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([])
+  const [knowledgeArchiveError, setKnowledgeArchiveError] = useState(false)
+  const [knowledgeQuery, setKnowledgeQuery] = useState('')
   const [knowledgeIndexing, setKnowledgeIndexing] = useState(false)
   const [knowledgeIndexMessage, setKnowledgeIndexMessage] = useState<string | null>(null)
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, string>>({})
@@ -110,9 +114,18 @@ function App() {
   async function refreshKnowledgeStatus() {
     try {
       setKnowledgeStatus(await fetchKnowledgeStatus())
+      setKnowledgeSources(await fetchKnowledgeSources(knowledgeQuery))
+      setKnowledgeArchiveError(false)
     } catch {
       setKnowledgeStatus(null)
+      setKnowledgeSources([])
+      setKnowledgeArchiveError(true)
     }
+  }
+
+  async function searchKnowledgeSources(query: string) {
+    setKnowledgeQuery(query)
+    try { setKnowledgeSources(await fetchKnowledgeSources(query)); setKnowledgeArchiveError(false) } catch { setKnowledgeSources([]); setKnowledgeArchiveError(true) }
   }
 
   async function rebuildKnowledgeIndexFromBrowser() {
@@ -190,6 +203,13 @@ function App() {
     void refreshSession()
     void refreshAudioInputs()
   }, [refreshAudioInputs])
+
+  useEffect(() => {
+    const refreshRollers = () => document.querySelectorAll<HTMLElement>('.roller-list').forEach(applyRollerDepth)
+    refreshRollers()
+    window.addEventListener('resize', refreshRollers)
+    return () => window.removeEventListener('resize', refreshRollers)
+  }, [activeWorkspaceSection, approvedCandidates.length, pendingCandidates.length, toolApprovals.length, voiceProfiles.length, terminalGrants.length, knowledgeSources.length])
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -402,6 +422,8 @@ function App() {
                     type="button"
                     className={`workspace-navigation__item${activeWorkspaceSection === section.id ? ' workspace-navigation__item--active' : ''}`}
                     aria-current={activeWorkspaceSection === section.id ? 'page' : undefined}
+                    aria-label={section.label}
+                    title={section.label}
                     onClick={() => setActiveWorkspaceSection(section.id)}
                     key={section.id}
                   >
@@ -415,6 +437,11 @@ function App() {
           </aside>
           <div className="workspace-stage">
             <section className="voice-desk" aria-labelledby="voice-title">
+              <div className={`voice-chamber voice-chamber--${voiceState} voice-chamber--${conversation.activity}`} aria-hidden="true">
+                <span className="voice-chamber__orbit voice-chamber__orbit--outer" />
+                <span className="voice-chamber__orbit voice-chamber__orbit--middle" />
+                <span className="voice-chamber__core" />
+              </div>
               <div className="voice-desk__status">
                 <span className={`voice-desk__signal voice-desk__signal--${voiceState}`} aria-hidden="true" />
                 <div>
@@ -465,7 +492,7 @@ function App() {
                 <div className="workspace-panel__heading"><div><p className="eyebrow">长期上下文</p><h2 id="memory-title">待确认记忆</h2></div><span className="panel-count">{pendingCandidates.length} 项待处理</span></div>
           <div className="memory-review">
             {pendingCandidates.length ? (
-              <div className="memory-candidate-list">
+              <div className="memory-candidate-list roller-list" onScroll={handleRollerScroll}>
                 {pendingCandidates.map((candidate) => {
                   const busy = candidateActionId === candidate.id
                   const draft = candidateDrafts[candidate.id] ?? candidate.content
@@ -491,10 +518,10 @@ function App() {
             ) : <p className="memory-empty">暂无待确认项目。</p>}
           </div>
           <section className="memory-review memory-review--saved" aria-labelledby="approved-memory-title">
-            <h2 id="approved-memory-title">已保存记忆</h2>
-            {approvedCandidates.length ? (
-              <div className="memory-candidate-list">
-                {approvedCandidates.map((candidate) => {
+            <div className="archive-heading"><h2 id="approved-memory-title">记忆档案</h2><input aria-label="搜索已保存记忆" value={memoryQuery} onChange={(event) => setMemoryQuery(event.target.value)} placeholder="搜索已保存记忆" /></div>
+            {approvedCandidates.filter((candidate) => candidate.content.includes(memoryQuery.trim())).length ? (
+              <div className="memory-candidate-list roller-list" onScroll={handleRollerScroll}>
+                {approvedCandidates.filter((candidate) => candidate.content.includes(memoryQuery.trim())).map((candidate) => {
                   const busy = candidateActionId === candidate.id
                   return (
                     <div key={candidate.id} className="memory-candidate">
@@ -507,7 +534,7 @@ function App() {
                   )
                 })}
               </div>
-            ) : <p className="memory-empty">暂无已保存项目。</p>}
+            ) : <p className="memory-empty">没有匹配的已保存记忆。</p>}
           </section>
               </section>
               <section className="workspace-panel" hidden={activeWorkspaceSection !== 'knowledge'} aria-labelledby="knowledge-status-title">
@@ -527,13 +554,14 @@ function App() {
               {knowledgeIndexing ? '正在建立索引' : '建立索引'}
             </button>
             {knowledgeIndexMessage ? <p role="status">{knowledgeIndexMessage}</p> : null}
+            <div className="knowledge-archive"><div className="archive-heading"><h3>文件档案</h3><input aria-label="搜索知识库文件" value={knowledgeQuery} onChange={(event) => void searchKnowledgeSources(event.target.value)} placeholder="搜索文件名" /></div>{knowledgeArchiveError ? <p className="form-error" role="status">文件档案暂不可用。请刷新服务后重试。</p> : knowledgeSources.length ? <div className="knowledge-source-list roller-list" onScroll={handleRollerScroll}>{knowledgeSources.map((source) => <p key={source.path}><span>{source.path}</span><time>{formatTimestamp(source.updated_at)}</time></p>)}</div> : <p className="memory-empty">没有匹配的已索引文件。</p>}</div>
           </div>
               </section>
               <section className="workspace-panel" hidden={activeWorkspaceSection !== 'approvals'} aria-labelledby="tool-review-title">
                 <div className="workspace-panel__heading"><div><p className="eyebrow">安全确认</p><h2 id="tool-review-title">待确认工具操作</h2></div><span className="panel-count">{toolApprovals.length} 项待处理</span></div>
           <div className="tool-review">
             {toolApprovals.length ? (
-              <div className="tool-approval-list">
+              <div className="tool-approval-list roller-list" onScroll={handleRollerScroll}>
                 {toolApprovals.map((approval) => {
                   const busy = toolActionId === approval.id
                   return <div key={approval.id} className="tool-approval">
@@ -560,7 +588,7 @@ function App() {
             <p className="tool-detail">支持常见音频格式和多声道；需要转换的音频会由服务器转为单声道 16-bit PCM WAV。文件不超过 5 MiB，时长不超过 10 秒。</p>
             {profileTranscribing ? <p className="tool-detail" role="status">正在自动转录参考音频，完成后可以编辑文本。</p> : null}
             {profileError ? <p className="form-error">{profileError}</p> : null}
-            <div className="voice-profile-list">
+            <div className="voice-profile-list roller-list" onScroll={handleRollerScroll}>
               <button type="button" className="secondary-button" disabled={profileBusy || selectedVoiceProfileId === null} onClick={() => void chooseProfile(null)}>使用 Kokoro 基线</button>
               {voiceProfiles.map((profile) => <div className="voice-profile" key={profile.id}>
                 <p><strong>{profile.name}</strong> {profile.duration_ms} ms / {profile.sample_rate} Hz</p>
@@ -598,7 +626,7 @@ function App() {
                   <select id="terminal-profile" value={session.terminalProfile} onChange={(event) => void updateTerminalProfile(event.target.value as 'observe' | 'assist' | 'operator')}>
                     <option value="observe">观察</option><option value="assist">协助</option><option value="operator">主机操作</option>
                   </select>
-                  {terminalGrants.length ? <div className="terminal-grant-list">{terminalGrants.map((grant) => <div key={grant.id} className="terminal-grant"><code>{grant.tool_name} · {grant.access} · {grant.working_directory}</code><p>{grant.capabilities.length ? grant.capabilities.join('、') : '无额外 capability'}，有效至 {formatTimestamp(grant.expires_at)}</p><button type="button" className="secondary-button" onClick={() => void revokeGrant(grant.id)}>撤销</button></div>)}</div> : <p className="memory-empty">暂无活动终端授权。</p>}
+                  {terminalGrants.length ? <div className="terminal-grant-list roller-list" onScroll={handleRollerScroll}>{terminalGrants.map((grant) => <div key={grant.id} className="terminal-grant"><code>{grant.tool_name} · {grant.access} · {grant.working_directory}</code><p>{grant.capabilities.length ? grant.capabilities.join('、') : '无额外 capability'}，有效至 {formatTimestamp(grant.expires_at)}</p><button type="button" className="secondary-button" onClick={() => void revokeGrant(grant.id)}>撤销</button></div>)}</div> : <p className="memory-empty">暂无活动终端授权。</p>}
                 </div>
               </section>
               <section className="workspace-panel" hidden={activeWorkspaceSection !== 'avatars'} aria-labelledby="avatar-workspace-title">
@@ -641,6 +669,21 @@ function formatTimestamp(value: string): string {
   const timestamp = new Date(value)
   if (Number.isNaN(timestamp.getTime())) return value
   return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' }).format(timestamp)
+}
+
+function handleRollerScroll(event: UIEvent<HTMLDivElement>): void {
+  applyRollerDepth(event.currentTarget)
+}
+
+function applyRollerDepth(list: HTMLElement): void {
+  const midpoint = list.getBoundingClientRect().top + list.clientHeight / 2
+  for (const item of Array.from(list.children) as HTMLElement[]) {
+    const rect = item.getBoundingClientRect()
+    const distance = Math.min(1, Math.abs(rect.top + rect.height / 2 - midpoint) / (list.clientHeight / 2))
+    item.style.setProperty('--roller-scale', String(1 - distance * .16))
+    item.style.setProperty('--roller-opacity', String(1 - distance * .7))
+    item.style.setProperty('--roller-tilt', `${(rect.top + rect.height / 2 < midpoint ? 1 : -1) * distance * 12}deg`)
+  }
 }
 
 function bytesToBase64(payload: ArrayBuffer): string {

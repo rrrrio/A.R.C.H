@@ -21,6 +21,14 @@ class KnowledgeHit:
     score: float
 
 
+@dataclass(frozen=True, slots=True)
+class KnowledgeSource:
+    """One browser-visible index entry without document contents or embeddings."""
+
+    path: str
+    updated_at: str
+
+
 class KnowledgeStore:
     """Persist sources and embeddings without a separately administered vector service."""
 
@@ -104,6 +112,20 @@ class KnowledgeStore:
                 "SELECT COUNT(*), MAX(updated_at) FROM knowledge_sources"
             ).fetchone()
         return int(count), newest if isinstance(newest, str) else None
+
+    def list_sources(self, query: str = "") -> tuple[KnowledgeSource, ...]:
+        """Return locally indexed source metadata for the authenticated archive view."""
+        with self._connect(readonly=True) as connection:
+            rows = connection.execute(
+                "SELECT path, updated_at FROM knowledge_sources "
+                "WHERE path LIKE ? ORDER BY updated_at DESC, path ASC",
+                (f"%{query}%",),
+            ).fetchall()
+        return tuple(
+            KnowledgeSource(path, updated_at)
+            for path, updated_at in rows
+            if isinstance(path, str) and isinstance(updated_at, str)
+        )
 
     def _vector_hits(self, query: tuple[float, ...]) -> list[KnowledgeHit]:
         """Load compatible vectors for the intentionally small, single-user corpus."""

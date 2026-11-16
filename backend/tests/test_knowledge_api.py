@@ -83,3 +83,23 @@ def test_knowledge_reindex_requires_csrf_and_returns_refreshed_safe_status(tmp_p
     assert rebuilt.json()["source_count"] == 1
     assert "weekly" not in rebuilt.text
     assert service.calls == 1
+
+
+def test_knowledge_sources_require_login_and_return_metadata_only(tmp_path: Path) -> None:
+    credential_path = tmp_path / "admin.json"
+    provision_credentials(credential_path, "correct-horse-battery-staple")
+    store = KnowledgeStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    store.replace_source("notes/weekly.md", "digest", (("private source body", (1.0, 0.0)),))
+    app = create_app(AuthService(credential_path, PUBLIC_ORIGIN), knowledge_store=store)
+    with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
+        assert client.get("/api/knowledge/sources").status_code == 401
+        client.post(
+            "/api/auth/login",
+            headers={"Origin": PUBLIC_ORIGIN},
+            json={"password": "correct-horse-battery-staple"},
+        )
+        response = client.get("/api/knowledge/sources?query=weekly")
+    assert response.status_code == 200
+    assert response.json()[0]["path"] == "notes/weekly.md"
+    assert "private source body" not in response.text
