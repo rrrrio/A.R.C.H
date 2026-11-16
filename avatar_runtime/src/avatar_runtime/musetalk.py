@@ -170,7 +170,7 @@ class MuseTalkEngine:
                     self._mask_coords[frame_index],
                 )
                 ok, encoded = self._cv2.imencode(
-                    ".jpg", combined, [self._cv2.IMWRITE_JPEG_QUALITY, 82]
+                    ".jpg", combined, [self._cv2.IMWRITE_JPEG_QUALITY, 95]
                 )
                 if not ok:
                     raise RuntimeError("MuseTalk could not encode a rendered JPEG frame.")

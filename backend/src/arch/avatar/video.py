@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Keep Base64 JSON audio records well below asyncio's default 64 KiB line limit.
 _MAX_IPC_PCM_CHUNK_BYTES = 24_000
+_IPC_STREAM_LIMIT = 256 * 1024
 
 
 class AvatarWorker(Protocol):
@@ -49,17 +50,28 @@ class AvatarVideoTrack(VideoStreamTrack):
 
     kind = "video"
 
-    def __init__(self, fps: int, queue_size: int) -> None:
+    def __init__(
+        self,
+        fps: int,
+        queue_size: int,
+        *,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
         super().__init__()
         self._fps = fps
         self._frames: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=queue_size)
         self._frame_index = 0
+        self._clock = clock
+        self._sleep = sleep
+        self._next_frame_at: float | None = None
 
     async def recv(self) -> av.VideoFrame:
         """Wait for the next worker frame and assign a stable presentation timestamp."""
         payload = await self._frames.get()
         if payload is None:
             raise MediaStreamError
+        await self._wait_for_next_frame()
         with av.open(io.BytesIO(payload), format="mjpeg") as container:
             input_container: Any = container
             frame = next(input_container.decode(video=0))
@@ -69,12 +81,10 @@ class AvatarVideoTrack(VideoStreamTrack):
         return cast(av.VideoFrame, frame)
 
     async def publish(self, payload: bytes) -> None:
-        """Publish a frame while dropping the oldest frame under backpressure."""
+        """Publish one frame and let WebRTC pacing backpressure the renderer."""
         if self.readyState == "ended":
             return
-        if self._frames.full():
-            self._frames.get_nowait()
-        self._frames.put_nowait(payload)
+        await self._frames.put(payload)
 
     async def stop_stream(self) -> None:
         """End the track and wake a pending receiver."""
@@ -88,6 +98,23 @@ class AvatarVideoTrack(VideoStreamTrack):
         while self._frames.full():
             self._frames.get_nowait()
         self._frames.put_nowait(None)
+
+    async def _wait_for_next_frame(self) -> None:
+        """Emit a GPU-rendered burst at the negotiated frame rate."""
+        now = self._clock() if self._clock is not None else asyncio.get_running_loop().time()
+        if self._next_frame_at is None:
+            self._next_frame_at = now
+            return
+        self._next_frame_at += 1 / self._fps
+        delay = self._next_frame_at - now
+        if delay > 0:
+            if self._sleep is not None:
+                await self._sleep(delay)
+            else:
+                await asyncio.sleep(delay)
+        elif -delay > 1 / self._fps:
+            # Do not replay an old burst at maximum speed after a scheduling stall.
+            self._next_frame_at = now
 
 
 class UnixSocketAvatarWorker:
@@ -110,7 +137,9 @@ class UnixSocketAvatarWorker:
         self._closing = False
         self._on_frame = on_frame
         try:
-            self._reader, self._writer = await asyncio.open_unix_connection(self._socket_path)
+            self._reader, self._writer = await asyncio.open_unix_connection(
+                self._socket_path, limit=_IPC_STREAM_LIMIT
+            )
         except OSError as error:
             raise RuntimeError("Avatar worker is not reachable.") from error
         self._reader_task = asyncio.create_task(self._read_messages())
@@ -266,12 +295,21 @@ class AvatarVideoSignalingService:
 
     def status(self) -> AvatarVideoStatus:
         """Return state without exposing the worker socket or filesystem path."""
+        state = self._state
+        detail = self._detail
+        if self._enabled and state in {"ready", "unavailable"}:
+            if self._socket_path.is_socket():
+                state = "ready"
+                detail = None
+            else:
+                state = "unavailable"
+                detail = "MuseTalk renderer is not running."
         return AvatarVideoStatus(
             enabled=self._enabled,
-            state=self._state,
+            state=state,
             model=self._model,
             source_video=self._source_video.name,
-            detail=self._detail,
+            detail=detail,
         )
 
     async def begin(self, utterance_id: str, sample_rate: int, emotion: str) -> None:

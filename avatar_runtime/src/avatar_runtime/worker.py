@@ -68,7 +68,7 @@ class PreviewRenderer:
                 import io
 
                 buffer = io.BytesIO()
-                packets.save(buffer, format="JPEG", quality=82)
+                packets.save(buffer, format="JPEG", quality=95)
                 self._frames.append(buffer.getvalue())
         if not self._frames:
             raise RuntimeError(f"Avatar source video has no frames: {self._source}")

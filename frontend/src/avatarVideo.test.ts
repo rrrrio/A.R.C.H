@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { AvatarVideoClient, fetchAvatarStatus, isAvatarStatus, isOfferResponse } from './avatarVideo'
+import { AvatarVideoClient, fetchAvatarStatus, isAvatarStatus, isOfferResponse, stateFromAvatarStatus } from './avatarVideo'
 
 describe('avatar video protocol guards', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -19,6 +19,16 @@ describe('avatar video protocol guards', () => {
 
     await expect(fetchAvatarStatus()).resolves.toMatchObject({ enabled: false, state: 'disabled' })
     expect(fetch).toHaveBeenCalledWith('/api/avatar/status')
+  })
+
+  it('keeps video disabled when the enabled renderer has no ready worker', () => {
+    expect(stateFromAvatarStatus({
+      enabled: true,
+      state: 'unavailable',
+      model: 'musetalk-1.5',
+      source_video: 'idle.mp4',
+      detail: 'MuseTalk renderer is not running.',
+    })).toBe('unavailable')
   })
 })
 

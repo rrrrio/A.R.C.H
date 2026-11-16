@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import socket
 from pathlib import Path
 
 import pytest
@@ -131,19 +132,47 @@ def test_tts_observer_receives_only_accepted_audio() -> None:
 
 
 def test_avatar_track_drops_old_frames_under_backpressure() -> None:
-    """The bounded browser queue retains the newest renderer frame."""
+    """The bounded browser queue applies backpressure instead of skipping a burst."""
     track = AvatarVideoTrack(fps=25, queue_size=2)
 
     async def exercise() -> None:
         await track.publish(b"old")
         await track.publish(b"middle")
-        await track.publish(b"new")
+        pending = asyncio.create_task(track.publish(b"new"))
+        await asyncio.sleep(0)
+        assert not pending.done()
+        assert await track._frames.get() == b"old"  # noqa: SLF001
+        await pending
 
     asyncio.run(exercise())
 
     assert track._frames.qsize() == 2  # noqa: SLF001
     assert asyncio.run(track._frames.get()) == b"middle"  # noqa: SLF001
     assert asyncio.run(track._frames.get()) == b"new"  # noqa: SLF001
+
+
+def test_avatar_track_paces_frames_at_its_configured_rate() -> None:
+    """A rendered batch must be emitted as video time, not an immediate burst."""
+    now = 100.0
+    delays: list[float] = []
+
+    def clock() -> float:
+        return now
+
+    async def sleep(delay: float) -> None:
+        nonlocal now
+        delays.append(delay)
+        now += delay
+
+    async def exercise() -> None:
+        track = AvatarVideoTrack(fps=25, queue_size=2, clock=clock, sleep=sleep)
+        await track._wait_for_next_frame()  # noqa: SLF001
+        await track._wait_for_next_frame()  # noqa: SLF001
+        await track._wait_for_next_frame()  # noqa: SLF001
+
+    asyncio.run(exercise())
+
+    assert delays == pytest.approx([0.04, 0.04])
 
 
 def test_unix_worker_ignores_expected_eof_while_closing(
@@ -224,6 +253,42 @@ def test_unix_worker_splits_pcm_before_the_socket_line_limit(tmp_path: Path) -> 
     ]
 
 
+def test_unix_worker_reads_a_large_renderer_frame(tmp_path: Path) -> None:
+    """Renderer JPEG Base64 records must exceed neither side's IPC line limit."""
+
+    async def exercise() -> bytes:
+        socket_path = tmp_path / "avatar.sock"
+        received: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
+
+        async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            await reader.readline()
+            writer.write(b'{"type":"ready"}\n')
+            frame = {"type": "frame", "jpeg_b64": base64.b64encode(b"x" * 50000).decode()}
+            writer.write(
+                (json.dumps(frame) + "\n").encode()
+            )
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        server = await asyncio.start_unix_server(handle, path=socket_path)
+        worker = UnixSocketAvatarWorker(socket_path)
+        try:
+            await worker.start(lambda payload: _set_result(received, payload))
+            return await asyncio.wait_for(received, timeout=1)
+        finally:
+            await worker.close()
+            server.close()
+            await server.wait_closed()
+
+    assert asyncio.run(exercise()) == b"x" * 50000
+
+
+async def _set_result(result: asyncio.Future[bytes], payload: bytes) -> None:
+    if not result.done():
+        result.set_result(payload)
+
+
 def test_avatar_signaling_returns_a_video_only_answer() -> None:
     """The browser-facing peer has no audio section and is session-owned."""
     worker = FakeWorker()
@@ -294,3 +359,22 @@ def test_avatar_status_is_authenticated_and_disabled_by_default(tmp_path: Path) 
         "detail": None,
     }
     assert offer.status_code == 404
+
+
+def test_avatar_status_requires_a_ready_worker_socket(tmp_path: Path) -> None:
+    """An enabled setting alone must not invite a browser into a failed offer."""
+    socket_path = tmp_path / "avatar.sock"
+    service = AvatarVideoSignalingService(
+        enabled=True,
+        model="musetalk-1.5",
+        source_video=tmp_path / "idle.mp4",
+        socket_path=socket_path,
+    )
+
+    assert service.status().state == "unavailable"
+    assert service.status().detail == "MuseTalk renderer is not running."
+
+    with socket.socket(socket.AF_UNIX) as listener:
+        listener.bind(str(socket_path))
+        assert service.status().state == "ready"
+        assert service.status().detail is None

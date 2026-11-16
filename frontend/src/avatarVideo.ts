@@ -8,6 +8,11 @@ export type AvatarVideoStatus = {
   detail?: string | null
 }
 
+export function stateFromAvatarStatus(status: AvatarVideoStatus): AvatarVideoState {
+  if (!status.enabled) return 'disabled'
+  return status.state === 'ready' ? 'ready' : 'unavailable'
+}
+
 type OfferResponse = { sdp: string; type: 'answer'; pc_id: string }
 
 function isOfferResponse(value: unknown): value is OfferResponse {

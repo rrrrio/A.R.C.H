@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-import { AvatarVideoClient, fetchAvatarStatus, type AvatarVideoState, type AvatarVideoStatus } from './avatarVideo'
+import { AvatarVideoClient, fetchAvatarStatus, stateFromAvatarStatus, type AvatarVideoState, type AvatarVideoStatus } from './avatarVideo'
 
 type AvatarVideoPreviewProps = { csrfToken: string }
 
@@ -30,7 +30,7 @@ export function AvatarVideoPreview({ csrfToken }: AvatarVideoPreviewProps) {
       .then((next) => {
         if (!active) return
         setStatus(next)
-        setState(next.enabled ? 'ready' : 'disabled')
+        setState(stateFromAvatarStatus(next))
       })
       .catch(() => active && setState('unavailable'))
     return () => {
@@ -96,7 +96,7 @@ export function AvatarVideoPreview({ csrfToken }: AvatarVideoPreviewProps) {
             <p className="eyebrow">真人视频</p>
             <h2 id="avatar-video-title">{status?.model ?? 'MuseTalk 1.5'}</h2>
           </div>
-          <button type="button" className="secondary-button" onClick={() => void toggle()} disabled={busy || (!status?.enabled && !active)}>
+          <button type="button" className="secondary-button" onClick={() => void toggle()} disabled={busy || (!status?.enabled && !active) || state === 'unavailable'}>
             {busy ? '正在连接' : active ? '关闭视频' : '启用视频'}
           </button>
         </div>

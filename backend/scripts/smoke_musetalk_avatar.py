@@ -64,24 +64,41 @@ async def wait_for_socket(path: Path, process: subprocess.Popen[bytes]) -> None:
     raise TimeoutError("MuseTalk worker did not create its private socket.")
 
 
-async def smoke(socket_path: Path) -> tuple[int, int]:
-    """Negotiate a recvonly local peer and require one decoded real renderer frame."""
+async def smoke(socket_path: Path) -> tuple[int, int, list[float]]:
+    """Require three decoded renderer frames at a stable WebRTC cadence."""
     settings = get_settings()
-    received: asyncio.Future[tuple[int, int]] = asyncio.get_running_loop().create_future()
+    received: asyncio.Future[tuple[int, int, list[float]]] = (
+        asyncio.get_running_loop().create_future()
+    )
     peer = RTCPeerConnection()
 
     @peer.on("track")
     def on_track(track: MediaStreamTrack) -> None:
         async def receive() -> None:
-            frame = await track.recv()
-            if not isinstance(frame, VideoFrame):
+            timestamps: list[float] = []
+            dimensions: tuple[int, int] | None = None
+            for _ in range(3):
+                frame = await track.recv()
+                if not isinstance(frame, VideoFrame):
+                    if not received.done():
+                        received.set_exception(
+                            TypeError("MuseTalk smoke peer received a non-video media unit.")
+                        )
+                    return
+                dimensions = (frame.width, frame.height)
+                timestamps.append(time.monotonic())
+            intervals = [
+                right - left for left, right in zip(timestamps, timestamps[1:], strict=False)
+            ]
+            minimum_interval = 0.75 / settings.avatar_fps
+            if any(interval < minimum_interval for interval in intervals):
                 if not received.done():
                     received.set_exception(
-                        TypeError("MuseTalk smoke peer received a non-video media unit.")
+                        RuntimeError(f"MuseTalk frames arrived in a burst: {intervals!r}")
                     )
                 return
-            if not received.done():
-                received.set_result((frame.width, frame.height))
+            if not received.done() and dimensions is not None:
+                received.set_result((*dimensions, intervals))
 
         asyncio.create_task(receive())
 
@@ -121,7 +138,18 @@ def main() -> None:
         type=Path,
         default=PROJECT_ROOT / "data/runtime/avatar/musetalk-smoke.sock",
     )
+    parser.add_argument(
+        "--existing-worker",
+        action="store_true",
+        help="Connect to an already supervised worker without starting another GPU process.",
+    )
     arguments = parser.parse_args()
+    if arguments.existing_worker:
+        if not arguments.socket.is_socket():
+            raise FileNotFoundError(f"MuseTalk worker socket is missing: {arguments.socket}")
+        width, height, intervals = asyncio.run(smoke(arguments.socket))
+        print(f"avatar-musetalk-smoke: passed frame={width}x{height} intervals={intervals!r}")
+        return
     settings = get_settings()
     runtime_python = PROJECT_ROOT / "data/runtime/musetalk/bin/python"
     if not runtime_python.is_file():
@@ -135,8 +163,8 @@ def main() -> None:
     )
     try:
         asyncio.run(wait_for_socket(arguments.socket, process))
-        width, height = asyncio.run(smoke(arguments.socket))
-        print(f"avatar-musetalk-smoke: passed frame={width}x{height}")
+        width, height, intervals = asyncio.run(smoke(arguments.socket))
+        print(f"avatar-musetalk-smoke: passed frame={width}x{height} intervals={intervals!r}")
     finally:
         process.terminate()
         try:
