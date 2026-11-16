@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { AvatarPreview } from './AvatarPreview'
 import { AvatarVideoPreview } from './AvatarVideoPreview'
@@ -6,7 +6,8 @@ import { fetchAuthStatus, fetchCsrfToken, hasCurrentAuthContract, login, logout,
 import { fetchKnowledgeStatus, rebuildKnowledgeIndex, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
 import { decideToolApproval, fetchTerminalGrants, fetchToolApprovals, revokeTerminalGrant, type TerminalGrant, type ToolApproval } from './tools'
-import { listAudioInputs, type AudioInput, type LatencyStage, type VoiceActivity, type VoiceConnection, type VoiceEvent, type VoiceTransport, VoiceClient, WebSocketVoiceClient } from './voice'
+import { type LatencyStage, type VoiceActivity } from './voice'
+import { useVoiceSession } from './useVoiceSession'
 import { createVoiceProfile, deleteVoiceProfile, fetchVoiceProfiles, handleReferenceFileSelection, restartVoiceSessionForProfileSelection, selectVoiceProfile, transcribeReferenceAudio, type VoiceProfile, validateReferenceAudio } from './voices'
 import './App.css'
 
@@ -18,15 +19,16 @@ type SessionState =
   | { kind: 'authenticated'; csrfToken: string; terminalLeaseExpiresAt: string | null; terminalLeaseScopes: string[]; terminalProfile: 'observe' | 'assist' | 'operator' }
   | { kind: 'error' }
 
-type ConversationState = {
-  activity: VoiceActivity
-  userText: string
-  assistantText: string
-  latency: { stage: LatencyStage; elapsedMs: number }[]
-}
+type WorkspaceSection = 'memory' | 'knowledge' | 'approvals' | 'voices' | 'agent' | 'avatars'
 
-const initialConversation: ConversationState = { activity: 'listening', userText: '', assistantText: '', latency: [] }
-const latencyHistoryLimit = 8
+const workspaceSections: { id: WorkspaceSection; label: string; description: string }[] = [
+  { id: 'memory', label: '记忆', description: '审阅长期偏好与事实' },
+  { id: 'knowledge', label: '知识库', description: '管理本地资料索引' },
+  { id: 'approvals', label: '审批', description: '确认待执行的主机操作' },
+  { id: 'voices', label: '声音', description: '选择和管理本地声音参考' },
+  { id: 'agent', label: '主机 Agent', description: '管理权限档位和授权' },
+  { id: 'avatars', label: '数字人', description: '管理浏览器和视频呈现' },
+]
 
 const activityLabels: Record<VoiceActivity, string> = {
   'user-speaking': '正在聆听',
@@ -52,10 +54,6 @@ function App() {
   const [leasePassword, setLeasePassword] = useState('')
   const [leaseBusy, setLeaseBusy] = useState(false)
   const [leaseError, setLeaseError] = useState(false)
-  const [voiceState, setVoiceState] = useState<'idle' | 'connecting' | 'preparing' | 'ready' | 'disconnected' | 'error'>('idle')
-  const [conversation, setConversation] = useState<ConversationState>(initialConversation)
-  const [audioInputs, setAudioInputs] = useState<AudioInput[]>([])
-  const [audioDeviceId, setAudioDeviceId] = useState('')
   const [pendingCandidates, setPendingCandidates] = useState<MemoryCandidate[]>([])
   const [approvedCandidates, setApprovedCandidates] = useState<MemoryCandidate[]>([])
   const [knowledgeStatus, setKnowledgeStatus] = useState<KnowledgeStatus | null>(null)
@@ -75,15 +73,24 @@ function App() {
   const [profileBusy, setProfileBusy] = useState(false)
   const [profileTranscribing, setProfileTranscribing] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
-  const voiceClient = useRef<VoiceConnection | null>(null)
-  const preferredVoiceTransport = useRef<VoiceTransport>('webrtc')
-  const inputReadyTimer = useRef<number | null>(null)
+  const [activeWorkspaceSection, setActiveWorkspaceSection] = useState<WorkspaceSection>('memory')
   const profileTranscriptionRequest = useRef(0)
-  const avatarEnergySink = useRef<(energy: number) => void>(() => undefined)
 
-  const setAvatarEnergySink = useCallback((sink: (energy: number) => void) => {
-    avatarEnergySink.current = sink
-  }, [])
+  const {
+    audioDeviceId,
+    audioInputs,
+    connectVoice,
+    conversation,
+    disconnectVoice,
+    refreshAudioInputs,
+    setAudioDeviceId,
+    setAvatarEnergySink,
+    voiceState,
+  } = useVoiceSession({
+    csrfToken: session.kind === 'authenticated' ? session.csrfToken : null,
+    onMemoryCandidatesReady: () => void refreshMemoryCandidates(),
+    onToolApprovalsReady: () => void refreshToolApprovals(),
+  })
 
   async function refreshMemoryCandidates() {
     try {
@@ -179,18 +186,10 @@ function App() {
     }
   }
 
-  async function refreshAudioInputs() {
-    try {
-      setAudioInputs(await listAudioInputs())
-    } catch {
-      setAudioInputs([])
-    }
-  }
-
   useEffect(() => {
     void refreshSession()
     void refreshAudioInputs()
-  }, [])
+  }, [refreshAudioInputs])
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -252,134 +251,6 @@ function App() {
     } finally {
       setLeaseBusy(false)
     }
-  }
-
-  async function connectWebSocketVoice(csrfToken: string) {
-    setVoiceState('preparing')
-    const client = new WebSocketVoiceClient(
-      csrfToken,
-      (event) => { if (voiceClient.current === client) handleVoiceEvent(event) },
-      audioDeviceId || undefined,
-      () => handleVoiceDisconnect(client),
-      (energy) => avatarEnergySink.current(energy),
-    )
-    voiceClient.current = client
-    try {
-      await client.connect()
-      if (voiceClient.current !== client) await client.close().catch(() => undefined)
-    } catch {
-      if (voiceClient.current === client) {
-        voiceClient.current = null
-        setVoiceState('error')
-      }
-      await client.close().catch(() => undefined)
-    }
-  }
-
-  async function connectVoice() {
-    if (session.kind !== 'authenticated') return
-    setVoiceState('connecting')
-    setConversation(initialConversation)
-    if (preferredVoiceTransport.current === 'websocket') {
-      await connectWebSocketVoice(session.csrfToken)
-      return
-    }
-    const client = new VoiceClient(
-      session.csrfToken,
-      (event) => {
-        if (voiceClient.current !== client) return
-        if (event.type === 'voice_input_ready') preferredVoiceTransport.current = 'webrtc'
-        handleVoiceEvent(event)
-      },
-      audioDeviceId || undefined,
-      () => handleVoiceDisconnect(client),
-      (energy) => avatarEnergySink.current(energy),
-    )
-    voiceClient.current = client
-    try {
-      await client.connect()
-      if (voiceClient.current !== client) {
-        await client.close().catch(() => undefined)
-        return
-      }
-      inputReadyTimer.current = window.setTimeout(() => void fallBackToWebSocket(session.csrfToken, client), 4_000)
-      setVoiceState((current) => current === 'ready' ? current : 'preparing')
-      void refreshAudioInputs()
-    } catch {
-      if (voiceClient.current === client) {
-        await client.close().catch(() => undefined)
-        voiceClient.current = null
-        setVoiceState('error')
-      }
-    }
-  }
-
-  async function disconnectVoice() {
-    clearInputReadyTimer()
-    await voiceClient.current?.close().catch(() => undefined)
-    voiceClient.current = null
-    setVoiceState('idle')
-    setConversation(initialConversation)
-  }
-
-  function handleVoiceDisconnect(client: VoiceConnection) {
-    if (voiceClient.current !== client) return
-    voiceClient.current = null
-    setVoiceState((current) => current === 'connecting' || current === 'preparing' ? 'error' : 'disconnected')
-    setConversation(initialConversation)
-    void client.close().catch(() => undefined)
-  }
-
-  function handleVoiceEvent(event: VoiceEvent) {
-    if (event.type === 'voice_input_ready') clearInputReadyTimer()
-    if (event.type === 'memory_candidates_ready') {
-      void refreshMemoryCandidates()
-      return
-    }
-    if (event.type === 'tool_approvals_ready') {
-      void refreshToolApprovals()
-      return
-    }
-    if (event.type === 'voice_ready' || event.type === 'voice_input_ready') {
-      setVoiceState((current) => current === 'idle' || current === 'error' ? current : 'ready')
-      return
-    }
-    if (event.type === 'latency') {
-      document.dispatchEvent(
-        new CustomEvent('arch:latency', {
-          detail: { stage: event.stage, elapsed_ms: event.elapsed_ms },
-        }),
-      )
-    }
-    setConversation((current) => {
-      if (event.type === 'latency') {
-        const sample = { stage: event.stage, elapsedMs: event.elapsed_ms }
-        const latency = [...current.latency, sample]
-        return { ...current, latency: latency.slice(-latencyHistoryLimit) }
-      }
-      if (event.type === 'voice_state') return { ...current, activity: event.state }
-      if (event.role === 'user') {
-        return { ...current, activity: event.state, userText: event.text }
-      }
-      if (event.phase === 'start') return { ...current, activity: event.state, assistantText: '' }
-      if (event.phase === 'delta') {
-        return { ...current, activity: event.state, assistantText: current.assistantText + event.text }
-      }
-      return { ...current, activity: event.state }
-    })
-  }
-
-  function clearInputReadyTimer() {
-    if (inputReadyTimer.current !== null) window.clearTimeout(inputReadyTimer.current)
-    inputReadyTimer.current = null
-  }
-
-  async function fallBackToWebSocket(csrfToken: string, webRtcClient: VoiceClient) {
-    if (voiceClient.current !== webRtcClient) return
-    await webRtcClient.close().catch(() => undefined)
-    if (voiceClient.current !== webRtcClient) return
-    preferredVoiceTransport.current = 'websocket'
-    await connectWebSocketVoice(csrfToken)
   }
 
   async function updateCandidate(candidateId: string, update: { content?: string; action?: 'approved' | 'rejected' | 'deleted' }) {
@@ -509,79 +380,90 @@ function App() {
     <main className="workspace-shell">
       <header className="topbar">
         <span className="product-name">A.R.C.H.</span>
-        <span className={`connection-state connection-state--${session.kind}`} aria-live="polite">
-          {session.kind === 'authenticated' ? '已登录' : '未登录'}
-        </span>
+        <div className="topbar__actions">
+          <span className={`connection-state connection-state--${session.kind}`} aria-live="polite">
+            {session.kind === 'authenticated' ? '已登录' : '未登录'}
+          </span>
+          {session.kind === 'authenticated' ? <button type="button" className="topbar__sign-out" onClick={() => void signOut()}>退出</button> : null}
+        </div>
       </header>
       {session.kind === 'authenticated' ? (
-        <section className="setup-panel" aria-labelledby="voice-title">
-          <p className="eyebrow">语音会话</p>
-          <h1 id="voice-title">{voiceHeading(voiceState, conversation.activity)}</h1>
-          <p className="tool-detail">
-            终端只读租约：{session.terminalLeaseExpiresAt ? `有效至 ${formatTimestamp(session.terminalLeaseExpiresAt)}` : '已失效'}
-          </p>
-          <form className="lease-renewal" onSubmit={renewTerminalLease}>
-            <label htmlFor="terminal-lease-password">管理员密码</label>
-            <input
-              id="terminal-lease-password"
-              type="password"
-              autoComplete="current-password"
-              value={leasePassword}
-              onChange={(event) => setLeasePassword(event.target.value)}
-              required
-              disabled={leaseBusy}
-            />
-            <button type="submit" className="secondary-button" disabled={leaseBusy}>
-              {leaseBusy ? '正在获取' : '重新获取终端租约'}
-            </button>
-            {leaseError ? <p className="form-error">无法获取终端租约，请检查密码并确认当前使用 HTTPS 入口。</p> : null}
-          </form>
-          <section className="terminal-policy" aria-labelledby="terminal-policy-title">
-            <h2 id="terminal-policy-title">主机 Agent 权限</h2>
-            <label htmlFor="terminal-profile">当前档位</label>
-            <select
-              id="terminal-profile"
-              value={session.terminalProfile}
-              onChange={(event) => void updateTerminalProfile(event.target.value as 'observe' | 'assist' | 'operator')}
-            >
-              <option value="observe">观察</option>
-              <option value="assist">协助</option>
-              <option value="operator">主机操作</option>
-            </select>
-            {terminalGrants.length ? (
-              <div className="terminal-grant-list">
-                {terminalGrants.map((grant) => (
-                  <div key={grant.id} className="terminal-grant">
-                    <code>{grant.tool_name} · {grant.access} · {grant.working_directory}</code>
-                    <p>{grant.capabilities.length ? grant.capabilities.join('、') : '无额外 capability'}，有效至 {formatTimestamp(grant.expires_at)}</p>
-                    <button type="button" className="secondary-button" onClick={() => void revokeGrant(grant.id)}>撤销</button>
-                  </div>
-                ))}
-              </div>
-            ) : <p className="memory-empty">暂无活动终端授权。</p>}
-          </section>
-          {voiceState === 'error' ? <p>无法建立语音连接。</p> : null}
-          {voiceState === 'disconnected' ? <p>媒体连接已断开，请重新连接。</p> : null}
-          {voiceState === 'preparing' || voiceState === 'ready' ? (
-            <div className="transcript" aria-live="polite">
-              <p><span>你</span>{conversation.userText || '...'}</p>
-              <p><span>助手</span>{conversation.assistantText || '...'}</p>
-              {conversation.latency.map((sample, index) => (
-                <p
-                  className="latency"
-                  data-elapsed-ms={sample.elapsedMs}
-                  data-latency-stage={sample.stage}
-                  key={`${sample.stage}-${sample.elapsedMs}-${index}`}
-                >
-                  <span>{latencyLabels[sample.stage]}</span>{sample.elapsedMs} ms
-                </p>
-              ))}
+        <div className="app-workspace">
+          <aside className="workspace-navigation" aria-label="工作区导航">
+            <div className="workspace-navigation__intro">
+              <p className="eyebrow">控制中心</p>
+              <p>本机处理 · 当前会话</p>
             </div>
-          ) : null}
-          <AvatarVideoPreview csrfToken={session.csrfToken} />
-          <AvatarPreview setEnergySink={setAvatarEnergySink} />
-          <section className="memory-review" aria-labelledby="memory-title">
-            <h2 id="memory-title">待确认记忆</h2>
+            <nav>
+              {workspaceSections.map((section) => {
+                const count = section.id === 'memory' ? pendingCandidates.length : section.id === 'approvals' ? toolApprovals.length : 0
+                return (
+                  <button
+                    type="button"
+                    className={`workspace-navigation__item${activeWorkspaceSection === section.id ? ' workspace-navigation__item--active' : ''}`}
+                    aria-current={activeWorkspaceSection === section.id ? 'page' : undefined}
+                    onClick={() => setActiveWorkspaceSection(section.id)}
+                    key={section.id}
+                  >
+                    <span>{section.label}</span>
+                    {count ? <strong>{count}</strong> : null}
+                    <small>{section.description}</small>
+                  </button>
+                )
+              })}
+            </nav>
+          </aside>
+          <div className="workspace-stage">
+            <section className="voice-desk" aria-labelledby="voice-title">
+              <div className="voice-desk__status">
+                <span className={`voice-desk__signal voice-desk__signal--${voiceState}`} aria-hidden="true" />
+                <div>
+                  <p className="eyebrow">实时语音会话</p>
+                  <h1 id="voice-title">{voiceHeading(voiceState, conversation.activity)}</h1>
+                </div>
+                <div className="voice-desk__actions">
+                  {voiceState === 'ready' ? (
+                    <button type="button" className="secondary-button" onClick={() => void disconnectVoice()}>断开</button>
+                  ) : (
+                    <button type="button" onClick={() => void connectVoice()} disabled={voiceState === 'connecting' || voiceState === 'preparing'}>
+                      {voiceState === 'connecting' ? '正在连接' : voiceState === 'preparing' ? '正在准备' : '连接语音'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="audio-input-row">
+                <label htmlFor="audio-input">输入设备</label>
+                <select
+                  id="audio-input"
+                  value={audioDeviceId}
+                  onChange={(event) => setAudioDeviceId(event.target.value)}
+                  disabled={voiceState === 'connecting' || voiceState === 'preparing' || voiceState === 'ready'}
+                >
+                  <option value="">系统默认麦克风</option>
+                  {audioInputs.map((input) => <option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}
+                </select>
+                <button type="button" className="secondary-button" onClick={() => void refreshAudioInputs()} disabled={voiceState === 'connecting' || voiceState === 'preparing' || voiceState === 'ready'}>刷新</button>
+              </div>
+              {voiceState === 'error' ? <p className="voice-notice" role="status">无法建立语音连接。请检查本地模型和浏览器麦克风权限后重试。</p> : null}
+              {voiceState === 'disconnected' ? <p className="voice-notice" role="status">媒体连接已断开，请重新连接。</p> : null}
+              <div className="transcript" aria-live="polite">
+                <div className="transcript__message"><span>你</span><p>{conversation.userText || '...'}</p></div>
+                <div className="transcript__message transcript__message--assistant"><span>助手</span><p>{conversation.assistantText || '...'}</p></div>
+              </div>
+              {conversation.latency.length ? (
+                <div className="latency-strip" aria-label="本轮阶段延迟">
+                  {conversation.latency.map((sample, index) => (
+                    <p className="latency" data-elapsed-ms={sample.elapsedMs} data-latency-stage={sample.stage} key={`${sample.stage}-${sample.elapsedMs}-${index}`}>
+                      <span>{latencyLabels[sample.stage]}</span>{sample.elapsedMs} ms
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+            <div className="workspace-content">
+              <section className="workspace-panel" hidden={activeWorkspaceSection !== 'memory'} aria-labelledby="memory-title">
+                <div className="workspace-panel__heading"><div><p className="eyebrow">长期上下文</p><h2 id="memory-title">待确认记忆</h2></div><span className="panel-count">{pendingCandidates.length} 项待处理</span></div>
+          <div className="memory-review">
             {pendingCandidates.length ? (
               <div className="memory-candidate-list">
                 {pendingCandidates.map((candidate) => {
@@ -607,7 +489,7 @@ function App() {
                 })}
               </div>
             ) : <p className="memory-empty">暂无待确认项目。</p>}
-          </section>
+          </div>
           <section className="memory-review memory-review--saved" aria-labelledby="approved-memory-title">
             <h2 id="approved-memory-title">已保存记忆</h2>
             {approvedCandidates.length ? (
@@ -627,8 +509,10 @@ function App() {
               </div>
             ) : <p className="memory-empty">暂无已保存项目。</p>}
           </section>
-          <section className="knowledge-status" aria-labelledby="knowledge-status-title">
-            <h2 id="knowledge-status-title">本地知识库</h2>
+              </section>
+              <section className="workspace-panel" hidden={activeWorkspaceSection !== 'knowledge'} aria-labelledby="knowledge-status-title">
+                <div className="workspace-panel__heading"><div><p className="eyebrow">离线检索</p><h2 id="knowledge-status-title">本地知识库</h2></div></div>
+          <div className="knowledge-status">
             {knowledgeStatus === null ? (
               <p>暂时无法读取索引状态。</p>
             ) : knowledgeStatus.source_count === 0 ? (
@@ -643,9 +527,11 @@ function App() {
               {knowledgeIndexing ? '正在建立索引' : '建立索引'}
             </button>
             {knowledgeIndexMessage ? <p role="status">{knowledgeIndexMessage}</p> : null}
-          </section>
-          <section className="tool-review" aria-labelledby="tool-review-title">
-            <h2 id="tool-review-title">待确认工具操作</h2>
+          </div>
+              </section>
+              <section className="workspace-panel" hidden={activeWorkspaceSection !== 'approvals'} aria-labelledby="tool-review-title">
+                <div className="workspace-panel__heading"><div><p className="eyebrow">安全确认</p><h2 id="tool-review-title">待确认工具操作</h2></div><span className="panel-count">{toolApprovals.length} 项待处理</span></div>
+          <div className="tool-review">
             {toolApprovals.length ? (
               <div className="tool-approval-list">
                 {toolApprovals.map((approval) => {
@@ -665,9 +551,11 @@ function App() {
               </div>
             ) : <p className="memory-empty">暂无待确认工具操作。</p>}
             <button type="button" className="secondary-button" onClick={() => void refreshToolApprovals()}>刷新操作</button>
-          </section>
-          <section className="voice-profiles" aria-labelledby="voice-profiles-title">
-            <h2 id="voice-profiles-title">克隆声音参考</h2>
+          </div>
+              </section>
+              <section className="workspace-panel" hidden={activeWorkspaceSection !== 'voices'} aria-labelledby="voice-profiles-title">
+                <div className="workspace-panel__heading"><div><p className="eyebrow">输出声音</p><h2 id="voice-profiles-title">克隆声音参考</h2></div></div>
+          <div className="voice-profiles">
             <p>{voiceState === 'connecting' || voiceState === 'preparing' || voiceState === 'ready' ? '选择克隆参考后，当前语音会自动重新连接并应用所选声音。' : '选择克隆参考后，会在下一次连接语音时应用所选声音。保存的参考仅在 Qwen 克隆运行时安装并完成设备验收后启用。'}</p>
             <p className="tool-detail">支持常见音频格式和多声道；需要转换的音频会由服务器转为单声道 16-bit PCM WAV。文件不超过 5 MiB，时长不超过 10 秒。</p>
             {profileTranscribing ? <p className="tool-detail" role="status">正在自动转录参考音频，完成后可以编辑文本。</p> : null}
@@ -694,42 +582,33 @@ function App() {
               <label className="consent-row"><input type="checkbox" checked={profileOwnershipConfirmed} onChange={(event) => setProfileOwnershipConfirmed(event.target.checked)} required />我确认有权使用此参考声音。</label>
               <button type="submit" disabled={profileBusy || profileTranscribing || profileReference === null}>{profileBusy ? '正在保存' : '保存参考'}</button>
             </form>
-          </section>
-          <div className="audio-input-row">
-            <label htmlFor="audio-input">麦克风</label>
-            <select
-              id="audio-input"
-              value={audioDeviceId}
-              onChange={(event) => setAudioDeviceId(event.target.value)}
-              disabled={voiceState === 'connecting' || voiceState === 'preparing' || voiceState === 'ready'}
-            >
-              <option value="">系统默认</option>
-              {audioInputs.map((input) => <option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}
-            </select>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => void refreshAudioInputs()}
-              disabled={voiceState === 'connecting' || voiceState === 'preparing' || voiceState === 'ready'}
-            >
-              刷新
-            </button>
           </div>
-          <div className="action-row">
-            {voiceState === 'ready' ? (
-              <button type="button" className="secondary-button" onClick={() => void disconnectVoice()}>
-                断开
-              </button>
-            ) : (
-              <button type="button" onClick={() => void connectVoice()} disabled={voiceState === 'connecting' || voiceState === 'preparing'}>
-                {voiceState === 'connecting' ? '正在连接' : voiceState === 'preparing' ? '正在准备' : '连接语音'}
-              </button>
-            )}
-            <button type="button" className="secondary-button" onClick={() => void signOut()}>
-              退出登录
-            </button>
+              </section>
+              <section className="workspace-panel" hidden={activeWorkspaceSection !== 'agent'} aria-labelledby="terminal-policy-title">
+                <div className="workspace-panel__heading"><div><p className="eyebrow">受控本机访问</p><h2 id="terminal-policy-title">主机 Agent 权限</h2></div></div>
+                <p className="tool-detail">终端租约：{session.terminalLeaseExpiresAt ? `有效至 ${formatTimestamp(session.terminalLeaseExpiresAt)}` : '已失效'}</p>
+                <form className="lease-renewal" onSubmit={renewTerminalLease}>
+                  <label htmlFor="terminal-lease-password">管理员密码</label>
+                  <input id="terminal-lease-password" type="password" autoComplete="current-password" value={leasePassword} onChange={(event) => setLeasePassword(event.target.value)} required disabled={leaseBusy} />
+                  <button type="submit" className="secondary-button" disabled={leaseBusy}>{leaseBusy ? '正在获取' : '重新获取终端租约'}</button>
+                  {leaseError ? <p className="form-error">无法获取终端租约，请检查密码并确认当前使用 HTTPS 入口。</p> : null}
+                </form>
+                <div className="terminal-policy">
+                  <label htmlFor="terminal-profile">当前档位</label>
+                  <select id="terminal-profile" value={session.terminalProfile} onChange={(event) => void updateTerminalProfile(event.target.value as 'observe' | 'assist' | 'operator')}>
+                    <option value="observe">观察</option><option value="assist">协助</option><option value="operator">主机操作</option>
+                  </select>
+                  {terminalGrants.length ? <div className="terminal-grant-list">{terminalGrants.map((grant) => <div key={grant.id} className="terminal-grant"><code>{grant.tool_name} · {grant.access} · {grant.working_directory}</code><p>{grant.capabilities.length ? grant.capabilities.join('、') : '无额外 capability'}，有效至 {formatTimestamp(grant.expires_at)}</p><button type="button" className="secondary-button" onClick={() => void revokeGrant(grant.id)}>撤销</button></div>)}</div> : <p className="memory-empty">暂无活动终端授权。</p>}
+                </div>
+              </section>
+              <section className="workspace-panel" hidden={activeWorkspaceSection !== 'avatars'} aria-labelledby="avatar-workspace-title">
+                <div className="workspace-panel__heading"><div><p className="eyebrow">可选呈现</p><h2 id="avatar-workspace-title">数字人</h2></div></div>
+                <AvatarVideoPreview csrfToken={session.csrfToken} />
+                <AvatarPreview setEnergySink={setAvatarEnergySink} />
+              </section>
+            </div>
           </div>
-        </section>
+        </div>
       ) : (
         <section className="setup-panel" aria-labelledby="login-title">
           <p className="eyebrow">本机管理员</p>

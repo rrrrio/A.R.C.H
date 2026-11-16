@@ -75,7 +75,7 @@
     systemctl --user daemon-reload
     systemctl --user enable --now arch-avatar.service
 
-后端和网关仍按[运行操作](../OPERATIONS.md)启动。浏览器登录后，在“真人视频”区域显式启用视频；关闭开关会释放视频 WebRTC 会话，语音会话继续运行。
+后端和网关仍按[运行操作](../OPERATIONS.md)启动。浏览器登录后，在导航中打开“数字人”，在“真人视频”区域显式启用视频；关闭开关会释放视频 WebRTC 会话，语音会话继续运行。
 
 ## 当前状态和限制
 
