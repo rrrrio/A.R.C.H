@@ -105,9 +105,10 @@ class SessionMedia:
 class _QueuedAudioTrack(_AudioTrack):
     def __init__(self) -> None:
         AudioStreamTrack.__init__(self)
-        self._queue: asyncio.Queue[tuple[str, str, bytes]] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[str, str, bytes] | None] = asyncio.Queue()
         self._pts = 0
         self._reported_utterances: set[tuple[str, str]] = set()
+        self._started_at: float | None = None
 
     async def publish(self, session_id: str, utterance_id: str, pcm: bytes) -> None:
         for offset in range(0, len(pcm), _AUDIO_SAMPLES * 2):
@@ -117,7 +118,11 @@ class _QueuedAudioTrack(_AudioTrack):
     async def recv(self) -> av.AudioFrame:
         if self.readyState != "live":
             raise MediaStreamError
-        session_id, utterance_id, data = await self._queue.get()
+        item = await self._queue.get()
+        if item is None or self.readyState != "live":
+            raise MediaStreamError
+        session_id, utterance_id, data = item
+        await self._pace(self._pts / _AUDIO_RATE)
         if (session_id, utterance_id) not in self._reported_utterances:
             self._reported_utterances.add((session_id, utterance_id))
             _log_timing(session_id, utterance_id, "first-audio-packet")
@@ -129,13 +134,26 @@ class _QueuedAudioTrack(_AudioTrack):
         self._pts += frame.samples
         return frame
 
+    def stop(self) -> None:
+        super().stop()
+        self._queue.put_nowait(None)
+
+    async def _pace(self, offset_seconds: float) -> None:
+        if self._started_at is None:
+            self._started_at = time.monotonic()
+            return
+        remaining = self._started_at + offset_seconds - time.monotonic()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
 
 class _QueuedVideoTrack(_VideoTrack):
     def __init__(self) -> None:
         VideoStreamTrack.__init__(self)
-        self._queue: asyncio.Queue[tuple[str, str, av.VideoFrame]] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[str, str, av.VideoFrame] | None] = asyncio.Queue()
         self._pts = 0
         self._reported_utterances: set[tuple[str, str]] = set()
+        self._started_at: float | None = None
 
     async def publish(
         self, session_id: str, utterance_id: str, frames: list[av.VideoFrame]
@@ -146,7 +164,11 @@ class _QueuedVideoTrack(_VideoTrack):
     async def recv(self) -> av.VideoFrame:
         if self.readyState != "live":
             raise MediaStreamError
-        session_id, utterance_id, frame = await self._queue.get()
+        item = await self._queue.get()
+        if item is None or self.readyState != "live":
+            raise MediaStreamError
+        session_id, utterance_id, frame = item
+        await self._pace(self._pts / _VIDEO_FPS)
         if (session_id, utterance_id) not in self._reported_utterances:
             self._reported_utterances.add((session_id, utterance_id))
             _log_timing(session_id, utterance_id, "first-video-packet")
@@ -154,6 +176,18 @@ class _QueuedVideoTrack(_VideoTrack):
         frame.time_base = Fraction(1, _VIDEO_FPS)
         self._pts += 1
         return frame
+
+    def stop(self) -> None:
+        super().stop()
+        self._queue.put_nowait(None)
+
+    async def _pace(self, offset_seconds: float) -> None:
+        if self._started_at is None:
+            self._started_at = time.monotonic()
+            return
+        remaining = self._started_at + offset_seconds - time.monotonic()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
 
 def _log_timing(session_id: str, utterance_id: str, stage: str) -> None:
