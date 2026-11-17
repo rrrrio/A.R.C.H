@@ -146,6 +146,8 @@ skew、有效 FPS 和取消时延的中位数 p50、nearest-rank p95/max。只�
 
 后端和网关仍按[运行操作](../OPERATIONS.md)启动。浏览器登录后，在导航中打开“数字人”，在“真人视频”区域显式启用视频；关闭开关会释放视频 WebRTC 会话，语音会话继续运行。
 
+语音传输因网络条件从 WebRTC 回退到同源 WebSocket 时，已启用的视频仍使用同一认证浏览器会话提交完整回答给单 peer 音视频 runtime；不需要重新开启视频。若页面显示视频已连接但持续没有首帧，应先按本页的 runtime 健康检查确认服务正常，再查看 `arch-avatar-media.service` journal 中是否出现该轮的 `runtime-submission` 时序事件。普通语音仍是 runtime 不可用或提交失败时的回退路径。
+
 ## 当前状态和限制
 
 视频 WebRTC、同源鉴权、音频静音边界、TTS PCM observer、取消旧帧和 VRM 备用模式已经接入自动化测试。独立 worker 具备 preview transport smoke 路径。

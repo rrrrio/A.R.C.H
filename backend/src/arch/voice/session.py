@@ -142,7 +142,8 @@ class LocalVoiceSession:
                     self._clone_runtime.synthesize if self._clone_runtime is not None else None,
                     self._clone_runtime.cancel if self._clone_runtime is not None else None,
                 )
-                if self._avatar_observer is None:
+                observer = self._avatar_observer_for_session(session_id)
+                if observer is None:
                     worker = create_websocket_pipeline_worker(
                         *worker_arguments,
                         session_id=session_id,
@@ -151,7 +152,7 @@ class LocalVoiceSession:
                     worker = create_websocket_pipeline_worker(
                         *worker_arguments,
                         session_id=session_id,
-                        avatar_observer=self._avatar_observer,
+                        avatar_observer=observer,
                     )
                 runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
                 ready = asyncio.Event()
@@ -238,9 +239,7 @@ class LocalVoiceSession:
             clone_synthesize,
             clone_cancel,
         )
-        observer = self._avatar_observer
-        if session_id is not None and self._avatar_observer_factory is not None:
-            observer = self._avatar_observer_factory(session_id)
+        observer = self._avatar_observer_for_session(session_id)
         if observer is None and session_id is None:
             return create_pipeline_worker(*arguments)
         if observer is None:
@@ -252,6 +251,12 @@ class LocalVoiceSession:
             session_id=session_id,
             avatar_observer=observer,
         )
+
+    def _avatar_observer_for_session(self, session_id: str | None) -> AvatarAdapter | None:
+        """Create the authenticated browser's observer for either voice transport."""
+        if session_id is not None and self._avatar_observer_factory is not None:
+            return self._avatar_observer_factory(session_id)
+        return self._avatar_observer
 
     async def _start_selected_clone_runtime(self) -> VoiceProfile | None:
         """Start or reuse Qwen for a currently selected, locally valid clone profile."""

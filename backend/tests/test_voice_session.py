@@ -326,6 +326,42 @@ def test_websocket_reconnect_from_different_session_is_rejected(
     asyncio.run(exercise())
 
 
+def test_websocket_worker_uses_session_bound_avatar_observer_factory(
+    monkeypatch: Any,
+) -> None:
+    """The WebSocket fallback must retain avatar media ownership for its authenticated browser."""
+    captured: dict[str, object] = {}
+    observer = object()
+    monkeypatch.setattr(session_module, "WorkerRunner", FakeWorkerRunner)
+
+    def create_worker(*_: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    def create_observer(session_id: str) -> object | None:
+        return observer if session_id == "browser-session" else None
+
+    monkeypatch.setattr(session_module, "create_websocket_pipeline_worker", create_worker)
+    session = LocalVoiceSession(
+        paths=cast(VoiceModelPaths, object()),
+        avatar_observer_factory=create_observer,  # type: ignore[arg-type]
+    )
+    session._llama = FakeLlamaServer()  # type: ignore[assignment]
+    websocket = FakeWebSocket()
+
+    async def exercise() -> None:
+        task = asyncio.create_task(session.start_websocket(cast(Any, websocket), "browser-session"))
+        await asyncio.wait_for(_wait_for_message(websocket, '{"type":"voice_ready"}'), timeout=1)
+        await session.stop()
+        await task
+        await session.close()
+
+    asyncio.run(exercise())
+
+    assert captured["session_id"] == "browser-session"
+    assert captured["avatar_observer"] is observer
+
+
 async def _wait_for_message(websocket: FakeWebSocket, expected: str) -> None:
     """Wait until a test socket receives the requested lifecycle message."""
     while expected not in websocket.messages:
