@@ -44,9 +44,9 @@ Wav2Lip 必须由运维方在以下受控路径准备来源、checkpoint 和同�
 
 启用真人视频前，应在维护窗口确认模型能够启动并在语音会话下保留稳定余量。若失败，必须选择释放部分 LLM/ASR 显存、停用 Qwen 克隆音色、将一个组件迁移到另一张 GPU，或保持视频关闭。降低网页 FPS、放大低分辨率素材或反复重启 worker 都不能创造 CUDA 显存。
 
-修改 `.env` 后必须重启当前 backend，才能让已运行的 Python 进程读取视频开关和新增的 `/api/avatar/*` 路由。使用用户级 unit 的部署可执行：
+修改 `.env` 后必须重启当前 backend，才能让已运行的 Python 进程读取视频开关和新增的 `/api/avatar/*` 路由。`arch-avatar-media.service` 保存单 peer 的进程内会话；部署或重启 backend 时必须同时重启它，避免旧认证会话继续占用唯一的视频 peer。使用用户级 unit 的部署可执行：
 
-    systemctl --user restart arch-backend.service
+    systemctl --user restart arch-backend.service arch-avatar-media.service
     systemctl --user enable --now arch-avatar-media.service
 
 登录后“真人视频”显示运行时不可用时，页面不会发送一次必然失败的 WebRTC offer。先确认 backend 已从当前 checkout 重启；未认证的 `GET /api/avatar/status` 应返回 `401`，而不是 `404`。然后确认 `systemctl --user status arch-avatar-media.service` 为 `active`，且 `curl --fail --silent http://127.0.0.1:8101/health` 返回 `{"status":"ready"}`。这些检查只证明路由和本地 runtime 已准备，尚不证明浏览器已收到媒体帧。

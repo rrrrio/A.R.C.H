@@ -37,10 +37,14 @@ class MediaPreparationError(RuntimeError):
 class AvatarMediaRuntime:
     """Own one audio/video peer per authenticated browser session."""
 
-    def __init__(self, backend: LipSyncBackend | None = None) -> None:
+    def __init__(
+        self, backend: LipSyncBackend | None = None, *, disconnect_grace_seconds: float = 5.0
+    ) -> None:
         self._backend = backend
         self._sessions: dict[str, tuple[RTCPeerConnection, SessionMedia]] = {}
         self._cancelled_utterances: set[tuple[str, str]] = set()
+        self._disconnect_grace_seconds = disconnect_grace_seconds
+        self._disconnect_cleanup_tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
 
     def is_ready(self) -> bool:
@@ -67,6 +71,11 @@ class AvatarMediaRuntime:
                 await peer.close()
                 raise
             self._sessions[ticket.session_id] = (peer, media)
+
+            @peer.on("connectionstatechange")
+            def release_disconnected_peer() -> None:
+                self._handle_peer_state(ticket.session_id, peer)
+
             return Answer(ticket.session_id, local.sdp)
 
     async def submit(self, session_id: str, utterance_id: str, pcm_24khz: bytes) -> None:
@@ -107,6 +116,7 @@ class AvatarMediaRuntime:
 
     async def close_session(self, session_id: str) -> None:
         """Release the peer and all prepared in-memory media."""
+        self._cancel_disconnect_cleanup(session_id)
         async with self._lock:
             pair = self._sessions.pop(session_id, None)
             self._cancelled_utterances = {
@@ -115,6 +125,54 @@ class AvatarMediaRuntime:
         if pair is not None:
             pair[1].cancel()
             await pair[0].close()
+
+    def _handle_peer_state(self, session_id: str, peer: RTCPeerConnection) -> None:
+        """Free terminal peers while permitting a short browser network recovery window."""
+        if peer.connectionState in {"closed", "failed"}:
+            self._cancel_disconnect_cleanup(session_id)
+            asyncio.create_task(self._release_disconnected_peer(session_id, peer))
+        elif peer.connectionState == "disconnected":
+            if session_id not in self._disconnect_cleanup_tasks:
+                self._disconnect_cleanup_tasks[session_id] = asyncio.create_task(
+                    self._release_after_disconnect_grace(session_id, peer)
+                )
+        elif peer.connectionState == "connected":
+            self._cancel_disconnect_cleanup(session_id)
+
+    def _cancel_disconnect_cleanup(self, session_id: str) -> None:
+        task = self._disconnect_cleanup_tasks.pop(session_id, None)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    async def _release_after_disconnect_grace(
+        self, session_id: str, peer: RTCPeerConnection
+    ) -> None:
+        """Release only a peer that remains disconnected for the full recovery window."""
+        try:
+            await asyncio.sleep(self._disconnect_grace_seconds)
+            if peer.connectionState == "disconnected":
+                await self._release_disconnected_peer(session_id, peer)
+        finally:
+            task = self._disconnect_cleanup_tasks.get(session_id)
+            if task is asyncio.current_task():
+                self._disconnect_cleanup_tasks.pop(session_id, None)
+
+    async def _release_disconnected_peer(
+        self, session_id: str, peer: RTCPeerConnection
+    ) -> None:
+        """Discard only the matching peer after aiortc observes its terminal state."""
+        self._cancel_disconnect_cleanup(session_id)
+        async with self._lock:
+            pair = self._sessions.get(session_id)
+            if pair is None or pair[0] is not peer:
+                return
+            self._sessions.pop(session_id)
+            self._cancelled_utterances = {
+                key for key in self._cancelled_utterances if key[0] != session_id
+            }
+        pair[1].cancel()
+        if peer.connectionState != "closed":
+            await peer.close()
 
     @staticmethod
     async def _wait_for_ice(peer: RTCPeerConnection) -> None:

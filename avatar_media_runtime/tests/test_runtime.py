@@ -262,6 +262,86 @@ def test_second_browser_session_cannot_displace_the_active_peer() -> None:
     asyncio.run(exercise())
 
 
+def test_closed_runtime_peer_releases_its_single_session() -> None:
+    """A disconnected peer cannot indefinitely block a later authenticated browser session."""
+    signer = MediaTicketSigner(b"test-secret-value")
+    ticket = signer.verify_and_consume(
+        signer.issue("browser", datetime.now(UTC) + timedelta(minutes=1)), "browser"
+    )
+    runtime = AvatarMediaRuntime()
+
+    async def exercise() -> None:
+        browser = RTCPeerConnection()
+        browser.addTransceiver("audio", direction="recvonly")
+        browser.addTransceiver("video", direction="recvonly")
+        try:
+            offer = await browser.createOffer()
+            await browser.setLocalDescription(offer)
+            for _ in range(50):
+                if browser.iceGatheringState == "complete":
+                    break
+                await asyncio.sleep(0.01)
+            local = browser.localDescription
+            assert local is not None and local.sdp is not None
+            await runtime.create_session(ticket, local.sdp)
+            peer, _ = runtime._sessions["browser"]
+            await peer.close()
+            for _ in range(10):
+                if not runtime._sessions:
+                    break
+                await asyncio.sleep(0)
+            assert runtime._sessions == {}
+        finally:
+            await browser.close()
+
+    asyncio.run(exercise())
+
+
+def test_reconnected_peer_cancels_pending_disconnect_cleanup() -> None:
+    """A brief disconnected state must not surrender the active browser's single-peer slot."""
+    class Peer:
+        def __init__(self) -> None:
+            self.connectionState = "disconnected"
+
+        async def close(self) -> None:
+            self.connectionState = "closed"
+
+    runtime = AvatarMediaRuntime(disconnect_grace_seconds=0.01)
+    peer = Peer()
+    media = SessionMedia()
+    runtime._sessions["browser"] = (peer, media)  # type: ignore[assignment]
+
+    async def exercise() -> None:
+        runtime._handle_peer_state("browser", peer)  # type: ignore[arg-type]
+        peer.connectionState = "connected"
+        runtime._handle_peer_state("browser", peer)  # type: ignore[arg-type]
+        await asyncio.sleep(0.02)
+        assert runtime._sessions["browser"] == (peer, media)
+        await runtime.close_session("browser")
+
+    asyncio.run(exercise())
+
+
+def test_persistently_disconnected_peer_releases_after_recovery_window() -> None:
+    """A peer that never reconnects eventually returns its single-peer slot to the runtime."""
+    class Peer:
+        connectionState = "disconnected"
+
+        async def close(self) -> None:
+            self.connectionState = "closed"
+
+    runtime = AvatarMediaRuntime(disconnect_grace_seconds=0.01)
+    peer = Peer()
+    runtime._sessions["browser"] = (peer, SessionMedia())  # type: ignore[assignment]
+
+    async def exercise() -> None:
+        runtime._handle_peer_state("browser", peer)  # type: ignore[arg-type]
+        await asyncio.sleep(0.02)
+        assert runtime._sessions == {}
+
+    asyncio.run(exercise())
+
+
 def test_cancel_during_preparation_never_publishes_late_media() -> None:
     class Backend:
         def __init__(self) -> None:

@@ -1,7 +1,9 @@
 [Unit]
 Description=A.R.C.H. loopback avatar media runtime
 After=network-online.target
+After=arch-backend.service
 Wants=network-online.target
+PartOf=arch-backend.service
 
 [Service]
 Type=simple

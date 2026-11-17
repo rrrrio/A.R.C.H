@@ -126,6 +126,8 @@ def test_rendered_avatar_media_unit_reads_the_local_environment_file() -> None:
     assert str(module.PROJECT_ROOT / "data/runtime/musetalk/bin/python") in media
     assert str(module.PROJECT_ROOT / "avatar_media_runtime/src") in media
     assert f"EnvironmentFile=-{module.PROJECT_ROOT / '.env'}" in media
+    assert "After=arch-backend.service" in media
+    assert "PartOf=arch-backend.service" in media
     assert "--host" not in media
 
 
