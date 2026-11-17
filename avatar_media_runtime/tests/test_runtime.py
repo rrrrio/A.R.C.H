@@ -74,8 +74,9 @@ def test_submit_prepares_original_pcm_and_cancel_fences_the_utterance() -> None:
         return audio, video
 
     audio, video = asyncio.run(exercise())
-    assert backend.prepared == (b"\x01\x00" * 480, "turn")
-    assert backend.cancelled == ["turn"]
+    scoped_id = runtime._backend_utterance_id("session", "turn")
+    assert backend.prepared == (b"\x01\x00" * 480, scoped_id)
+    assert backend.cancelled == [scoped_id]
     assert audio.pts == video.pts == 0
 
 
@@ -179,7 +180,7 @@ def test_cancel_stops_both_session_tracks_and_fences_backend() -> None:
         await runtime.close_session("session")
 
     asyncio.run(exercise())
-    assert backend.cancelled == ["turn"]
+    assert backend.cancelled == [runtime._backend_utterance_id("session", "turn")]
 
 
 def test_cancel_during_preparation_never_publishes_late_media() -> None:
@@ -217,7 +218,34 @@ def test_cancel_during_preparation_never_publishes_late_media() -> None:
         await runtime.close_session("session")
 
     asyncio.run(exercise())
-    assert backend.cancelled == ["turn"]
+    assert backend.cancelled == [runtime._backend_utterance_id("session", "turn")]
+
+
+def test_cancelled_backend_identifier_cannot_reject_same_utterance_in_a_new_session() -> None:
+    class Backend:
+        def __init__(self) -> None:
+            self.cancelled: set[str] = set()
+
+        async def prepare(self, pcm: bytes, utterance_id: str) -> PreparedMedia:
+            if utterance_id in self.cancelled:
+                raise RuntimeError("stale cancellation")
+            return PreparedMedia(utterance_id, pcm, [av.VideoFrame(8, 8, "rgb24")], 25)
+
+        async def cancel(self, utterance_id: str) -> None:
+            self.cancelled.add(utterance_id)
+
+    backend = Backend()
+    runtime = AvatarMediaRuntime(backend)
+    runtime._sessions["first"] = (RTCPeerConnection(), SessionMedia())
+    runtime._sessions["second"] = (RTCPeerConnection(), SessionMedia())
+
+    async def exercise() -> None:
+        await runtime.cancel("first", "tts:reused")
+        await runtime.submit("second", "tts:reused", b"\x01\x00" * 480)
+        await runtime.close_session("first")
+        await runtime.close_session("second")
+
+    asyncio.run(exercise())
 
 
 def test_submit_surfaces_a_structured_renderer_failure() -> None:

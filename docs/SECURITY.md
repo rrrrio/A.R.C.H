@@ -22,6 +22,8 @@ Caddy 是唯一允许面向局域网的浏览器入口，默认使用 `https://a
 
 后端到 `AvatarMediaRuntime` 的 HTTP client 固定禁用环境代理继承，即使主机为联网工具配置了 `HTTP_PROXY` 或 `HTTPS_PROXY`，ticket、SDP 和 PCM 也只会连接到已验证的 `127.0.0.1` runtime URL。
 
+renderer 的取消标识由后端 session ID 和 utterance ID 的不可逆组合生成。这样同一个 TTS context ID 在新登录会话中重用时，不会被旧会话的取消状态误拒绝；浏览器和日志均不接收该内部标识。
+
 ## 工具与搜索
 
 模型只能请求通用 `terminal_exec`（argv）或 `terminal_shell`（脚本），并声明当前用户拥有的工作目录、读写级别及显式 capability。每个新调用都需要同一已登录浏览器会话批准；已成功完成的完全相同调用可在该会话复用 30 分钟，参数、脚本、目录、读写级别或 capability 任一变化都会再次批准。注销、服务重启、过期和用户撤销都会使授权失效。

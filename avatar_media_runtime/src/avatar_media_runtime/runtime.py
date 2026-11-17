@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from hashlib import sha256
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
@@ -69,8 +70,9 @@ class AvatarMediaRuntime:
         if self._backend is None:
             raise RuntimeError("Avatar media backend is not configured.")
         _log_timing(session_id, utterance_id, "runtime-submission")
+        backend_utterance_id = self._backend_utterance_id(session_id, utterance_id)
         try:
-            prepared = await self._backend.prepare(pcm_24khz, utterance_id)
+            prepared = await self._backend.prepare(pcm_24khz, backend_utterance_id)
         except Exception as error:
             raise MediaPreparationError(utterance_id) from error
         _log_timing(session_id, utterance_id, "render-complete")
@@ -96,7 +98,7 @@ class AvatarMediaRuntime:
             if pair is not None:
                 pair[1].cancel()
         if self._backend is not None:
-            await self._backend.cancel(utterance_id)
+            await self._backend.cancel(self._backend_utterance_id(session_id, utterance_id))
         _log_timing(session_id, utterance_id, "cancellation-complete")
 
     async def close_session(self, session_id: str) -> None:
@@ -122,6 +124,11 @@ class AvatarMediaRuntime:
                 complete.set()
 
         await asyncio.wait_for(complete.wait(), timeout=5)
+
+    @staticmethod
+    def _backend_utterance_id(session_id: str, utterance_id: str) -> str:
+        """Keep renderer cancellation state private and unique across browser sessions."""
+        return sha256(f"{session_id}\0{utterance_id}".encode()).hexdigest()
 
 
 def _log_timing(session_id: str, utterance_id: str, stage: str) -> None:
