@@ -162,3 +162,17 @@ def test_install_units_refuses_existing_files_without_replace(tmp_path: Path) ->
 
     written = module.install_units(destination, units, replace=True)
     assert written == tuple(destination / name for name in module.UNIT_NAMES)
+
+
+def test_install_units_can_write_only_the_selected_new_unit(tmp_path: Path) -> None:
+    """A new avatar runtime unit must not require overwriting existing application units."""
+    module = _load_script()
+    destination = tmp_path / "units"
+    destination.mkdir()
+    (destination / "arch-backend.service").write_text("keep", encoding="utf-8")
+    selected = {"arch-avatar-media.service": "[Unit]\nDescription=media\n"}
+
+    written = module.install_units(destination, selected, replace=False)
+
+    assert written == (destination / "arch-avatar-media.service",)
+    assert (destination / "arch-backend.service").read_text(encoding="utf-8") == "keep"

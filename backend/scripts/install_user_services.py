@@ -135,7 +135,7 @@ def install_units(
 ) -> tuple[Path, ...]:
     """Write rendered units without replacing an existing user configuration by default."""
     unit_directory.mkdir(parents=True, exist_ok=True)
-    destinations = tuple(unit_directory / name for name in UNIT_NAMES)
+    destinations = tuple(unit_directory / name for name in units)
     existing = [destination for destination in destinations if destination.exists()]
     if existing and not replace:
         names = ", ".join(str(destination) for destination in existing)
@@ -158,6 +158,12 @@ def main() -> None:
         default=Path.home() / ".config" / "systemd" / "user",
         help="Destination directory for user unit files.",
     )
+    parser.add_argument(
+        "--unit",
+        action="append",
+        choices=UNIT_NAMES,
+        help="Render or install only this named unit; repeat to select multiple units.",
+    )
     arguments = parser.parse_args()
     if arguments.replace and not arguments.apply:
         parser.error("--replace requires --apply")
@@ -168,7 +174,9 @@ def main() -> None:
     if docker is None:
         raise SystemExit("docker must be available on PATH before installing user services.")
     units = render_units(PROJECT_ROOT, Path(uv), Path(docker))
-    destinations = tuple(arguments.unit_directory / name for name in UNIT_NAMES)
+    selected_names = tuple(arguments.unit or UNIT_NAMES)
+    units = {name: units[name] for name in selected_names}
+    destinations = tuple(arguments.unit_directory / name for name in selected_names)
     if not arguments.apply:
         print("Dry run. No user service units were written.")
         for destination in destinations:
