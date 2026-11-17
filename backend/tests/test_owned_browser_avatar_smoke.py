@@ -111,3 +111,25 @@ def test_caddyfile_serves_only_the_container_static_mount(tmp_path: Path) -> Non
     assert "https://arch-avatar-e2e.local:19443" in content
     assert "reverse_proxy 127.0.0.1:18000" in content
     assert "root * /srv" in content
+
+
+def test_media_runtime_smoke_uses_only_an_ephemeral_same_origin_proxy(tmp_path: Path) -> None:
+    """The new smoke must not expose its loopback runtime through Caddy."""
+    script_path = (
+        Path(__file__).parents[1] / "scripts" / "run_owned_avatar_media_browser_smoke.py"
+    )
+    specification = importlib.util.spec_from_file_location(
+        "run_owned_avatar_media_browser_smoke", script_path
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = module
+    specification.loader.exec_module(module)
+    caddyfile = tmp_path / "Caddyfile"
+
+    module.write_caddyfile(caddyfile, backend_port=18000, https_port=19443)
+
+    content = caddyfile.read_text(encoding="utf-8")
+    assert "https://arch-avatar-media-e2e.local:19443" in content
+    assert "reverse_proxy 127.0.0.1:18000" in content
+    assert "8101" not in content

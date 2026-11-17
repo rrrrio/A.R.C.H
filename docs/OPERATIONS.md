@@ -87,11 +87,11 @@ Ollama 和 SearXNG 不阻塞后端就绪，因为它们不是每次语音会话�
     systemctl --user daemon-reload
     systemctl --user enable --now arch-backend.service arch-gateway.service
 
-旧的 `arch-avatar.service` JPEG bridge 已停用，不能重新启用。安装器也会渲染新的
-`arch-avatar-media.service`，但当前单 peer 音视频替换尚未完成前不得启用它作为用户功能。
-若在维护环境检查 unit 渲染，先在受限的 `.env` 设置独立高熵的
-`ARCH_AVATAR_MEDIA_TICKET_SECRET`；该服务只绑定 `127.0.0.1:8101`，不经 Caddy 暴露。
-普通语音不依赖两个 avatar unit。
+旧的 `arch-avatar.service` JPEG bridge 已停用，不能重新启用。新的
+`arch-avatar-media.service` 是单 peer 音视频 runtime；它要求受限 `.env` 中独立高熵的
+`ARCH_AVATAR_MEDIA_TICKET_SECRET` 与 `ARCH_AVATAR_MEDIA_BACKEND=wav2lip`，只绑定
+`127.0.0.1:8101`，不经 Caddy 暴露。普通语音不依赖两个 avatar unit；runtime 健康失败时，
+浏览器视频状态保持不可用。
 
 新 runtime 的 Wav2Lip cache 必须由与真人素材匹配的 source video 和 checkpoint 生成。该维护命令只调用固定 checkout 的人脸检测模块，不启动 LiveTalking 的 HTTP、TTS 或 WebRTC 服务，也不会在完整帧中写入 `LiveTalking` 水印：
 

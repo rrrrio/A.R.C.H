@@ -47,9 +47,9 @@ Wav2Lip 必须由运维方在以下受控路径准备来源、checkpoint 和同�
 修改 `.env` 后必须重启当前 backend，才能让已运行的 Python 进程读取视频开关和新增的 `/api/avatar/*` 路由。使用用户级 unit 的部署可执行：
 
     systemctl --user restart arch-backend.service
-    systemctl --user enable --now arch-avatar.service
+    systemctl --user enable --now arch-avatar-media.service
 
-登录后“真人视频”显示“服务不可用：MuseTalk renderer is not running.”时，页面已检测到私有 worker socket 缺失，不会发送一次必然失败的 WebRTC offer。先确认 backend 已从当前 checkout 重启；未认证的 `GET /api/avatar/status` 应返回 `401`，而不是 `404`。然后确认 `systemctl --user status arch-avatar.service` 为 `active`，日志中包含 `avatar worker ready`。这些检查只证明路由和本地 worker 已准备，尚不证明浏览器已收到视频帧。
+登录后“真人视频”显示运行时不可用时，页面不会发送一次必然失败的 WebRTC offer。先确认 backend 已从当前 checkout 重启；未认证的 `GET /api/avatar/status` 应返回 `401`，而不是 `404`。然后确认 `systemctl --user status arch-avatar-media.service` 为 `active`，且 `curl --fail --silent http://127.0.0.1:8101/health` 返回 `{"status":"ready"}`。这些检查只证明路由和本地 runtime 已准备，尚不证明浏览器已收到媒体帧。
 
 在准备窗口前运行 `make musetalk-dry-run` 查看固定源码 revision、目标目录和资源前置条件。生产服务使用隔离的 `data/runtime/musetalk` Python 3.10/CUDA runtime；源码 checkout 固定在 `data/runtime/musetalk/source`，模型目录固定为 `ARCH_AVATAR_MODEL_ROOT`。先在维护窗口运行 `make avatar-musetalk-prepare` 生成固定视频缓存，再运行 `make avatar-musetalk` 启动本机 worker，便于日志和 GPU 诊断。
 
@@ -78,7 +78,7 @@ Wav2Lip 必须由运维方在以下受控路径准备来源、checkpoint 和同�
     ARCH_AVATAR_BROWSER_PASSWORD='管理员密码' \\
     make avatar-browser-smoke
 
-该命令不会启动或重启后端、网关或 worker，也不会修改 `.env`。它使用一次性 headless Chrome profile、固定本地麦克风 WAV 和已有语音会话驱动 renderer，要求视频元素解码至少三帧，再显式关闭视频和语音会话。它要求服务已在启动时启用 `ARCH_VIDEO_AVATAR_ENABLED=true`，且 `arch-avatar.service` 已运行；若状态显示服务不可用，应先按本文的维护窗口步骤修复运行条件。headless Chrome 证明浏览器 WebRTC 和视频解码，不替代远端设备上的画面、音画同步或听感验收。
+该 attach-only 命令属于旧 bridge 的历史验证，不适用于单 peer runtime；不要为运行它而启动 `arch-avatar.service`。当前 runtime 使用下文的 `make avatar-media-browser-smoke`。headless Chrome 证明浏览器 WebRTC 和视频解码，不替代远端设备上的画面、音画同步或听感验收。
 
 不依赖已部署服务的主机验证可运行：
 
@@ -88,6 +88,23 @@ Wav2Lip 必须由运维方在以下受控路径准备来源、checkpoint 和同�
 
 当前主机已成功运行拥有式 smoke：浏览器报告 3 个解码帧回调，视频尺寸为 704×896。该结果证明本机 Chrome 可解码真实 renderer 输出；它不证明远端设备画面、持续帧率、音画同步、插话停止时间或听感。
 
+新单 peer runtime 的浏览器验证使用已安装且健康的 `arch-avatar-media.service`：
+
+    make avatar-media-browser-smoke
+
+该命令只创建临时认证凭据、同源 HTTPS Caddy 和 Chrome profile；浏览器的 offer 仍经过
+`/api/avatar/*`，而完整 PCM 仅由临时 API 私下提交给 loopback runtime。它不会读取或输出
+ticket secret，也不会重启 runtime、后端或旧 bridge。运行时只允许一个 peer，因此遇到正在
+使用视频的会话会安全失败而不取代该会话。成功条件是同一个未静音的 `<video>` 元素拥有各一条
+live audio/video track、至少 30 个视频帧回调的有效帧率在 22-28fps、没有连续短于 25ms 的
+回调或超过 70ms 的停顿，且没有第二个未静音助手媒体元素。该临时 harness 不启动完整的语音
+会话；普通助手音频交接由前端回归覆盖。它仍是主机浏览器 smoke，不替代目标设备的音画同步、
+听感、插话或画质验收。
+
+2026-11-17 的主机实测得到 1 条 audio track、30 个视频回调和 `704x896` 视频；有效帧率约
+25fps，所有相邻回调均未超过 70ms。该结果只证明本机 Chrome 的传输与播放所有权，不应描述为
+目标设备或主观听感验收。
+
 查看将要安装的服务：
 
     make systemd-dry-run
@@ -96,7 +113,7 @@ Wav2Lip 必须由运维方在以下受控路径准备来源、checkpoint 和同�
 
     make systemd-install APPLY=1
     systemctl --user daemon-reload
-    systemctl --user enable --now arch-avatar.service
+    systemctl --user enable --now arch-avatar-media.service
 
 后端和网关仍按[运行操作](../OPERATIONS.md)启动。浏览器登录后，在导航中打开“数字人”，在“真人视频”区域显式启用视频；关闭开关会释放视频 WebRTC 会话，语音会话继续运行。
 
@@ -118,4 +135,4 @@ Wav2Lip 成片模式已完成引擎直接检查：一秒 16 kHz PCM 生成 25 �
 
 点击“启用视频”只建立视频 WebRTC 连接。renderer 在已有语音回答产生 TTS PCM 后才会生成首帧；页面在此之前显示“已连接，等待首帧”，不会展示黑色 video layer。收到首个解码帧后才显示视频。视频层必须挂在认证后工作区的 stacking context 内：它位于工作区背景之上、导航和控制内容之下，不能作为 `body` 的低层 sibling，否则工作区的隔离背景会遮住已解码视频。
 
-页面参考下载原型的黑底竖屏人物布局：桌面端视频靠右、左边缘渐隐，视频层通过页面根部 layer 放在所有聊天和语音控件之后，不会遮黑或拦截控件；移动端视频缩小到下方区域。视频元素始终静音，所有音频都来自 A.R.C.H. 的既有语音连接。清晰度仍受固定 MP4 的原始分辨率、人物脸部面积和浏览器 WebRTC 编码约束；不要把低码率或低分辨率素材放大后当作高清输入。
+页面参考下载原型的黑底竖屏人物布局：桌面端视频靠右、左边缘渐隐，视频层通过页面根部 layer 放在所有聊天和语音控件之后，不会遮黑或拦截控件；移动端视频缩小到下方区域。在新单 peer runtime 中，浏览器只在同时收到 audio/video track 后取消 `<video>` 静音并将普通助手音频交付权释放；关闭、失败或取消会恢复普通音频路径。清晰度仍受固定 MP4 的原始分辨率、人物脸部面积和浏览器 WebRTC 编码约束；不要把低码率或低分辨率素材放大后当作高清输入。

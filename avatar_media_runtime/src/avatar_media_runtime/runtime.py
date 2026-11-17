@@ -50,7 +50,7 @@ class AvatarMediaRuntime:
     async def create_session(self, ticket: MediaTicket, offer_sdp: str) -> Answer:
         """Negotiate one peer carrying deterministic audio and video fixtures."""
         async with self._lock:
-            if ticket.session_id in self._sessions:
+            if self._sessions:
                 raise RuntimeError("Avatar media session already exists.")
             media = SessionMedia()
             peer = RTCPeerConnection()

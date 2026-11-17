@@ -185,6 +185,83 @@ def test_cancel_stops_both_session_tracks_and_fences_backend() -> None:
     assert backend.cancelled == [runtime._backend_utterance_id("session", "turn")]
 
 
+def test_cancel_after_first_packets_stops_playing_tracks() -> None:
+    """An interruption after media starts cannot leave queued packets playable."""
+    class Backend:
+        def __init__(self) -> None:
+            self.cancelled: list[str] = []
+
+        async def prepare(self, pcm: bytes, utterance_id: str) -> PreparedMedia:
+            return PreparedMedia(
+                utterance_id,
+                pcm,
+                [av.VideoFrame(8, 8, "rgb24") for _ in range(50)],
+                25,
+            )
+
+        async def cancel(self, utterance_id: str) -> None:
+            self.cancelled.append(utterance_id)
+
+    backend = Backend()
+    runtime = AvatarMediaRuntime(backend)
+    media = SessionMedia()
+    runtime._sessions["session"] = (RTCPeerConnection(), media)
+
+    async def exercise() -> None:
+        await runtime.submit("session", "turn", b"\x01\x00" * 48_000)
+        await media.audio.recv()
+        await media.video.recv()
+        await runtime.cancel("session", "turn")
+        with pytest.raises(MediaStreamError):
+            await media.audio.recv()
+        with pytest.raises(MediaStreamError):
+            await media.video.recv()
+        await runtime.close_session("session")
+
+    asyncio.run(exercise())
+    assert backend.cancelled == [runtime._backend_utterance_id("session", "turn")]
+
+
+def test_second_browser_session_cannot_displace_the_active_peer() -> None:
+    """The runtime owns exactly one authenticated browser peer at a time."""
+    signer = MediaTicketSigner(b"test-secret-value")
+    first_ticket = signer.verify_and_consume(
+        signer.issue("first", datetime.now(UTC) + timedelta(minutes=1)), "first"
+    )
+    second_ticket = signer.verify_and_consume(
+        signer.issue("second", datetime.now(UTC) + timedelta(minutes=1)), "second"
+    )
+    runtime = AvatarMediaRuntime()
+
+    async def offer_from(browser: RTCPeerConnection) -> str:
+        browser.addTransceiver("audio", direction="recvonly")
+        browser.addTransceiver("video", direction="recvonly")
+        offer = await browser.createOffer()
+        await browser.setLocalDescription(offer)
+        for _ in range(50):
+            if browser.iceGatheringState == "complete":
+                break
+            await asyncio.sleep(0.01)
+        local = browser.localDescription
+        assert local is not None and local.sdp is not None
+        return local.sdp
+
+    async def exercise() -> None:
+        first_browser = RTCPeerConnection()
+        second_browser = RTCPeerConnection()
+        try:
+            first = await runtime.create_session(first_ticket, await offer_from(first_browser))
+            with pytest.raises(RuntimeError, match="already exists"):
+                await runtime.create_session(second_ticket, await offer_from(second_browser))
+            assert set(runtime._sessions) == {"first"}
+            await runtime.close_session(first.session_id)
+        finally:
+            await first_browser.close()
+            await second_browser.close()
+
+    asyncio.run(exercise())
+
+
 def test_cancel_during_preparation_never_publishes_late_media() -> None:
     class Backend:
         def __init__(self) -> None:

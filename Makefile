@@ -5,10 +5,10 @@ BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 COMPOSE := docker compose -f deploy/compose.yaml
 
-.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone avatar-check avatar-preview avatar-musetalk-smoke avatar-wav2lip-smoke avatar-media-wav2lip-prepare avatar-browser-smoke avatar-owned-browser-smoke avatar-owned-wav2lip-browser-smoke musetalk-dry-run ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts
+.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone avatar-check avatar-preview avatar-musetalk-smoke avatar-wav2lip-smoke avatar-media-wav2lip-prepare avatar-browser-smoke avatar-owned-browser-smoke avatar-owned-wav2lip-browser-smoke avatar-media-browser-smoke musetalk-dry-run ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts
 
 help:
-	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone avatar-check avatar-preview avatar-musetalk-smoke avatar-wav2lip-smoke avatar-browser-smoke avatar-owned-browser-smoke avatar-owned-wav2lip-browser-smoke musetalk-dry-run ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts'
+	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone avatar-check avatar-preview avatar-musetalk-smoke avatar-wav2lip-smoke avatar-browser-smoke avatar-owned-browser-smoke avatar-owned-wav2lip-browser-smoke avatar-media-browser-smoke musetalk-dry-run ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts'
 
 bootstrap:
 	uv sync --directory $(BACKEND_DIR) --all-groups
@@ -179,6 +179,9 @@ avatar-owned-browser-smoke: frontend-build
 
 avatar-owned-wav2lip-browser-smoke: frontend-build
 	ARCH_AVATAR_WORKER_BACKEND=wav2lip ARCH_AVATAR_MODEL=wav2lip uv run --no-sync --directory $(BACKEND_DIR) python scripts/run_owned_browser_avatar_smoke.py
+
+avatar-media-browser-smoke: frontend-build
+	uv run --no-sync --directory $(BACKEND_DIR) python scripts/run_owned_avatar_media_browser_smoke.py
 
 musetalk-dry-run:
 	uv run --no-sync --directory $(BACKEND_DIR) python scripts/prepare_musetalk.py

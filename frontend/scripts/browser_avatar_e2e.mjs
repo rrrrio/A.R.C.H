@@ -240,27 +240,68 @@ try {
     const minimumGapMs = ${JSON.stringify(configuration.minimumFrameGapMs ?? 15)}
     const maximumGapMs = ${JSON.stringify(configuration.maximumFrameGapMs ?? 120)}
     const maximumRenderedHeight = ${JSON.stringify(configuration.maximumRenderedVideoHeight ?? null)}
+    const requireSinglePeerAudio = ${JSON.stringify(configuration.requireSinglePeerAudio ?? false)}
     let callbacks = 0
+    let firstTimestamp = null
     let previousTimestamp = null
     const intervals = []
     const deadline = window.setTimeout(() => reject(new Error('video frames were not decoded')), 12_000)
     const observe = () => element.requestVideoFrameCallback(() => {
       const timestamp = performance.now()
+      if (firstTimestamp === null) firstTimestamp = timestamp
       if (previousTimestamp !== null) intervals.push(timestamp - previousTimestamp)
       previousTimestamp = timestamp
       callbacks += 1
       if (callbacks >= requiredCallbacks && element.videoWidth > 0 && element.videoHeight > 0) {
         window.clearTimeout(deadline)
-        if (verifyCadence && intervals.some((interval) => interval < minimumGapMs || interval > maximumGapMs)) {
-          reject(new Error('video frame cadence was unstable: ' + JSON.stringify(intervals)))
-          return
+        if (verifyCadence) {
+          const elapsedMs = previousTimestamp === null || firstTimestamp === null
+            ? 0
+            : previousTimestamp - firstTimestamp
+          const averageFps = elapsedMs > 0 ? (callbacks - 1) * 1_000 / elapsedMs : 0
+          const sustainedBurst = intervals.some((interval, index) => (
+            index > 0 && interval < minimumGapMs && intervals[index - 1] < minimumGapMs
+          ))
+          if (averageFps < 22 || averageFps > 28 || sustainedBurst || intervals.some((interval) => interval > maximumGapMs)) {
+            reject(new Error('video frame cadence was unstable: ' + JSON.stringify({ averageFps, intervals })))
+            return
+          }
         }
         const renderedHeight = element.getBoundingClientRect().height
         if (maximumRenderedHeight !== null && renderedHeight > maximumRenderedHeight + 1) {
           reject(new Error('video was upscaled beyond its native portrait height: ' + renderedHeight))
           return
         }
-        resolve({ callbacks, width: element.videoWidth, height: element.videoHeight, renderedHeight, intervals })
+        const stream = element.srcObject
+        if (requireSinglePeerAudio) {
+          if (!(stream instanceof MediaStream)) {
+            reject(new Error('avatar media stream is missing'))
+            return
+          }
+          const audioTracks = stream.getAudioTracks()
+          const videoTracks = stream.getVideoTracks()
+          if (element.muted || element.paused || audioTracks.length !== 1 || videoTracks.length !== 1) {
+            reject(new Error('avatar peer does not own one unmuted audio/video playback element'))
+            return
+          }
+          const duplicateOutputs = [...document.querySelectorAll('audio, video')].filter((candidate) => {
+            if (candidate === element || candidate.muted || candidate.paused) return false
+            const output = candidate.srcObject
+            return output instanceof MediaStream && output.getAudioTracks().length > 0
+          })
+          if (duplicateOutputs.length !== 0) {
+            reject(new Error('ordinary assistant audio remains active during avatar playback'))
+            return
+          }
+        }
+        resolve({
+          audioTracks: stream instanceof MediaStream ? stream.getAudioTracks().length : 0,
+          callbacks,
+          height: element.videoHeight,
+          intervals,
+          renderedHeight,
+          width: element.videoWidth,
+        })
         return
       }
       observe()

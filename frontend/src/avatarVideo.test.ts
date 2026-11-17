@@ -86,4 +86,61 @@ describe('AvatarVideoClient', () => {
       headers: { 'X-CSRF-Token': 'csrf-token' },
     })
   })
+
+  it('transfers ordinary assistant audio ownership only after both remote tracks arrive', async () => {
+    const holder: {
+      connection: {
+        ontrack: ((event: RTCTrackEvent) => void) | null
+        onconnectionstatechange: (() => void) | null
+      } | null
+    } = { connection: null }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ sdp: 'v=0', type: 'answer', pc_id: 'avatar-1' })),
+      ),
+    )
+    vi.stubGlobal(
+      'RTCPeerConnection',
+      class {
+        iceGatheringState = 'complete' as RTCIceGatheringState
+        connectionState = 'new' as RTCPeerConnectionState
+        localDescription = { type: 'offer' as const, sdp: 'v=0' }
+        ontrack: ((event: RTCTrackEvent) => void) | null = null
+        onconnectionstatechange: (() => void) | null = null
+
+        constructor() { holder.connection = this }
+        addTransceiver() {}
+        async createOffer() { return { type: 'offer' as const, sdp: 'v=0' } }
+        async setLocalDescription() {}
+        async setRemoteDescription() {}
+        close() {}
+      },
+    )
+    const video = {
+      autoplay: false,
+      muted: false,
+      pause: vi.fn(),
+      play: vi.fn().mockResolvedValue(undefined),
+      playsInline: false,
+      requestVideoFrameCallback: vi.fn(),
+      srcObject: null,
+    } as unknown as HTMLVideoElement
+    const ownership = vi.fn()
+    const stream = {} as MediaStream
+    const audio = { kind: 'audio', onunmute: null } as unknown as MediaStreamTrack
+    const remoteVideo = { kind: 'video' } as MediaStreamTrack
+    const client = new AvatarVideoClient('csrf-token', video, () => undefined, () => undefined, ownership)
+
+    await client.connect()
+    holder.connection?.ontrack?.({ streams: [stream], track: audio } as unknown as RTCTrackEvent)
+    expect(ownership).not.toHaveBeenCalledWith(true)
+    holder.connection?.ontrack?.({ streams: [stream], track: remoteVideo } as unknown as RTCTrackEvent)
+
+    expect(video.muted).toBe(false)
+    expect(video.play).toHaveBeenCalledOnce()
+    expect(ownership).toHaveBeenCalledWith(true)
+    await client.close()
+    expect(ownership).toHaveBeenLastCalledWith(false)
+  })
 })
