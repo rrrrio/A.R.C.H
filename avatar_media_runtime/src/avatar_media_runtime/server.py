@@ -43,6 +43,16 @@ def create_runtime_app(runtime: AvatarMediaRuntime, signer: MediaTicketSigner) -
     """Create the API intended exclusively for a `127.0.0.1` listener."""
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        """Report loopback media readiness without accepting media input."""
+        if not runtime.is_ready():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Avatar media backend is unavailable.",
+            )
+        return {"status": "ready"}
+
     @app.post("/session", response_model=SessionAnswer)
     async def create_session(
         offer: SessionOffer,

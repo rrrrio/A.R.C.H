@@ -101,7 +101,7 @@ Ollama 和 SearXNG 不阻塞后端就绪，因为它们不是每次语音会话�
 
 runtime 会在每次已准备回答的首个音频/视频样本之后，分别按 20ms 音频 chunk 和 25fps 视频时钟交付，避免浏览器收到突发帧。取消会结束两条等待或播放中的轨道并拒绝已取消回答的迟到渲染；这一主机级保证仍须由已部署浏览器和目标设备验收。
 
-命令需要 CUDA 和已授权的 `data/avatars/idle.mp4`、`data/runtime/livetalking/wav2lip.pth`。输出位于受忽略的 `data/runtime/avatar-media/avatars/`。它尚不表示视频数字人已可用；当前公开状态仍为“重建中”。
+命令需要 CUDA 和已授权的 `data/avatars/idle.mp4`、`data/runtime/livetalking/wav2lip.pth`。输出位于受忽略的 `data/runtime/avatar-media/avatars/`。完成 cache 准备、设置 ticket secret 和 `ARCH_AVATAR_MEDIA_BACKEND=wav2lip` 并启动 runtime 后，视频才会对已认证浏览器显示为可用；这仍不表示目标设备已验收。
 
 安装器默认拒绝覆盖现有 unit。已有 backend、gateway 或旧 avatar unit 时，可只安装替换 runtime：
 

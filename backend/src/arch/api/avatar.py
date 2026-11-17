@@ -65,14 +65,15 @@ AvatarMediaServiceDependency = Annotated[AvatarMediaService, Depends(get_avatar_
 
 
 @router.get("/status", response_model=AvatarStatusResponse)
-def avatar_status(
+async def avatar_status(
     request: Request,
     auth: AuthServiceDependency,
     avatar: AvatarServiceDependency,
+    media: AvatarMediaServiceDependency,
 ) -> AvatarStatusResponse:
     """Return renderer state only to the authenticated same-origin browser."""
     auth.require_session(request)
-    return AvatarStatusResponse(**asdict(avatar.status()))
+    return AvatarStatusResponse(**asdict(avatar.status(runtime_ready=await media.runtime_ready())))
 
 
 @router.post("/offer", response_model=AvatarOfferResponse)

@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from avatar_media_runtime.runtime import Answer
+from avatar_media_runtime.runtime import Answer, AvatarMediaRuntime
 from avatar_media_runtime.server import create_runtime_app
 from avatar_media_runtime.tickets import MediaTicketSigner
 
@@ -30,6 +30,9 @@ class Runtime:
 
     async def cancel(self, session_id: str, utterance_id: str) -> None:
         self.cancelled = (session_id, utterance_id)
+
+    def is_ready(self) -> bool:
+        return True
 
 
 def test_runtime_rejects_direct_browser_requests_and_reused_tickets() -> None:
@@ -69,6 +72,24 @@ def test_runtime_rejects_direct_browser_requests_and_reused_tickets() -> None:
     assert second.status_code == 200
     assert set(second.json()) == {"sdp", "type", "pc_id"}
     assert third.status_code == 403
+
+
+def test_runtime_health_is_available_without_a_media_ticket() -> None:
+    app = create_runtime_app(Runtime(), MediaTicketSigner(b"a" * 32))  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.json() == {"status": "ready"}
+
+
+def test_runtime_health_rejects_a_process_without_a_media_backend() -> None:
+    app = create_runtime_app(AvatarMediaRuntime(), MediaTicketSigner(b"a" * 32))
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 503
 
 
 def test_runtime_submits_and_cancels_complete_pcm_only_for_a_session() -> None:

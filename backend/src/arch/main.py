@@ -106,16 +106,6 @@ def create_app(
                 on_connection=voice_session.start,
                 on_disconnection=voice_session.stop,
             )
-        if not hasattr(app.state, "avatar_video_service"):
-            app.state.avatar_video_service = avatar_video_service or AvatarVideoSignalingService(
-                enabled=settings.video_avatar_enabled,
-                model=settings.avatar_model,
-                source_video=settings.avatar_source_video,
-                socket_path=settings.avatar_socket,
-                fps=settings.avatar_fps,
-                queue_max_ms=settings.avatar_queue_max_ms,
-                startup_timeout_ms=settings.avatar_startup_timeout_ms,
-            )
         if not hasattr(app.state, "avatar_media_service"):
             ticket_secret = settings.avatar_media_ticket_secret
             app.state.avatar_media_service = avatar_media_service or AvatarMediaService(
@@ -129,6 +119,17 @@ def create_app(
                     if ticket_secret is not None
                     else None
                 ),
+            )
+        if not hasattr(app.state, "avatar_video_service"):
+            app.state.avatar_video_service = avatar_video_service or AvatarVideoSignalingService(
+                enabled=settings.video_avatar_enabled,
+                model=settings.avatar_model,
+                source_video=settings.avatar_source_video,
+                socket_path=settings.avatar_socket,
+                fps=settings.avatar_fps,
+                queue_max_ms=settings.avatar_queue_max_ms,
+                startup_timeout_ms=settings.avatar_startup_timeout_ms,
+                runtime_configured=app.state.avatar_media_service.is_configured,
             )
         managed_voice_session = getattr(app.state, "voice_session", None)
         if isinstance(managed_voice_session, LocalVoiceSession):

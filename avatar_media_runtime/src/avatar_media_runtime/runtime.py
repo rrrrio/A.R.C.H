@@ -43,6 +43,10 @@ class AvatarMediaRuntime:
         self._cancelled_utterances: set[tuple[str, str]] = set()
         self._lock = asyncio.Lock()
 
+    def is_ready(self) -> bool:
+        """Report whether this process can prepare media, not merely accept HTTP requests."""
+        return self._backend is not None
+
     async def create_session(self, ticket: MediaTicket, offer_sdp: str) -> Answer:
         """Negotiate one peer carrying deterministic audio and video fixtures."""
         async with self._lock:

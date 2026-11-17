@@ -418,3 +418,37 @@ def test_rebuilding_avatar_ignores_a_ready_legacy_worker_socket(tmp_path: Path) 
             service.status().detail
             == "Video avatar is being rebuilt. Ordinary voice remains available."
         )
+
+
+def test_runtime_backed_status_is_ready_without_a_legacy_worker_socket(tmp_path: Path) -> None:
+    """The replacement runtime controls public availability, never the retired socket bridge."""
+    service = AvatarVideoSignalingService(
+        enabled=True,
+        model="wav2lip",
+        source_video=tmp_path / "idle.mp4",
+        socket_path=tmp_path / "legacy.sock",
+        runtime_configured=lambda: True,
+    )
+
+    status = service.status(runtime_ready=True)
+
+    assert status.enabled
+    assert status.state == "ready"
+    assert status.detail is None
+
+
+def test_runtime_backed_status_is_unavailable_when_the_runtime_is_stopped(tmp_path: Path) -> None:
+    """A configured client alone cannot make the browser start a dead runtime."""
+    service = AvatarVideoSignalingService(
+        enabled=True,
+        model="wav2lip",
+        source_video=tmp_path / "idle.mp4",
+        socket_path=tmp_path / "legacy.sock",
+        runtime_configured=lambda: True,
+    )
+
+    status = service.status(runtime_ready=False)
+
+    assert not status.enabled
+    assert status.state == "unavailable"
+    assert status.detail == "Avatar media runtime is unavailable."

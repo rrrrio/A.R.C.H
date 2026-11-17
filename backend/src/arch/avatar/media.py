@@ -47,6 +47,8 @@ class AvatarMediaRuntimeClient(Protocol):
 
     async def cancel_utterance(self, *, session_id: str, utterance_id: str) -> None: ...
 
+    async def health(self) -> bool: ...
+
 
 class LoopbackAvatarMediaRuntimeClient:
     """HTTP adapter for a runtime that is never exposed through Caddy."""
@@ -117,6 +119,17 @@ class LoopbackAvatarMediaRuntimeClient:
                 json={"utterance_id": utterance_id},
             )
         response.raise_for_status()
+
+    async def health(self) -> bool:
+        """Check the private runtime without relying on service-manager state."""
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=self._timeout_seconds, trust_env=False
+            ) as client:
+                response = await client.get("/health")
+            return response.status_code == 200 and response.json() == {"status": "ready"}
+        except Exception:
+            return False
 
 
 class AvatarMediaService:
@@ -191,6 +204,14 @@ class AvatarMediaService:
     def is_active(self, session_id: str) -> bool:
         """Report whether this authenticated browser still owns a media peer."""
         return session_id in self._active_sessions
+
+    def is_configured(self) -> bool:
+        """Report whether the backend has a private loopback runtime client."""
+        return self._runtime is not None
+
+    async def runtime_ready(self) -> bool:
+        """Return whether the configured loopback runtime responds to its private health check."""
+        return self._runtime is not None and await self._runtime.health()
 
     def record_browser_timing(self, session_id: str, stage: str, elapsed_ms: int) -> None:
         """Log an authenticated browser timing point without accepting media payloads."""

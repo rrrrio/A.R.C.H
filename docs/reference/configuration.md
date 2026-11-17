@@ -67,9 +67,10 @@ gateway:
 | `ARCH_HTTPS_PORT` | `int` / `8443` | 有效 TCP 端口 | Caddy 的 HTTPS 监听端口。 |
 | `ARCH_SEARCH_ENABLED` | `bool` / `false` | 布尔值 | 是否创建本地 SearXNG 搜索客户端。 |
 | `ARCH_SEARXNG_ENDPOINT` | `str` / `http://127.0.0.1:8080` | 仅 `127.0.0.1`、`localhost` 或 `::1`；不得含路径、查询或凭据 | 本地 SearXNG JSON 服务。 |
-| `ARCH_VIDEO_AVATAR_ENABLED` | `bool` / `false` | 布尔值；默认关闭 | 视频运行时重建期间忽略此值；已认证浏览器会看到“重建中”，普通语音保持可用。 |
-| `ARCH_AVATAR_MEDIA_RUNTIME_URL` | `str` / `http://127.0.0.1:8101` | 只能是无路径、查询或凭据的 `http://127.0.0.1` origin | 后端向单 peer 音视频运行时转发已认证信令的私有地址；不会返回给浏览器。当前功能仍在重建，设置它不会启用视频。 |
+| `ARCH_VIDEO_AVATAR_ENABLED` | `bool` / `false` | 布尔值；默认关闭 | 仅当此值为真、ticket secret 已配置且 loopback runtime 正在运行时，已认证浏览器才显示可用的视频开关；失败时普通语音保持可用。 |
+| `ARCH_AVATAR_MEDIA_RUNTIME_URL` | `str` / `http://127.0.0.1:8101` | 只能是无路径、查询或凭据的 `http://127.0.0.1` origin | 后端向单 peer 音视频运行时转发已认证信令的私有地址；不会返回给浏览器。该值本身不启用视频。 |
 | `ARCH_AVATAR_MEDIA_TICKET_SECRET` | `SecretStr` / 未设置 | 至少 16 UTF-8 字节；应为独立高熵值；不得提交 | 后端和 loopback runtime 共同验证的一次性、短期 ticket 密钥。未设置时 runtime 拒绝启动，后端返回视频不可用。 |
+| `ARCH_AVATAR_MEDIA_BACKEND` | `str` / 未设置 | 浏览器视频当前仅接受 `wav2lip` | `arch-avatar-media.service` 必须设为 `wav2lip` 才会通过私有 health check 并向浏览器显示可用。 |
 | `ARCH_AVATAR_RUNTIME_DIR` | `Path` / `data/runtime/avatar` | 必须在 `data/` 内 | 独立 avatar worker 的运行状态目录。 |
 | `ARCH_AVATAR_SOCKET_PATH` | `Path` / `data/runtime/avatar/avatar.sock` | 必须在 `data/` 内 | A.R.C.H. 后端与 GPU worker 之间的 Unix socket。 |
 | `ARCH_AVATAR_SOURCE_VIDEO` | `Path` / `data/avatars/idle.mp4` | 必须在 `data/` 内，必须有可解码视频帧 | 管理员提供的固定真人参考视频。 |
@@ -116,7 +117,7 @@ gateway:
 | `data/db/arch.sqlite3` | 会话、记忆、审批和知识索引 | 受 Git 忽略；备份前先停止写入或使用一致性备份流程。新文件不存在时，应用继续使用旧部署的 `data/db/local-voice-agent.sqlite3`。若两者都存在，优先使用 `arch.sqlite3`。 |
 | `data/knowledge/inbox/` | 用户可索引资料 | 唯一允许的 RAG 源目录。 |
 | `data/voices/profiles/` | 经确认授权的本地 WAV 参考及元数据 | 多声道或非 WAV 上传由后端 FFmpeg 转为单声道 24 kHz、16-bit PCM WAV；已符合约束的单声道 WAV 可直接保存。不进入数据库与知识资料备份归档，不得提交、共享或记录到日志。 |
-| `data/runtime/avatar-media/avatars/` | 无水印 Wav2Lip source cache | 由 `make avatar-media-wav2lip-prepare` 在维护环境生成；包含完整帧、256px face crop、坐标和 manifest。当前不会启用浏览器视频。 |
+| `data/runtime/avatar-media/avatars/` | 无水印 Wav2Lip source cache | 由 `make avatar-media-wav2lip-prepare` 在维护环境生成；包含完整帧、256px face crop、坐标和 manifest。浏览器不会暴露该路径。 |
 | `data/backups/` | `make backup` 创建的压缩归档 | 归档含 SQLite 一致性副本和知识资料 inbox，不含管理员凭据、模型或本地 CA；应复制到受控的离机位置。 |
 | `data/models/` | 固定模型、声线和嵌入模型 | 受 Git 忽略；运行时按固定路径验证。 |
 | `data/models/faster-whisper/<revision>/` | 本地 Faster-Whisper ASR 模型 | 由 `make asr-prepare` 准备；用于实时语音识别和声音参考文本草稿，不得提交或共享。 |

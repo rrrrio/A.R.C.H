@@ -14,6 +14,7 @@ from arch.avatar.media import (
     AvatarMediaService,
     LoopbackAvatarMediaRuntimeClient,
 )
+from arch.avatar.video import AvatarVideoSignalingService
 from arch.main import create_app
 
 
@@ -42,6 +43,9 @@ class Runtime:
 
     async def cancel_utterance(self, *, session_id: str, utterance_id: str) -> None:
         self.cancelled = (session_id, utterance_id)
+
+    async def health(self) -> bool:
+        return True
 
 
 @pytest.mark.parametrize(
@@ -170,3 +174,46 @@ def test_avatar_timing_rejects_payloads_without_an_active_media_peer(tmp_path) -
         )
 
     assert response.status_code == 409
+
+
+def test_status_reports_unavailable_when_the_configured_runtime_fails_health_check(
+    tmp_path,
+) -> None:
+    """The browser must not attempt WebRTC against a configured but stopped loopback service."""
+    class StoppedRuntime(Runtime):
+        async def health(self) -> bool:
+            return False
+
+    credentials = tmp_path / "admin.json"
+    origin = "https://avatar.test:8443"
+    provision_credentials(credentials, "correct-horse-battery-staple")
+    media = AvatarMediaService(runtime=StoppedRuntime())
+    avatar = AvatarVideoSignalingService(
+        enabled=True,
+        model="wav2lip",
+        source_video=tmp_path / "idle.mp4",
+        socket_path=tmp_path / "legacy.sock",
+        runtime_configured=media.is_configured,
+    )
+    app = create_app(
+        AuthService(credentials, origin),
+        avatar_video_service=avatar,
+        avatar_media_service=media,
+    )
+
+    with TestClient(app, base_url=origin) as client:
+        login = client.post(
+            "/api/auth/login",
+            headers={"Origin": origin},
+            json={"password": "correct-horse-battery-staple"},
+        )
+        response = client.get("/api/avatar/status")
+
+    assert login.status_code == 200
+    assert response.json() == {
+        "enabled": False,
+        "state": "unavailable",
+        "model": "wav2lip",
+        "source_video": "idle.mp4",
+        "detail": "Avatar media runtime is unavailable.",
+    }

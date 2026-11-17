@@ -16,7 +16,7 @@ Caddy 是唯一允许面向局域网的浏览器入口，默认使用 `https://a
 
 视频数字人不会开放浏览器上传或任意素材 URL。固定真人 MP4、参考音频和模型权重均由操作者负责授权与访问控制。替换中的 `AvatarMediaRuntime` 只绑定 `127.0.0.1:8101`；浏览器只能通过已认证、同源且受 CSRF 保护的 A.R.C.H. `/api/avatar/*` 路由请求信令。一次性 runtime ticket 仅在后端与 loopback runtime 的私有请求头中传递，绝不返回给浏览器；`ARCH_AVATAR_MEDIA_TICKET_SECRET` 必须留在受忽略的 `.env`，不得记录到日志或提交。
 
-视频模式只在已建立的 avatar peer 对应会话中将一整段 24 kHz TTS PCM 从后端提交给 loopback runtime；浏览器不会收到这份控制请求或 ticket。若 runtime 拒绝、超时或渲染失败，后端在同一 TTS 结束边界把仍在内存的 PCM 交回普通音频，不会在上下文关闭后以后台任务补发。用户插话会同时取消 runtime turn 并清除后端的未提交 PCM。该路径仍处于重建验收中，不代表已部署或设备验证的功能。
+视频模式只在已建立的 avatar peer 对应会话中将一整段 24 kHz TTS PCM 从后端提交给 loopback runtime；浏览器不会收到这份控制请求或 ticket。若 runtime 拒绝、超时或渲染失败，后端在同一 TTS 结束边界把仍在内存的 PCM 交回普通音频，不会在上下文关闭后以后台任务补发。用户插话会同时取消 runtime turn 并清除后端的未提交 PCM。该路径已有主机传输验证，但不代表目标设备验证的功能。
 
 该替换路径的时序日志只含匿名会话/utterance 标识、单调时间、受限毫秒耗时和固定 stage。浏览器只能为自己当前拥有的 avatar peer 上报首个音频 unmute 或视频解码事件；服务端拒绝无活动 peer、超出十分钟的数值或未列出的 stage。日志不包含 PCM、图像、SDP、文本、token、ticket 或本地路径。
 

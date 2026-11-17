@@ -280,6 +280,7 @@ class AvatarVideoSignalingService:
         queue_max_ms: int = 500,
         startup_timeout_ms: int = 15000,
         worker_factory: Callable[[], AvatarWorker] | None = None,
+        runtime_configured: Callable[[], bool] | None = None,
     ) -> None:
         self._enabled = enabled
         self._model = model
@@ -290,6 +291,7 @@ class AvatarVideoSignalingService:
         self._worker_factory = worker_factory or (
             lambda: UnixSocketAvatarWorker(socket_path, startup_timeout_ms)
         )
+        self._runtime_configured = runtime_configured
         self._worker: AvatarWorker | None = None
         self._track: AvatarVideoTrack | None = None
         self._pc: RTCPeerConnection | None = None
@@ -305,8 +307,24 @@ class AvatarVideoSignalingService:
         self._detail: str | None = _REBUILDING_DETAIL if _LEGACY_VIDEO_REBUILDING else None
         self._lock = asyncio.Lock()
 
-    def status(self) -> AvatarVideoStatus:
+    def status(self, *, runtime_ready: bool | None = None) -> AvatarVideoStatus:
         """Return state without exposing the worker socket or filesystem path."""
+        if self._runtime_configured is not None:
+            configured = self._enabled and self._runtime_configured()
+            available = configured and runtime_ready is True
+            return AvatarVideoStatus(
+                enabled=available,
+                state="ready" if available else "unavailable",
+                model=self._model,
+                source_video=self._source_video.name,
+                detail=(
+                    None
+                    if available
+                    else "Avatar media runtime is unavailable."
+                    if configured
+                    else "Avatar media runtime is not configured."
+                ),
+            )
         if _LEGACY_VIDEO_REBUILDING:
             return AvatarVideoStatus(
                 enabled=False,

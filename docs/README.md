@@ -1,6 +1,6 @@
 # 文档导航
 
-本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。真人视频数字人正在替换为单 peer 音视频运行时；旧 bridge 已停用，页面显示“重建中”，普通语音保持可用。旧 MuseTalk、Wav2Lip 和 preview worker 的主机 smoke 记录不构成新运行时或目标设备验收。
+本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。真人视频数字人使用单 peer 音视频运行时；旧 bridge 已停用。已配置并运行 loopback runtime 的主机可向已登录浏览器显示视频开关，普通语音保持可用。当前只有主机传输验证，不构成目标设备的音画同步、清晰度或插话验收。
 
 ## 按任务阅读
 
