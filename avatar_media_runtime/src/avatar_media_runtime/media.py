@@ -115,7 +115,9 @@ class _QueuedAudioTrack(_AudioTrack):
         self._pts = 0
         self._reported_utterances: set[tuple[str, str]] = set()
         self._cancelled_utterances: set[tuple[str, str]] = set()
+        self._pacing_utterance: tuple[str, str] | None = None
         self._started_at: float | None = None
+        self._turn_samples = 0
 
     async def publish(self, session_id: str, utterance_id: str, pcm: bytes) -> None:
         for offset in range(0, len(pcm), _AUDIO_SAMPLES * 2):
@@ -132,7 +134,8 @@ class _QueuedAudioTrack(_AudioTrack):
             session_id, utterance_id, data = item
             if (session_id, utterance_id) in self._cancelled_utterances:
                 continue
-            await self._pace(self._pts / _AUDIO_RATE)
+            self._begin_utterance(session_id, utterance_id)
+            await self._pace(self._turn_samples / _AUDIO_RATE)
             if (session_id, utterance_id) in self._cancelled_utterances:
                 continue
             if (session_id, utterance_id) not in self._reported_utterances:
@@ -144,11 +147,19 @@ class _QueuedAudioTrack(_AudioTrack):
             frame.sample_rate = _AUDIO_RATE
             frame.time_base = Fraction(1, _AUDIO_RATE)
             self._pts += frame.samples
+            self._turn_samples += frame.samples
             return frame
         raise MediaStreamError
 
     def cancel(self, session_id: str, utterance_id: str) -> None:
         self._cancelled_utterances.add((session_id, utterance_id))
+
+    def _begin_utterance(self, session_id: str, utterance_id: str) -> None:
+        if self._pacing_utterance == (session_id, utterance_id):
+            return
+        self._pacing_utterance = (session_id, utterance_id)
+        self._started_at = time.monotonic()
+        self._turn_samples = 0
 
     def stop(self) -> None:
         super().stop()
@@ -170,7 +181,9 @@ class _QueuedVideoTrack(_VideoTrack):
         self._pts = 0
         self._reported_utterances: set[tuple[str, str]] = set()
         self._cancelled_utterances: set[tuple[str, str]] = set()
+        self._pacing_utterance: tuple[str, str] | None = None
         self._started_at: float | None = None
+        self._turn_frames = 0
 
     async def publish(
         self, session_id: str, utterance_id: str, frames: list[av.VideoFrame]
@@ -188,7 +201,8 @@ class _QueuedVideoTrack(_VideoTrack):
             session_id, utterance_id, frame = item
             if (session_id, utterance_id) in self._cancelled_utterances:
                 continue
-            await self._pace(self._pts / _VIDEO_FPS)
+            self._begin_utterance(session_id, utterance_id)
+            await self._pace(self._turn_frames / _VIDEO_FPS)
             if (session_id, utterance_id) in self._cancelled_utterances:
                 continue
             if (session_id, utterance_id) not in self._reported_utterances:
@@ -197,11 +211,19 @@ class _QueuedVideoTrack(_VideoTrack):
             frame.pts = self._pts
             frame.time_base = Fraction(1, _VIDEO_FPS)
             self._pts += 1
+            self._turn_frames += 1
             return frame
         raise MediaStreamError
 
     def cancel(self, session_id: str, utterance_id: str) -> None:
         self._cancelled_utterances.add((session_id, utterance_id))
+
+    def _begin_utterance(self, session_id: str, utterance_id: str) -> None:
+        if self._pacing_utterance == (session_id, utterance_id):
+            return
+        self._pacing_utterance = (session_id, utterance_id)
+        self._started_at = time.monotonic()
+        self._turn_frames = 0
 
     def stop(self) -> None:
         super().stop()

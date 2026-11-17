@@ -69,6 +69,41 @@ def test_session_media_paces_audio_and_video_after_their_shared_zero_start() -> 
     assert video_gap >= 0.035
 
 
+def test_session_media_reanchors_pacing_for_a_later_utterance() -> None:
+    """Idle time between answers must not make later media burst through the peer."""
+    media = SessionMedia()
+
+    async def receive() -> tuple[float, float]:
+        await media.publish(
+            "session", "first", b"\x00\x00" * 480, [av.VideoFrame(8, 8, "rgb24")], 25
+        )
+        await media.audio.recv()
+        await media.video.recv()
+        await asyncio.sleep(0.06)
+        await media.publish(
+            "session",
+            "next",
+            b"\x00\x00" * 960,
+            [av.VideoFrame(8, 8, "rgb24"), av.VideoFrame(8, 8, "rgb24")],
+            25,
+        )
+        audio_start = time.monotonic()
+        await media.audio.recv()
+        await media.audio.recv()
+        audio_gap = time.monotonic() - audio_start
+        video_start = time.monotonic()
+        await media.video.recv()
+        await media.video.recv()
+        video_gap = time.monotonic() - video_start
+        media.stop()
+        return audio_gap, video_gap
+
+    audio_gap, video_gap = asyncio.run(receive())
+
+    assert audio_gap >= 0.015
+    assert video_gap >= 0.035
+
+
 def test_session_media_cancel_discards_the_interrupted_turn_and_keeps_tracks_live() -> None:
     media = SessionMedia()
 
