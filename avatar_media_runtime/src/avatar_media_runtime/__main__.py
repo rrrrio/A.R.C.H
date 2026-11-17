@@ -23,7 +23,10 @@ def main() -> None:
         signer = MediaTicketSigner(secret.encode("utf-8"))
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    app = create_runtime_app(AvatarMediaRuntime(_load_backend()), signer)
+    backend = _load_backend()
+    idle_frame_provider = backend.next_idle_frame if backend is not None else None
+    runtime = AvatarMediaRuntime(backend, idle_frame_provider=idle_frame_provider)
+    app = create_runtime_app(runtime, signer)
     uvicorn.run(app, host="127.0.0.1", port=8101, log_level="info")
 
 

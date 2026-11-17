@@ -18,6 +18,8 @@ class Wav2LipRenderer(Protocol):
 
     def render(self, pcm_16khz: bytes, *, frame_offset: int) -> Sequence[np.ndarray]: ...
 
+    def idle_frame(self, *, frame_offset: int) -> np.ndarray: ...
+
 
 class Wav2LipBackend:
     """Preserve 24 kHz playback while rendering a 16 kHz copy at 25 FPS."""
@@ -25,6 +27,7 @@ class Wav2LipBackend:
     def __init__(self, renderer: Wav2LipRenderer) -> None:
         self._renderer = renderer
         self._frame_offset = 0
+        self._idle_frame_offset = 0
         self._cancelled: set[str] = set()
 
     async def prepare(self, pcm_24khz: bytes, utterance_id: str) -> PreparedMedia:
@@ -45,6 +48,12 @@ class Wav2LipBackend:
     async def cancel(self, utterance_id: str) -> None:
         """Fence a completed GPU result before it reaches the negotiated tracks."""
         self._cancelled.add(utterance_id)
+
+    def next_idle_frame(self) -> av.VideoFrame:
+        """Return the next source frame for the negotiated idle video timeline."""
+        frame = self._renderer.idle_frame(frame_offset=self._idle_frame_offset)
+        self._idle_frame_offset += 1
+        return av.VideoFrame.from_ndarray(frame, format="bgr24")
 
 
 def resample_pcm_24khz_to_16khz(pcm_24khz: bytes) -> bytes:
@@ -172,3 +181,7 @@ class LoadedWav2LipRenderer:
                 frame[y1:y2, x1:x2] = self._cv2.resize(face.astype(np.uint8), (x2 - x1, y2 - y1))
                 rendered.append(frame)
         return rendered
+
+    def idle_frame(self, *, frame_offset: int) -> np.ndarray:
+        """Return an unmodified source frame using the renderer's mirrored loop order."""
+        return self._full[self.mirror_index(len(self._full), frame_offset)].copy()

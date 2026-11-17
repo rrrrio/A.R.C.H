@@ -23,6 +23,9 @@ class Renderer:
         self.offset = frame_offset
         return [np.zeros((8, 8, 3), dtype=np.uint8) for _ in range(2)]
 
+    def idle_frame(self, *, frame_offset: int) -> np.ndarray:
+        return np.full((8, 8, 3), frame_offset + 1, dtype=np.uint8)
+
 
 def test_backend_preserves_24khz_playback_and_uses_a_16khz_copy() -> None:
     renderer = Renderer()
@@ -35,6 +38,16 @@ def test_backend_preserves_24khz_playback_and_uses_a_16khz_copy() -> None:
     assert len(renderer.pcm) == len(pcm) * 2 // 3
     assert prepared.fps == 25
     assert len(prepared.video_frames) == 2
+
+
+def test_backend_provides_source_idle_frames_in_sequence() -> None:
+    backend = Wav2LipBackend(Renderer())
+
+    first = backend.next_idle_frame()
+    second = backend.next_idle_frame()
+
+    assert int(first.to_ndarray(format="bgr24")[0, 0, 0]) == 1
+    assert int(second.to_ndarray(format="bgr24")[0, 0, 0]) == 2
 
 
 def test_mirror_index_reverses_at_the_cache_boundary() -> None:

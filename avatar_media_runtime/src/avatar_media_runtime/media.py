@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from fractions import Fraction
 
 import av
@@ -78,9 +79,9 @@ class DeterministicMedia:
 class SessionMedia:
     """Long-lived tracks that accept completed prepared media after negotiation."""
 
-    def __init__(self) -> None:
-        self.audio = _QueuedAudioTrack()
-        self.video = _QueuedVideoTrack()
+    def __init__(self, idle_frame_provider: Callable[[], av.VideoFrame] | None = None) -> None:
+        self.audio = _QueuedAudioTrack(emit_silence=idle_frame_provider is not None)
+        self.video = _QueuedVideoTrack(idle_frame_provider)
 
     async def publish(
         self,
@@ -109,15 +110,18 @@ class SessionMedia:
 
 
 class _QueuedAudioTrack(_AudioTrack):
-    def __init__(self) -> None:
+    def __init__(self, *, emit_silence: bool = False) -> None:
         AudioStreamTrack.__init__(self)
         self._queue: asyncio.Queue[tuple[str, str, bytes] | None] = asyncio.Queue()
+        self._emit_silence = emit_silence
         self._pts = 0
         self._reported_utterances: set[tuple[str, str]] = set()
         self._cancelled_utterances: set[tuple[str, str]] = set()
         self._pacing_utterance: tuple[str, str] | None = None
         self._started_at: float | None = None
         self._turn_samples = 0
+        self._idle_started_at: float | None = None
+        self._idle_samples = 0
 
     async def publish(self, session_id: str, utterance_id: str, pcm: bytes) -> None:
         for offset in range(0, len(pcm), _AUDIO_SAMPLES * 2):
@@ -128,12 +132,15 @@ class _QueuedAudioTrack(_AudioTrack):
         if self.readyState != "live":
             raise MediaStreamError
         while self.readyState == "live":
+            if self._emit_silence and self._queue.empty():
+                return await self._recv_silence()
             item = await self._queue.get()
             if item is None or self.readyState != "live":
                 raise MediaStreamError
             session_id, utterance_id, data = item
             if (session_id, utterance_id) in self._cancelled_utterances:
                 continue
+            self._idle_started_at = None
             self._begin_utterance(session_id, utterance_id)
             await self._pace(self._turn_samples / _AUDIO_RATE)
             if (session_id, utterance_id) in self._cancelled_utterances:
@@ -161,6 +168,22 @@ class _QueuedAudioTrack(_AudioTrack):
         self._started_at = time.monotonic()
         self._turn_samples = 0
 
+    async def _recv_silence(self) -> av.AudioFrame:
+        if self._idle_started_at is None:
+            self._idle_started_at = time.monotonic()
+            self._idle_samples = 0
+        await self._pace_idle(self._idle_samples / _AUDIO_RATE)
+        if self.readyState != "live":
+            raise MediaStreamError
+        frame = av.AudioFrame(format="s16", layout="mono", samples=_AUDIO_SAMPLES)
+        frame.planes[0].update(b"\x00" * _AUDIO_SAMPLES * 2)
+        frame.pts = self._pts
+        frame.sample_rate = _AUDIO_RATE
+        frame.time_base = Fraction(1, _AUDIO_RATE)
+        self._pts += frame.samples
+        self._idle_samples += frame.samples
+        return frame
+
     def stop(self) -> None:
         super().stop()
         self._queue.put_nowait(None)
@@ -173,17 +196,26 @@ class _QueuedAudioTrack(_AudioTrack):
         if remaining > 0:
             await asyncio.sleep(remaining)
 
+    async def _pace_idle(self, offset_seconds: float) -> None:
+        assert self._idle_started_at is not None
+        remaining = self._idle_started_at + offset_seconds - time.monotonic()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
 
 class _QueuedVideoTrack(_VideoTrack):
-    def __init__(self) -> None:
+    def __init__(self, idle_frame_provider: Callable[[], av.VideoFrame] | None = None) -> None:
         VideoStreamTrack.__init__(self)
         self._queue: asyncio.Queue[tuple[str, str, av.VideoFrame] | None] = asyncio.Queue()
+        self._idle_frame_provider = idle_frame_provider
         self._pts = 0
         self._reported_utterances: set[tuple[str, str]] = set()
         self._cancelled_utterances: set[tuple[str, str]] = set()
         self._pacing_utterance: tuple[str, str] | None = None
         self._started_at: float | None = None
         self._turn_frames = 0
+        self._idle_started_at: float | None = None
+        self._idle_frames = 0
 
     async def publish(
         self, session_id: str, utterance_id: str, frames: list[av.VideoFrame]
@@ -195,12 +227,15 @@ class _QueuedVideoTrack(_VideoTrack):
         if self.readyState != "live":
             raise MediaStreamError
         while self.readyState == "live":
+            if self._idle_frame_provider is not None and self._queue.empty():
+                return await self._recv_idle()
             item = await self._queue.get()
             if item is None or self.readyState != "live":
                 raise MediaStreamError
             session_id, utterance_id, frame = item
             if (session_id, utterance_id) in self._cancelled_utterances:
                 continue
+            self._idle_started_at = None
             self._begin_utterance(session_id, utterance_id)
             await self._pace(self._turn_frames / _VIDEO_FPS)
             if (session_id, utterance_id) in self._cancelled_utterances:
@@ -225,6 +260,21 @@ class _QueuedVideoTrack(_VideoTrack):
         self._started_at = time.monotonic()
         self._turn_frames = 0
 
+    async def _recv_idle(self) -> av.VideoFrame:
+        if self._idle_started_at is None:
+            self._idle_started_at = time.monotonic()
+            self._idle_frames = 0
+        await self._pace_idle(self._idle_frames / _VIDEO_FPS)
+        if self.readyState != "live":
+            raise MediaStreamError
+        assert self._idle_frame_provider is not None
+        frame = self._idle_frame_provider()
+        frame.pts = self._pts
+        frame.time_base = Fraction(1, _VIDEO_FPS)
+        self._pts += 1
+        self._idle_frames += 1
+        return frame
+
     def stop(self) -> None:
         super().stop()
         self._queue.put_nowait(None)
@@ -234,6 +284,12 @@ class _QueuedVideoTrack(_VideoTrack):
             self._started_at = time.monotonic()
             return
         remaining = self._started_at + offset_seconds - time.monotonic()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+    async def _pace_idle(self, offset_seconds: float) -> None:
+        assert self._idle_started_at is not None
+        remaining = self._idle_started_at + offset_seconds - time.monotonic()
         if remaining > 0:
             await asyncio.sleep(remaining)
 

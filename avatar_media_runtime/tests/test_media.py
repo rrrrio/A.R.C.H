@@ -104,6 +104,58 @@ def test_session_media_reanchors_pacing_for_a_later_utterance() -> None:
     assert video_gap >= 0.035
 
 
+def test_session_media_returns_to_idle_after_a_cancelled_turn() -> None:
+    """A cancelled speaking turn must not leave the browser holding its final mouth frame."""
+
+    def idle_frame() -> av.VideoFrame:
+        frame = av.VideoFrame(8, 8, "rgb24")
+        frame.planes[0].update(bytes([1]) * frame.planes[0].buffer_size)
+        return frame
+
+    media = SessionMedia(idle_frame_provider=idle_frame)
+
+    async def receive() -> tuple[object, object, object, object]:
+        idle_before = await media.video.recv()
+        silent_before = await media.audio.recv()
+        speaking = av.VideoFrame(8, 8, "rgb24")
+        speaking.planes[0].update(bytes([2]) * speaking.planes[0].buffer_size)
+        await media.publish("session", "turn", b"\x02\x00" * 480, [speaking], 25)
+        speaking_frame = await media.video.recv()
+        await media.audio.recv()
+        media.cancel("session", "turn")
+        idle_after = await media.video.recv()
+        media.stop()
+        return idle_before, silent_before, speaking_frame, idle_after
+
+    idle_before, silent_before, speaking_frame, idle_after = asyncio.run(receive())
+
+    assert int(idle_before.to_ndarray(format="rgb24")[0, 0, 0]) == 1
+    assert bytes(silent_before.planes[0])[:960] == b"\x00" * 960
+    assert int(speaking_frame.to_ndarray(format="rgb24")[0, 0, 0]) == 2
+    assert int(idle_after.to_ndarray(format="rgb24")[0, 0, 0]) == 1
+    assert [idle_before.pts, speaking_frame.pts, idle_after.pts] == [0, 1, 2]
+
+
+def test_session_media_stop_during_idle_pacing_emits_no_late_frame() -> None:
+    """Closing a peer during an idle wait must stop both media tracks immediately."""
+
+    media = SessionMedia(idle_frame_provider=lambda: av.VideoFrame(8, 8, "rgb24"))
+
+    async def receive() -> None:
+        await media.audio.recv()
+        await media.video.recv()
+        audio = asyncio.create_task(media.audio.recv())
+        video = asyncio.create_task(media.video.recv())
+        await asyncio.sleep(0)
+        media.stop()
+        with pytest.raises(MediaStreamError):
+            await asyncio.wait_for(audio, timeout=0.1)
+        with pytest.raises(MediaStreamError):
+            await asyncio.wait_for(video, timeout=0.1)
+
+    asyncio.run(receive())
+
+
 def test_session_media_cancel_discards_the_interrupted_turn_and_keeps_tracks_live() -> None:
     media = SessionMedia()
 

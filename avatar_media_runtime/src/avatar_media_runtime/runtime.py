@@ -6,9 +6,11 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 
+import av
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
 from avatar_media_runtime.contracts import LipSyncBackend
@@ -42,9 +44,14 @@ class AvatarMediaRuntime:
     """Own one audio/video peer per authenticated browser session."""
 
     def __init__(
-        self, backend: LipSyncBackend | None = None, *, disconnect_grace_seconds: float = 5.0
+        self,
+        backend: LipSyncBackend | None = None,
+        *,
+        disconnect_grace_seconds: float = 5.0,
+        idle_frame_provider: Callable[[], av.VideoFrame] | None = None,
     ) -> None:
         self._backend = backend
+        self._idle_frame_provider = idle_frame_provider
         self._sessions: dict[str, tuple[RTCPeerConnection, SessionMedia]] = {}
         self._cancelled_utterances: set[tuple[str, str]] = set()
         self._disconnect_grace_seconds = disconnect_grace_seconds
@@ -60,7 +67,7 @@ class AvatarMediaRuntime:
         async with self._lock:
             if self._sessions:
                 raise RuntimeError("Avatar media session already exists.")
-            media = SessionMedia()
+            media = SessionMedia(self._idle_frame_provider)
             peer = RTCPeerConnection()
             try:
                 peer.addTrack(media.audio)
