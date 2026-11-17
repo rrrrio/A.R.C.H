@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 
 import pytest
 from fastapi.testclient import TestClient
@@ -118,6 +120,29 @@ def test_media_service_submits_and_cancels_pcm_only_through_its_private_runtime(
     assert runtime.submitted == ("session", "answer", b"\x00\x01")
     assert runtime.cancelled == ("session", "answer")
     assert runtime.session_id == "closed-session"
+
+
+def test_browser_timing_logs_only_fixed_metadata_to_service_journal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = Runtime()
+    service = AvatarMediaService(runtime=runtime)
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+
+    async def exercise() -> None:
+        await service.offer("session", "browser-offer")
+        service.record_browser_timing("session", "browser-first-video-decoded", 42)
+
+    asyncio.run(exercise())
+
+    event = json.loads(caplog.records[-1].message)
+    assert event == {
+        "elapsed_ms": 42,
+        "event": "avatar-media-timing",
+        "monotonic_ns": event["monotonic_ns"],
+        "session_id": "session",
+        "stage": "browser-first-video-decoded",
+    }
 
 
 def test_offer_api_proxies_authenticated_session_without_exposing_ticket(tmp_path) -> None:

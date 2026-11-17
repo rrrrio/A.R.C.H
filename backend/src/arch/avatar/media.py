@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True, slots=True)

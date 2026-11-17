@@ -101,7 +101,7 @@ Ollama 和 SearXNG 不阻塞后端就绪，因为它们不是每次语音会话�
 
     systemctl --user restart arch-backend.service arch-avatar-media.service
 
-运行新 runtime 后，运维人员可在受控服务的 `arch-avatar-media.service` journal 中筛选 `avatar-media-timing`。事件仅用于计算提交、渲染、首包、浏览器首帧、取消和回退的耗时；不得把它与 PCM、帧、文本、ticket 或浏览器身份以外的内容关联。安装或启用 loopback unit 不会发布浏览器视频功能，不能用该日志替代目标设备验收。
+运行新 runtime 后，运维人员可在 `arch-avatar-media.service` journal 中筛选 runtime 的提交、渲染、首包和取消 `avatar-media-timing`；浏览器回传的首个音频 unmute 与首个视频解码 timing 在 `arch-backend.service` journal 中。事件仅用于计算时延；不得把它与 PCM、帧、文本、ticket 或浏览器身份以外的内容关联。安装或启用 loopback unit 不会发布浏览器视频功能，不能用该日志替代目标设备验收。
 
 runtime 会在每次已准备回答的首个音频/视频样本之后，分别按 20ms 音频 chunk 和 25fps 视频时钟交付，避免浏览器收到突发帧。取消会结束两条等待或播放中的轨道并拒绝已取消回答的迟到渲染；这一主机级保证仍须由已部署浏览器和目标设备验收。
 
