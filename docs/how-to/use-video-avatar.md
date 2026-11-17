@@ -105,6 +105,35 @@ live audio/video track、至少 30 个视频帧回调的有效帧率在 22-28fps
 25fps，所有相邻回调均未超过 70ms。该结果只证明本机 Chrome 的传输与播放所有权，不应描述为
 目标设备或主观听感验收。
 
+## 目标设备验收
+
+主机 smoke 通过后，必须在实际目标设备完成 20 个独立媒体会话。每一轮记录到受忽略 JSON 的
+固定字段只有：`audio_first_ms`、`video_first_ms`、`fps`、`cancellation_ms`、
+`watermark_absent` 和 `clarity_acceptable`。前两个值是同一浏览器会话中首个已解码音频/视频的
+单调计时；`fps` 是稳定播放窗口的有效帧率；`cancellation_ms` 从该设备发起插话到两条远端轨道
+停止。不要记录会话 ID、用户名、文本、PCM、图像、SDP、ticket 或设备标识。
+
+```json
+[
+  {
+    "audio_first_ms": 121,
+    "video_first_ms": 138,
+    "fps": 25.0,
+    "cancellation_ms": 184,
+    "watermark_absent": true,
+    "clarity_acceptable": true
+  }
+]
+```
+
+样本文件必须恰好包含 20 个同样结构的对象。完成后生成只含 timing 与主观布尔结果的本地报告：
+
+    make avatar-device-report AVATAR_DEVICE_INPUT=data/benchmarks/results/avatar-device-observations.json
+
+报告写入受忽略的 `data/benchmarks/results/avatar-device-acceptance.json`，包含音画 decoded-start
+skew、有效 FPS 和取消时延的中位数 p50、nearest-rank p95/max。只在 20 轮均完成且水印/清晰度均通过后，
+将结果摘要写回本页和 ExecPlan；否则保留能力为未设备验证。
+
 查看将要安装的服务：
 
     make systemd-dry-run
