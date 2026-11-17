@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -13,7 +15,7 @@ from aiortc.mediastreams import MediaStreamError
 
 from avatar_media_runtime.contracts import PreparedMedia
 from avatar_media_runtime.media import SessionMedia
-from avatar_media_runtime.runtime import AvatarMediaRuntime, MediaPreparationError
+from avatar_media_runtime.runtime import AvatarMediaRuntime, MediaPreparationError, _log_timing
 from avatar_media_runtime.tickets import MediaTicketSigner
 
 
@@ -264,3 +266,18 @@ def test_submit_surfaces_a_structured_renderer_failure() -> None:
         assert failure.value.utterance_id == "turn"
 
     asyncio.run(exercise())
+
+
+def test_runtime_timing_logs_only_fixed_metadata(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+
+    _log_timing("session", "turn", "runtime-submission")
+
+    event = json.loads(caplog.records[-1].message)
+    assert event == {
+        "event": "avatar-media-timing",
+        "monotonic_ns": event["monotonic_ns"],
+        "session_id": "session",
+        "stage": "runtime-submission",
+        "utterance_id": "turn",
+    }

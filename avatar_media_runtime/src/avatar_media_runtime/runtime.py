@@ -15,7 +15,7 @@ from avatar_media_runtime.contracts import LipSyncBackend
 from avatar_media_runtime.media import SessionMedia
 from avatar_media_runtime.tickets import MediaTicket
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True, slots=True)

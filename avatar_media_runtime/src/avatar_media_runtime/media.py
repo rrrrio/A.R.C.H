@@ -15,7 +15,7 @@ from aiortc.mediastreams import AudioStreamTrack, MediaStreamError, VideoStreamT
 _AUDIO_RATE = 24_000
 _AUDIO_SAMPLES = 480
 _VIDEO_FPS = 25
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 class _AudioTrack(AudioStreamTrack):
