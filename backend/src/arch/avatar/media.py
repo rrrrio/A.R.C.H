@@ -68,7 +68,7 @@ class LoopbackAvatarMediaRuntimeClient:
             "X-Avatar-Session-Id": session_id,
         }
         async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout_seconds
+            base_url=self._base_url, timeout=self._timeout_seconds, trust_env=False
         ) as client:
             response = await client.post("/session", headers=headers, json={"sdp": offer_sdp})
         response.raise_for_status()
@@ -84,7 +84,7 @@ class LoopbackAvatarMediaRuntimeClient:
 
     async def close_session(self, *, session_id: str) -> None:
         async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout_seconds
+            base_url=self._base_url, timeout=self._timeout_seconds, trust_env=False
         ) as client:
             response = await client.delete(
                 "/session", headers={"X-Avatar-Session-Id": session_id}
@@ -95,7 +95,7 @@ class LoopbackAvatarMediaRuntimeClient:
         self, *, session_id: str, utterance_id: str, pcm_24khz: bytes
     ) -> None:
         async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout_seconds
+            base_url=self._base_url, timeout=self._timeout_seconds, trust_env=False
         ) as client:
             response = await client.post(
                 "/utterance",
@@ -109,7 +109,7 @@ class LoopbackAvatarMediaRuntimeClient:
 
     async def cancel_utterance(self, *, session_id: str, utterance_id: str) -> None:
         async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=self._timeout_seconds
+            base_url=self._base_url, timeout=self._timeout_seconds, trust_env=False
         ) as client:
             response = await client.post(
                 "/utterance/cancel",

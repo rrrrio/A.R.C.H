@@ -20,6 +20,8 @@ Caddy 是唯一允许面向局域网的浏览器入口，默认使用 `https://a
 
 该替换路径的时序日志只含匿名会话/utterance 标识、单调时间、受限毫秒耗时和固定 stage。浏览器只能为自己当前拥有的 avatar peer 上报首个音频 unmute 或视频解码事件；服务端拒绝无活动 peer、超出十分钟的数值或未列出的 stage。日志不包含 PCM、图像、SDP、文本、token、ticket 或本地路径。
 
+后端到 `AvatarMediaRuntime` 的 HTTP client 固定禁用环境代理继承，即使主机为联网工具配置了 `HTTP_PROXY` 或 `HTTPS_PROXY`，ticket、SDP 和 PCM 也只会连接到已验证的 `127.0.0.1` runtime URL。
+
 ## 工具与搜索
 
 模型只能请求通用 `terminal_exec`（argv）或 `terminal_shell`（脚本），并声明当前用户拥有的工作目录、读写级别及显式 capability。每个新调用都需要同一已登录浏览器会话批准；已成功完成的完全相同调用可在该会话复用 30 分钟，参数、脚本、目录、读写级别或 capability 任一变化都会再次批准。注销、服务重启、过期和用户撤销都会使授权失效。

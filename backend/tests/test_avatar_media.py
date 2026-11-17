@@ -53,6 +53,45 @@ def test_loopback_runtime_client_rejects_non_loopback_control_urls(url: str) -> 
         LoopbackAvatarMediaRuntimeClient(url)
 
 
+def test_loopback_runtime_client_never_inherits_proxy_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tickets and PCM must bypass every user-configured HTTP proxy."""
+    captured: dict[str, object] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return
+
+        def json(self) -> dict[str, str]:
+            return {"sdp": "answer", "type": "answer", "pc_id": "peer"}
+
+    class Client:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *arguments: object) -> None:
+            return None
+
+        async def post(self, *arguments: object, **kwargs: object) -> Response:
+            return Response()
+
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:6152")
+    monkeypatch.setattr("arch.avatar.media.httpx.AsyncClient", Client)
+
+    answer = asyncio.run(
+        LoopbackAvatarMediaRuntimeClient("http://127.0.0.1:8101").create_session(
+            ticket="ticket", session_id="session", offer_sdp="offer"
+        )
+    )
+
+    assert answer == AvatarMediaAnswer(sdp="answer", pc_id="peer")
+    assert captured["trust_env"] is False
+
+
 def test_media_service_keeps_ticket_inside_loopback_proxy() -> None:
     runtime = Runtime()
     service = AvatarMediaService(runtime=runtime)
