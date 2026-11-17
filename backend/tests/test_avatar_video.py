@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 from aiortc import RTCPeerConnection
 from fastapi.testclient import TestClient
-from pipecat.frames.frames import Frame, TTSAudioRawFrame, TTSStartedFrame
+from pipecat.frames.frames import (
+    Frame,
+    OutputAudioRawFrame,
+    TTSAudioRawFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection
 
 from arch.auth.credentials import provision_credentials
@@ -41,6 +47,13 @@ class RecordingAvatar:
 
     async def end(self, utterance_id: str) -> None:
         self.calls.append(("end", utterance_id))
+
+
+class ActiveRecordingAvatar(RecordingAvatar):
+    """Model an observer with an active browser video session."""
+
+    def is_active(self) -> bool:
+        return True
 
 
 class FakeWorker:
@@ -129,6 +142,32 @@ def test_tts_observer_receives_only_accepted_audio() -> None:
         ("audio", "tts:turn:2:123"),
     ]
     assert len(processor.forwarded) == 3
+
+
+def test_active_avatar_releases_buffered_audio_before_tts_context_stops() -> None:
+    """PCM must not be deferred behind the downstream TTSStoppedFrame."""
+    observer = ActiveRecordingAvatar()
+    processor = InspectingOutput(observer)
+    frame = TTSAudioRawFrame(b"\x01\x00", 24000, 1, context_id="turn")
+
+    async def exercise() -> None:
+        await processor.process_frame(TTSStartedFrame(context_id="turn"), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(frame, FrameDirection.DOWNSTREAM)
+        await processor.process_frame(TTSStoppedFrame(context_id="turn"), FrameDirection.DOWNSTREAM)
+
+    asyncio.run(exercise())
+
+    audio_index = next(
+        index
+        for index, item in enumerate(processor.forwarded)
+        if isinstance(item, OutputAudioRawFrame)
+    )
+    stopped_index = next(
+        index
+        for index, item in enumerate(processor.forwarded)
+        if isinstance(item, TTSStoppedFrame)
+    )
+    assert audio_index < stopped_index
 
 
 def test_avatar_track_drops_old_frames_under_backpressure() -> None:
@@ -289,8 +328,8 @@ async def _set_result(result: asyncio.Future[bytes], payload: bytes) -> None:
         result.set_result(payload)
 
 
-def test_avatar_signaling_returns_a_video_only_answer() -> None:
-    """The browser-facing peer has no audio section and is session-owned."""
+def test_rebuilding_avatar_rejects_the_legacy_video_only_peer() -> None:
+    """Rebuild mode cannot start the split JPEG worker or create a video-only peer."""
     worker = FakeWorker()
     service = AvatarVideoSignalingService(
         enabled=True,
@@ -300,27 +339,26 @@ def test_avatar_signaling_returns_a_video_only_answer() -> None:
         worker_factory=lambda: worker,
     )
 
-    async def exercise() -> dict[str, str]:
+    async def exercise() -> None:
         browser = RTCPeerConnection()
         browser.addTransceiver("video", direction="recvonly")
         offer = await browser.createOffer()
         await browser.setLocalDescription(offer)
         local = browser.localDescription
         assert local is not None and local.sdp is not None
-        answer = await service.offer("owner", local.sdp, local.type)
-        await service.release("owner")
+        with pytest.raises(Exception, match="Video avatar is being rebuilt"):
+            await service.offer("owner", local.sdp, local.type)
         await browser.close()
-        return answer
 
-    answer = asyncio.run(exercise())
+    asyncio.run(exercise())
 
-    assert answer["type"] == "answer"
-    assert "m=video" in answer["sdp"]
-    assert "m=audio" not in answer["sdp"]
+    assert worker.on_frame is None
+    assert service.status().enabled is False
+    assert service.status().state == "rebuilding"
 
 
-def test_avatar_status_is_authenticated_and_disabled_by_default(tmp_path: Path) -> None:
-    """The browser cannot inspect or start the optional avatar anonymously."""
+def test_avatar_status_is_authenticated_and_rebuilding(tmp_path: Path) -> None:
+    """The browser sees a clear rebuild state and cannot start the retired peer."""
     credential_path = tmp_path / "admin.json"
     provision_credentials(credential_path, "correct-horse-battery-staple")
     avatar = AvatarVideoSignalingService(
@@ -353,16 +391,16 @@ def test_avatar_status_is_authenticated_and_disabled_by_default(tmp_path: Path) 
     assert login.status_code == 200
     assert status_response.json() == {
         "enabled": False,
-        "state": "disabled",
+        "state": "rebuilding",
         "model": "musetalk-1.5",
         "source_video": "idle.mp4",
-        "detail": None,
+        "detail": "Video avatar is being rebuilt. Ordinary voice remains available.",
     }
-    assert offer.status_code == 404
+    assert offer.status_code == 503
 
 
-def test_avatar_status_requires_a_ready_worker_socket(tmp_path: Path) -> None:
-    """An enabled setting alone must not invite a browser into a failed offer."""
+def test_rebuilding_avatar_ignores_a_ready_legacy_worker_socket(tmp_path: Path) -> None:
+    """A live JPEG socket cannot make the retired video feature available."""
     socket_path = tmp_path / "avatar.sock"
     service = AvatarVideoSignalingService(
         enabled=True,
@@ -371,10 +409,12 @@ def test_avatar_status_requires_a_ready_worker_socket(tmp_path: Path) -> None:
         socket_path=socket_path,
     )
 
-    assert service.status().state == "unavailable"
-    assert service.status().detail == "MuseTalk renderer is not running."
+    assert service.status().state == "rebuilding"
 
     with socket.socket(socket.AF_UNIX) as listener:
         listener.bind(str(socket_path))
-        assert service.status().state == "ready"
-        assert service.status().detail is None
+        assert service.status().state == "rebuilding"
+        assert (
+            service.status().detail
+            == "Video avatar is being rebuilt. Ordinary voice remains available."
+        )

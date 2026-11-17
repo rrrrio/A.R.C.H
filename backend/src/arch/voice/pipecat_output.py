@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -77,6 +78,7 @@ class PipecatOutputMuxProcessor(FrameProcessor):
         self._active_utterance_id: str | None = None
         self._anonymous_turn = 0
         self._pending_emotion: Emotion = DEFAULT_EMOTION
+        self._avatar_audio: dict[str, list[tuple[bytes, int]]] = {}
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """Forward controls while routing PCM only through the active output owner."""
@@ -96,12 +98,17 @@ class PipecatOutputMuxProcessor(FrameProcessor):
             if self._is_cancelled_context(frame.context_id):
                 return
             started_utterance_id = self._utterance_for_started(frame)
+            previous_utterance_id = self._cancellation.active_utterance_id
+            if previous_utterance_id is not None and previous_utterance_id != started_utterance_id:
+                await self._observe_avatar("cancel", previous_utterance_id)
             await self._mux.begin(
                 started_utterance_id, self._output_sample_rate, self._pending_emotion
             )
             await self._observe_avatar(
                 "begin", started_utterance_id, self._output_sample_rate, self._pending_emotion
             )
+            if self._avatar_sync_active():
+                self._avatar_audio[started_utterance_id] = []
             await self.push_frame(
                 OutputTransportMessageUrgentFrame(
                     message={
@@ -119,18 +126,39 @@ class PipecatOutputMuxProcessor(FrameProcessor):
             audio_utterance_id = self._utterance_for_audio(frame)
             if audio_utterance_id is not None:
                 timestamp = self._timestamp(frame)
-                accepted = await self._mux.push_audio(audio_utterance_id, frame.audio, timestamp)
-                if accepted:
-                    await self._observe_avatar(
-                        "audio", audio_utterance_id, frame.audio, timestamp
+                buffered = self._avatar_audio.get(audio_utterance_id)
+                if buffered is not None:
+                    buffered.append((frame.audio, timestamp))
+                    await self._observe_avatar("audio", audio_utterance_id, frame.audio, timestamp)
+                else:
+                    accepted = await self._mux.push_audio(
+                        audio_utterance_id, frame.audio, timestamp
                     )
+                    if accepted:
+                        await self._observe_avatar(
+                            "audio", audio_utterance_id, frame.audio, timestamp
+                        )
             return
         if isinstance(frame, TTSStoppedFrame):
             if self._is_cancelled_context(frame.context_id):
                 self._discard_stopped_context(frame.context_id, None)
                 return
             stopped_utterance_id = self._utterance_for_stopped(frame)
-            if stopped_utterance_id is None or not await self._mux.end(stopped_utterance_id):
+            if stopped_utterance_id is None:
+                self._discard_stopped_context(frame.context_id, stopped_utterance_id)
+                return
+            buffered = self._avatar_audio.pop(stopped_utterance_id, None)
+            if buffered is not None:
+                avatar_owns_playback = await self._release_avatar_audio(
+                    stopped_utterance_id, buffered
+                )
+                self._discard_stopped_context(frame.context_id, stopped_utterance_id)
+                if not avatar_owns_playback:
+                    await self.push_frame(frame, direction)
+                    return
+                await self.push_frame(frame, direction)
+                return
+            if not await self._mux.end(stopped_utterance_id):
                 self._discard_stopped_context(frame.context_id, stopped_utterance_id)
                 return
             await self._observe_avatar("end", stopped_utterance_id)
@@ -157,7 +185,35 @@ class PipecatOutputMuxProcessor(FrameProcessor):
                 ),
                 FrameDirection.DOWNSTREAM,
             )
+        self._avatar_audio.clear()
         self._active_utterance_id = None
+
+    def _avatar_sync_active(self) -> bool:
+        observer = self._avatar_observer
+        active = getattr(observer, "is_active", None)
+        return callable(active) and bool(active())
+
+    async def _release_avatar_audio(
+        self, utterance_id: str, audio: list[tuple[bytes, int]]
+    ) -> bool:
+        """Release buffered PCM before the downstream TTS context is closed."""
+        _log_avatar_timing(utterance_id, "tts-complete")
+        avatar_owns_playback = await self._observe_avatar("end", utterance_id)
+        if not self._cancellation.accepts(utterance_id):
+            return False
+        if avatar_owns_playback:
+            return True
+        _log_avatar_timing(
+            utterance_id,
+            "direct-audio-fallback",
+            fallback_cause="runtime-unavailable-or-submission-failed",
+        )
+        for payload, timestamp in audio:
+            if not self._cancellation.accepts(utterance_id):
+                return False
+            await self._direct_audio.push_audio(utterance_id, payload, timestamp)
+        await self._mux.end(utterance_id)
+        return False
 
     def _is_cancelled_context(self, context_id: str | None) -> bool:
         return context_id is not None and context_id in self._cancelled_context_ids
@@ -183,6 +239,8 @@ class PipecatOutputMuxProcessor(FrameProcessor):
         return self._active_utterance_id
 
     def _discard_stopped_context(self, context_id: str | None, utterance_id: str | None) -> None:
+        if utterance_id is not None:
+            self._avatar_audio.pop(utterance_id, None)
         if context_id is not None:
             self._context_utterances.pop(context_id, None)
         if utterance_id == self._active_utterance_id:
@@ -192,11 +250,11 @@ class PipecatOutputMuxProcessor(FrameProcessor):
     def _timestamp(frame: TTSAudioRawFrame) -> int:
         return frame.pts if frame.pts is not None else time.monotonic_ns()
 
-    async def _observe_avatar(self, kind: str, utterance_id: str, *payload: object) -> None:
+    async def _observe_avatar(self, kind: str, utterance_id: str, *payload: object) -> bool:
         """Keep renderer failures off the direct-audio critical path."""
         observer = self._avatar_observer
         if observer is None:
-            return
+            return False
         try:
             if kind == "begin":
                 await observer.begin(
@@ -213,6 +271,22 @@ class PipecatOutputMuxProcessor(FrameProcessor):
             elif kind == "cancel":
                 await observer.cancel(utterance_id)
             elif kind == "end":
-                await observer.end(utterance_id)
+                return bool(await observer.end(utterance_id))
         except Exception:
             logger.exception("Avatar video observer failed for %s.", kind)
+        return False
+
+
+def _log_avatar_timing(
+    utterance_id: str, stage: str, *, fallback_cause: str | None = None
+) -> None:
+    """Log fixed lifecycle metadata without retaining audio or model content."""
+    event: dict[str, str | int] = {
+        "event": "avatar-media-timing",
+        "monotonic_ns": time.monotonic_ns(),
+        "stage": stage,
+        "utterance_id": utterance_id,
+    }
+    if fallback_cause is not None:
+        event["fallback_cause"] = fallback_cause
+    logger.info("%s", json.dumps(event, separators=(",", ":"), sort_keys=True))

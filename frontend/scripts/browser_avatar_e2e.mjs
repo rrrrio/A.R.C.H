@@ -53,7 +53,9 @@ class CdpClient {
       awaitPromise: true,
       returnByValue: true,
     })
-    if (response.exceptionDetails) throw new Error(response.exceptionDetails.text)
+    if (response.exceptionDetails) {
+      throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text)
+    }
     return response.result.value
   }
 
@@ -126,6 +128,7 @@ const chromeArguments = [
   '--use-fake-ui-for-media-stream',
   '--use-fake-device-for-media-stream',
   '--disable-features=WebRtcHideLocalIpsWithMdns',
+  ...(configuration.windowSize ? [`--window-size=${configuration.windowSize}`] : []),
   ...(configuration.audio ? [`--use-file-for-fake-audio-capture=${configuration.audio}`] : []),
   ...(configuration.host ? [`--host-resolver-rules=MAP ${configuration.host} 127.0.0.1`] : []),
   `--user-data-dir=${configuration.profileDir}`,
@@ -197,8 +200,8 @@ try {
   await client.evaluate(`(() => {
     const layer = document.querySelector('.avatar-video-layer')
     if (!(layer instanceof HTMLElement)) throw new Error('avatar video layer is missing')
-    if (layer.parentElement !== document.body) {
-      throw new Error('avatar video layer is trapped inside the control stacking context')
+    if (layer.parentElement !== document.querySelector('.workspace-shell')) {
+      throw new Error('avatar video layer is outside the workspace stacking context')
     }
     if (getComputedStyle(layer).pointerEvents !== 'none') {
       throw new Error('avatar video layer must not capture page controls')
@@ -232,19 +235,64 @@ try {
       reject(new Error('avatar video element is missing'))
       return
     }
+    const requiredCallbacks = ${JSON.stringify(configuration.requiredVideoCallbacks ?? 3)}
+    const verifyCadence = ${JSON.stringify(configuration.verifyVideoCadence ?? false)}
+    const minimumGapMs = ${JSON.stringify(configuration.minimumFrameGapMs ?? 15)}
+    const maximumGapMs = ${JSON.stringify(configuration.maximumFrameGapMs ?? 120)}
+    const maximumRenderedHeight = ${JSON.stringify(configuration.maximumRenderedVideoHeight ?? null)}
     let callbacks = 0
+    let previousTimestamp = null
+    const intervals = []
     const deadline = window.setTimeout(() => reject(new Error('video frames were not decoded')), 12_000)
     const observe = () => element.requestVideoFrameCallback(() => {
+      const timestamp = performance.now()
+      if (previousTimestamp !== null) intervals.push(timestamp - previousTimestamp)
+      previousTimestamp = timestamp
       callbacks += 1
-      if (callbacks >= 3 && element.videoWidth > 0 && element.videoHeight > 0) {
+      if (callbacks >= requiredCallbacks && element.videoWidth > 0 && element.videoHeight > 0) {
         window.clearTimeout(deadline)
-        resolve({ callbacks, width: element.videoWidth, height: element.videoHeight })
+        if (verifyCadence && intervals.some((interval) => interval < minimumGapMs || interval > maximumGapMs)) {
+          reject(new Error('video frame cadence was unstable: ' + JSON.stringify(intervals)))
+          return
+        }
+        const renderedHeight = element.getBoundingClientRect().height
+        if (maximumRenderedHeight !== null && renderedHeight > maximumRenderedHeight + 1) {
+          reject(new Error('video was upscaled beyond its native portrait height: ' + renderedHeight))
+          return
+        }
+        resolve({ callbacks, width: element.videoWidth, height: element.videoHeight, renderedHeight, intervals })
         return
       }
       observe()
     })
     observe()
   }))()`)
+
+  await client.evaluate(`(() => {
+    const layer = document.querySelector('.avatar-video-layer')
+    const workspace = document.querySelector('.workspace-shell')
+    const element = document.querySelector('.avatar-video-layer video')
+    if (!(layer instanceof HTMLElement) || !(workspace instanceof HTMLElement) || !(element instanceof HTMLVideoElement)) {
+      throw new Error('avatar visibility controls are missing')
+    }
+    if (layer.parentElement !== workspace) {
+      throw new Error('avatar video layer is outside the workspace stacking context')
+    }
+    if (getComputedStyle(layer).opacity !== '1') {
+      throw new Error('avatar video layer is not visible after frame decode')
+    }
+    const bounds = element.getBoundingClientRect()
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      throw new Error('avatar video has no visible bounds')
+    }
+    if (getComputedStyle(layer).zIndex !== '0') {
+      throw new Error('avatar video layer no longer occupies the workspace background plane')
+    }
+    const workspaceContent = document.querySelector('.app-workspace')
+    if (!(workspaceContent instanceof HTMLElement) || getComputedStyle(workspaceContent).zIndex !== '1') {
+      throw new Error('workspace controls are not positioned above the avatar video')
+    }
+  })()`)
 
   await client.evaluate(`(() => {
     const button = [...document.querySelectorAll('.avatar-video-control button')]

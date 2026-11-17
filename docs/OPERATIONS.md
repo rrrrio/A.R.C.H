@@ -87,18 +87,26 @@ Ollama 和 SearXNG 不阻塞后端就绪，因为它们不是每次语音会话�
     systemctl --user daemon-reload
     systemctl --user enable --now arch-backend.service arch-gateway.service
 
-视频数字人是独立可选服务，不会因安装后端和网关而自动占用 GPU：
+旧的 `arch-avatar.service` JPEG bridge 已停用，不能重新启用。安装器也会渲染新的
+`arch-avatar-media.service`，但当前单 peer 音视频替换尚未完成前不得启用它作为用户功能。
+若在维护环境检查 unit 渲染，先在受限的 `.env` 设置独立高熵的
+`ARCH_AVATAR_MEDIA_TICKET_SECRET`；该服务只绑定 `127.0.0.1:8101`，不经 Caddy 暴露。
+普通语音不依赖两个 avatar unit。
 
-    systemctl --user enable --now arch-avatar.service
+新 runtime 的 Wav2Lip cache 必须由与真人素材匹配的 source video 和 checkpoint 生成。该维护命令只调用固定 checkout 的人脸检测模块，不启动 LiveTalking 的 HTTP、TTS 或 WebRTC 服务，也不会在完整帧中写入 `LiveTalking` 水印：
 
-只有 `.env` 中 `ARCH_VIDEO_AVATAR_ENABLED=true` 且 avatar worker 能访问已准备的素材和模型时，浏览器才会显示可用的视频开关。`ARCH_AVATAR_WORKER_BACKEND=preview` 仅用于 WebRTC 和网页 smoke，不提供真实口型。
+    make avatar-media-wav2lip-prepare
+
+启用新 runtime 前，运维人员可在受控服务日志中筛选 `avatar-media-timing`。事件仅用于计算提交、渲染、首包、浏览器首帧、取消和回退的耗时；不得把它与 PCM、帧、文本、ticket 或浏览器身份以外的内容关联。当前 runtime 尚未安装或启用，不能用该日志替代目标设备验收。
+
+命令需要 CUDA 和已授权的 `data/avatars/idle.mp4`、`data/runtime/livetalking/wav2lip.pth`。输出位于受忽略的 `data/runtime/avatar-media/avatars/`。它尚不表示视频数字人已可用；当前公开状态仍为“重建中”。
 
 安装器默认拒绝覆盖现有 unit。确认本机修改后的 unit 需要替换时，使用 `SYSTEMD_FLAGS=--replace`。`arch-backend.service` 在失败时重启，并在 `/api/ready` 成功前视为未启动；`arch-gateway.service` 等待 Caddy 容器健康，再检查 HTTPS 到后端的同一路径。它们均不启动搜索或 Ollama。
 
 后端日志进入用户 journal：
 
     journalctl --user -u arch-backend.service -n 100 --no-pager
-    journalctl --user -u arch-avatar.service -n 100 --no-pager
+    journalctl --user -u arch-avatar-media.service -n 100 --no-pager
 
 Compose 容器使用 Docker `local` 日志驱动，每个容器最多保留三个 10 MiB 文件。Caddy 的
 `127.0.0.1:2019/healthz` 仅供容器健康检查使用，不是局域网入口，也不应转发或暴露给浏览器。

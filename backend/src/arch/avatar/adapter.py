@@ -21,7 +21,7 @@ class AvatarAdapter(Protocol):
     async def cancel(self, utterance_id: str) -> None:
         """Discard buffered output for an interrupted utterance."""
 
-    async def end(self, utterance_id: str) -> None:
+    async def end(self, utterance_id: str) -> bool | None:
         """Finish an utterance that completed normally."""
 
 

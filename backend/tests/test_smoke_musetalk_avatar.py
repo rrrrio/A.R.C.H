@@ -24,6 +24,10 @@ def test_worker_command_uses_all_configured_musetalk_paths() -> None:
         avatar_model_root=Path("/models/musetalk"),
         avatar_cache_dir=Path("/cache/avatar"),
         avatar_musetalk_source=Path("/source/musetalk"),
+        avatar_worker_backend="musetalk",
+        avatar_wav2lip_source=Path("/source/livetalking"),
+        avatar_wav2lip_model=Path("/models/wav2lip.pth"),
+        avatar_wav2lip_avatar=Path("/avatars/wav2lip"),
     )
 
     command = module.build_worker_command(
@@ -48,4 +52,34 @@ def test_worker_command_uses_all_configured_musetalk_paths() -> None:
         "/cache/avatar",
         "--musetalk-source",
         "/source/musetalk",
+    ]
+
+
+def test_worker_command_uses_all_configured_wav2lip_paths() -> None:
+    """The owned check must test the same Wav2Lip assets as the user service."""
+    module = _load_script()
+    settings = SimpleNamespace(
+        avatar_source_video=Path("/avatars/idle.mp4"),
+        avatar_fps=25,
+        avatar_model_root=Path("/models/musetalk"),
+        avatar_cache_dir=Path("/cache/avatar"),
+        avatar_musetalk_source=Path("/source/musetalk"),
+        avatar_worker_backend="wav2lip",
+        avatar_wav2lip_source=Path("/source/livetalking"),
+        avatar_wav2lip_model=Path("/models/wav2lip.pth"),
+        avatar_wav2lip_avatar=Path("/avatars/wav2lip"),
+    )
+
+    command = module.build_worker_command(
+        Path("/runtime/python"), Path("/runtime/smoke.sock"), settings
+    )
+
+    assert command[-7:] == [
+        "wav2lip",
+        "--wav2lip-source",
+        "/source/livetalking",
+        "--wav2lip-model",
+        "/models/wav2lip.pth",
+        "--wav2lip-avatar",
+        "/avatars/wav2lip",
     ]

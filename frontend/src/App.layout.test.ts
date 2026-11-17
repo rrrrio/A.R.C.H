@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const stylesheet = readFileSync(new URL('./App.css', import.meta.url), 'utf8')
+const avatarVideo = readFileSync(new URL('./AvatarVideoPreview.tsx', import.meta.url), 'utf8')
 
 describe('workspace transcript layout', () => {
   it('keeps subtitle text out of the legacy two-column transcript grid', () => {
@@ -38,6 +39,18 @@ describe('workspace transcript layout', () => {
 
   it('styles the native file picker button for the dark workspace', () => {
     expect(stylesheet).toContain(".workspace-shell input[type='file']::file-selector-button")
+  })
+
+  it('keeps the Wav2Lip portrait at its native cache height on tall desktops', () => {
+    expect(stylesheet).toContain('.avatar-video-layer video {\n  position: absolute;\n  top: auto;\n  bottom: 0;')
+    expect(stylesheet).toContain('height: min(100%, 768px);')
+  })
+
+  it('places decoded video inside the workspace stacking context behind controls', () => {
+    expect(avatarVideo).toContain("document.querySelector<HTMLElement>('.workspace-shell')")
+    expect(avatarVideo).toContain('createPortal(videoLayer, videoLayerHost)')
+    expect(avatarVideo).not.toContain('createPortal(videoLayer, document.body)')
+    expect(stylesheet).toContain('.app-workspace { position: relative; z-index: 1;')
   })
 
   it('keeps login and pending-memory editing surfaces inside the dark theme', () => {

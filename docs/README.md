@@ -1,6 +1,6 @@
 # 文档导航
 
-本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。固定 MP4 真人视频数字人的鉴权视频桥接、MuseTalk 增量 renderer 和 preview worker 已实现，并完成主机 IPC/GPU/WebRTC track 与 Chrome 视频解码 smoke；远端浏览器设备上的持续帧率和音画同步尚未验收。
+本目录描述 `A.R.C.H.`（Autonomous Reasoning & Conversation Hub）当前已实现的本地浏览器语音系统。系统只允许一个已登录的浏览器语音会话；模型、数据库、知识资料和凭据均保存在仓库的 `data/` 下。真人视频数字人正在替换为单 peer 音视频运行时；旧 bridge 已停用，页面显示“重建中”，普通语音保持可用。旧 MuseTalk、Wav2Lip 和 preview worker 的主机 smoke 记录不构成新运行时或目标设备验收。
 
 ## 按任务阅读
 
@@ -23,7 +23,7 @@
 - [配置参考](reference/configuration.md)：环境变量、端口、持久化目录和支持的文件格式。
 - [架构与安全边界](explanation/architecture.md)：实时路径、即时插话取消（包括 PCM 回退）、审批、记忆、RAG 与视频数字人的设计理由。
 - [使用浏览器数字人预览](how-to/use-browser-avatar.md)：在不上传 VRM 模型的前提下启用本地浏览器预览。
-- [使用真人视频数字人](how-to/use-video-avatar.md)：准备固定 MP4、启动独立视频 worker 和验证视频 WebRTC。
+- [使用真人视频数字人](how-to/use-video-avatar.md)：准备固定 MP4、选择低延迟 MuseTalk 或成片 Wav2Lip worker，并验证视频 WebRTC。
 - [开发环境](DEVELOPMENT.md)：运行测试、启动开发服务和维护文档。
 - [组件基准](benchmarks/README.md)：当前 ASR、LLM 和 TTS 基线及其复跑方式，以及浏览器语音验收证据的边界。
 

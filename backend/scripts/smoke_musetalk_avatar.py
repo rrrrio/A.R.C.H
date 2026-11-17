@@ -17,21 +17,25 @@ from arch.avatar.video import AvatarVideoSignalingService
 from arch.settings import PROJECT_ROOT, get_settings
 
 
-class MuseTalkSettings(Protocol):
-    """The renderer settings required to start an isolated smoke worker."""
+class AvatarRendererSettings(Protocol):
+    """The selected renderer settings required to start an isolated smoke worker."""
 
     avatar_source_video: Path
     avatar_fps: int
     avatar_model_root: Path
     avatar_cache_dir: Path
     avatar_musetalk_source: Path
+    avatar_worker_backend: str
+    avatar_wav2lip_source: Path
+    avatar_wav2lip_model: Path
+    avatar_wav2lip_avatar: Path
 
 
 def build_worker_command(
-    runtime_python: Path, socket_path: Path, settings: MuseTalkSettings
+    runtime_python: Path, socket_path: Path, settings: AvatarRendererSettings
 ) -> list[str]:
-    """Build the owned worker invocation from the configured renderer paths."""
-    return [
+    """Build the owned worker invocation from the active renderer settings."""
+    command = [
         str(runtime_python),
         "-m",
         "avatar_runtime.worker",
@@ -42,14 +46,30 @@ def build_worker_command(
         "--fps",
         str(settings.avatar_fps),
         "--backend",
-        "musetalk",
-        "--model-root",
-        str(settings.avatar_model_root),
-        "--cache-dir",
-        str(settings.avatar_cache_dir),
-        "--musetalk-source",
-        str(settings.avatar_musetalk_source),
     ]
+    if settings.avatar_worker_backend == "musetalk":
+        return command + [
+            "musetalk",
+            "--model-root",
+            str(settings.avatar_model_root),
+            "--cache-dir",
+            str(settings.avatar_cache_dir),
+            "--musetalk-source",
+            str(settings.avatar_musetalk_source),
+        ]
+    if settings.avatar_worker_backend == "wav2lip":
+        return command + [
+            "wav2lip",
+            "--wav2lip-source",
+            str(settings.avatar_wav2lip_source),
+            "--wav2lip-model",
+            str(settings.avatar_wav2lip_model),
+            "--wav2lip-avatar",
+            str(settings.avatar_wav2lip_avatar),
+        ]
+    raise ValueError(
+        f"Owned smoke does not support avatar backend: {settings.avatar_worker_backend}"
+    )
 
 
 async def wait_for_socket(path: Path, process: subprocess.Popen[bytes]) -> None:
@@ -124,6 +144,7 @@ async def smoke(socket_path: Path) -> tuple[int, int, list[float]]:
         await service.begin("musetalk-smoke", 24000, "neutral")
         # Two seconds exceeds the historical 64 KiB line-framing failure boundary.
         await service.push_audio("musetalk-smoke", b"\x00\x00" * 48000, 0)
+        await service.end("musetalk-smoke")
         return await asyncio.wait_for(received, timeout=30)
     finally:
         await service.close()

@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -60,6 +60,18 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("ARCH_VIDEO_AVATAR_ENABLED", "LVA_VIDEO_AVATAR_ENABLED"),
     )
+    avatar_media_runtime_url: str = Field(
+        default="http://127.0.0.1:8101",
+        validation_alias=AliasChoices(
+            "ARCH_AVATAR_MEDIA_RUNTIME_URL", "LVA_AVATAR_MEDIA_RUNTIME_URL"
+        ),
+    )
+    avatar_media_ticket_secret: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "ARCH_AVATAR_MEDIA_TICKET_SECRET", "LVA_AVATAR_MEDIA_TICKET_SECRET"
+        ),
+    )
     avatar_runtime_dir: Path = Field(
         default=PROJECT_ROOT / "data/runtime/avatar",
         validation_alias=AliasChoices("ARCH_AVATAR_RUNTIME_DIR", "LVA_AVATAR_RUNTIME_DIR"),
@@ -83,6 +95,18 @@ class Settings(BaseSettings):
     avatar_musetalk_source: Path = Field(
         default=PROJECT_ROOT / "data/runtime/musetalk/source",
         validation_alias=AliasChoices("ARCH_AVATAR_MUSETALK_SOURCE", "LVA_AVATAR_MUSETALK_SOURCE"),
+    )
+    avatar_wav2lip_source: Path = Field(
+        default=PROJECT_ROOT / "data/runtime/livetalking/source",
+        validation_alias=AliasChoices("ARCH_AVATAR_WAV2LIP_SOURCE", "LVA_AVATAR_WAV2LIP_SOURCE"),
+    )
+    avatar_wav2lip_model: Path = Field(
+        default=PROJECT_ROOT / "data/runtime/livetalking/wav2lip.pth",
+        validation_alias=AliasChoices("ARCH_AVATAR_WAV2LIP_MODEL", "LVA_AVATAR_WAV2LIP_MODEL"),
+    )
+    avatar_wav2lip_avatar: Path = Field(
+        default=PROJECT_ROOT / "data/runtime/livetalking/avatars/wav2lip_idle_reference",
+        validation_alias=AliasChoices("ARCH_AVATAR_WAV2LIP_AVATAR", "LVA_AVATAR_WAV2LIP_AVATAR"),
     )
     avatar_model: str = Field(
         default="musetalk-1.5",
@@ -179,6 +203,31 @@ class Settings(BaseSettings):
             raise ValueError("ARCH_SEARXNG_ENDPOINT must be a bare HTTP loopback origin.")
         return value.rstrip("/")
 
+    @field_validator("avatar_media_runtime_url")
+    @classmethod
+    def avatar_media_runtime_must_be_loopback_origin(cls, value: str) -> str:
+        """Prevent the backend from sending session tickets beyond this host."""
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("ARCH_AVATAR_MEDIA_RUNTIME_URL must be a bare HTTP 127.0.0.1 origin.")
+        return value.rstrip("/")
+
+    @field_validator("avatar_media_ticket_secret")
+    @classmethod
+    def avatar_media_ticket_secret_must_be_strong(cls, value: SecretStr | None) -> SecretStr | None:
+        """Reject a weak shared secret before it can authorize loopback media peers."""
+        if value is not None and len(value.get_secret_value().encode("utf-8")) < 16:
+            raise ValueError("ARCH_AVATAR_MEDIA_TICKET_SECRET must contain at least 16 bytes.")
+        return value
+
     @field_validator(
         "avatar_runtime_dir",
         "avatar_socket_path",
@@ -186,6 +235,9 @@ class Settings(BaseSettings):
         "avatar_model_root",
         "avatar_cache_dir",
         "avatar_musetalk_source",
+        "avatar_wav2lip_source",
+        "avatar_wav2lip_model",
+        "avatar_wav2lip_avatar",
     )
     @classmethod
     def avatar_paths_must_be_under_project_data(cls, value: Path) -> Path:

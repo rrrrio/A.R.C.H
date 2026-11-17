@@ -14,7 +14,13 @@ import av
 import numpy as np
 from avatar_runtime.audio import StreamingPcmResampler
 from avatar_runtime.musetalk import MuseTalkEngine
-from avatar_runtime.worker import AvatarWorkerConnection, MuseTalkRenderer, PreviewRenderer
+from avatar_runtime.worker import (
+    AvatarWorkerConnection,
+    MuseTalkRenderer,
+    PreviewRenderer,
+    Wav2LipRenderer,
+)
+from avatar_runtime.wav2lip import Wav2LipEngine
 
 
 class RecordingRenderer:
@@ -60,6 +66,20 @@ class RecordingWriter:
 
     async def wait_closed(self) -> None:
         return
+
+
+class ResettingWriter(RecordingWriter):
+    """A transport whose peer resets before the worker's close acknowledgement."""
+
+    async def wait_closed(self) -> None:
+        raise ConnectionResetError("synthetic peer reset")
+
+
+class DrainingResetWriter(RecordingWriter):
+    """A transport that resets while the worker publishes a frame."""
+
+    async def drain(self) -> None:
+        raise ConnectionResetError("synthetic peer reset")
 
 
 class BlockingEngine:
@@ -170,6 +190,20 @@ class AvatarWorkerConnectionTests(unittest.TestCase):
         )
         self.assertEqual(writer.messages, [{"type": "ready"}])
 
+    def test_close_ignores_a_peer_reset_after_rendering_stops(self) -> None:
+        """A browser disconnect must not surface as an unhandled worker task error."""
+        asyncio.run(AvatarWorkerConnection(ResettingWriter(), RecordingRenderer()).close())  # type: ignore[arg-type]
+
+    def test_frame_send_fences_a_peer_reset_without_a_second_error_send(self) -> None:
+        """A reset during drain must end frame publication rather than recurse through errors."""
+        connection = AvatarWorkerConnection(DrainingResetWriter(), RecordingRenderer())  # type: ignore[arg-type]
+
+        async def exercise() -> None:
+            await connection._send({"type": "frame", "jpeg_b64": "frame"})  # noqa: SLF001
+
+        asyncio.run(exercise())
+        self.assertTrue(connection._peer_disconnected)  # noqa: SLF001
+
 
 class MuseTalkRendererTests(unittest.TestCase):
     """Verify renderer-local cancellation after a synchronous GPU batch starts."""
@@ -239,6 +273,53 @@ class MuseTalkRendererSchedulingTests(unittest.TestCase):
                 self.assertEqual(engine.calls, [(32000, 0), (51200, 4), (19200, 14)])
 
             asyncio.run(exercise())
+
+
+class Wav2LipRendererSchedulingTests(unittest.TestCase):
+    """Verify the reference-compatible completed-utterance publication boundary."""
+
+    def test_holds_all_frames_until_end_then_publishes_the_complete_sequence(self) -> None:
+        """Wav2Lip must trade first-frame latency for one continuous render per answer."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "avatar.mp4"
+            PreviewRendererTests._write_source(source)
+            engine = CountingEngine(fps=25)
+            renderer = Wav2LipRenderer(
+                source,
+                fps=25,
+                source_root=root / "source",
+                model_path=root / "model.pth",
+                avatar_path=root / "avatar-cache",
+                engine=engine,
+            )
+
+            async def exercise() -> None:
+                idle = await asyncio.wait_for(anext(renderer.frames()), 0.1)
+                self.assertTrue(idle.startswith(b"\xff\xd8"))
+                await renderer.begin("turn", 16000, "neutral")
+                await renderer.push_audio("turn", b"\x00\x00" * 16000, 0)
+                await asyncio.sleep(0.02)
+                self.assertEqual(engine.calls, [])
+                await renderer.end("turn")
+                await asyncio.sleep(0.02)
+                frames = [await asyncio.wait_for(anext(renderer.frames()), 0.1) for _ in range(25)]
+                await renderer.close()
+                self.assertEqual(frames, [f"frame-{index}".encode() for index in range(25)])
+                self.assertEqual(engine.calls, [(32000, 0)])
+
+            asyncio.run(exercise())
+
+
+class Wav2LipEngineIndexTests(unittest.TestCase):
+    """Keep the adapter's source-frame traversal equal to LiveTalking's."""
+
+    def test_avatar_frames_reverse_at_the_reference_cycle_boundary(self) -> None:
+        """The final cache frame must be followed by its predecessor, not frame zero."""
+        self.assertEqual(
+            [Wav2LipEngine._mirror_index(550, index) for index in (548, 549, 550, 551)],
+            [548, 549, 549, 548],
+        )
 
 
 class MuseTalkRendererRecoveryTests(unittest.TestCase):

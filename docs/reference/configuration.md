@@ -67,15 +67,21 @@ gateway:
 | `ARCH_HTTPS_PORT` | `int` / `8443` | 有效 TCP 端口 | Caddy 的 HTTPS 监听端口。 |
 | `ARCH_SEARCH_ENABLED` | `bool` / `false` | 布尔值 | 是否创建本地 SearXNG 搜索客户端。 |
 | `ARCH_SEARXNG_ENDPOINT` | `str` / `http://127.0.0.1:8080` | 仅 `127.0.0.1`、`localhost` 或 `::1`；不得含路径、查询或凭据 | 本地 SearXNG JSON 服务。 |
-| `ARCH_VIDEO_AVATAR_ENABLED` | `bool` / `false` | 布尔值；默认关闭 | 是否向已认证浏览器提供真人视频数字人接口。 |
+| `ARCH_VIDEO_AVATAR_ENABLED` | `bool` / `false` | 布尔值；默认关闭 | 视频运行时重建期间忽略此值；已认证浏览器会看到“重建中”，普通语音保持可用。 |
+| `ARCH_AVATAR_MEDIA_RUNTIME_URL` | `str` / `http://127.0.0.1:8101` | 只能是无路径、查询或凭据的 `http://127.0.0.1` origin | 后端向单 peer 音视频运行时转发已认证信令的私有地址；不会返回给浏览器。当前功能仍在重建，设置它不会启用视频。 |
+| `ARCH_AVATAR_MEDIA_TICKET_SECRET` | `SecretStr` / 未设置 | 至少 16 UTF-8 字节；应为独立高熵值；不得提交 | 后端和 loopback runtime 共同验证的一次性、短期 ticket 密钥。未设置时 runtime 拒绝启动，后端返回视频不可用。 |
 | `ARCH_AVATAR_RUNTIME_DIR` | `Path` / `data/runtime/avatar` | 必须在 `data/` 内 | 独立 avatar worker 的运行状态目录。 |
 | `ARCH_AVATAR_SOCKET_PATH` | `Path` / `data/runtime/avatar/avatar.sock` | 必须在 `data/` 内 | A.R.C.H. 后端与 GPU worker 之间的 Unix socket。 |
 | `ARCH_AVATAR_SOURCE_VIDEO` | `Path` / `data/avatars/idle.mp4` | 必须在 `data/` 内，必须有可解码视频帧 | 管理员提供的固定真人参考视频。 |
 | `ARCH_AVATAR_MODEL_ROOT` | `Path` / `data/models/musetalk/2bcb936e2fddb4d86db4c62fd45b387d0c061571` | 必须在 `data/` 内；只读 | 固定 MuseTalk V1.5 权重与附属模型目录。 |
 | `ARCH_AVATAR_CACHE_DIR` | `Path` / `data/runtime/avatar/preprocessed` | 必须在 `data/` 内；worker 可写 | 由固定 MP4 内容、模型 revision 和裁切参数寻址的预处理缓存根目录。 |
 | `ARCH_AVATAR_MUSETALK_SOURCE` | `Path` / `data/runtime/musetalk/source` | 必须在 `data/` 内；只读 | 隔离 CUDA runtime 使用的固定 MuseTalk 源码 checkout。 |
+| `ARCH_AVATAR_WAV2LIP_SOURCE` | `Path` / `data/runtime/livetalking/source` | 必须在 `data/` 内；只读 | 成片模式使用的 LiveTalking Wav2Lip 源码 checkout；只加载口型模块，不启动其 HTTP 或 WebRTC 服务。 |
+| `ARCH_AVATAR_WAV2LIP_MODEL` | `Path` / `data/runtime/livetalking/wav2lip.pth` | 必须在 `data/` 内；只读 | 运维方自行提供且已核验使用权的 Wav2Lip checkpoint。 |
+| `ARCH_AVATAR_WAV2LIP_AVATAR` | `Path` / `data/runtime/livetalking/avatars/wav2lip_idle_reference` | 必须在 `data/` 内；只读；含 `coords.pkl`、`full_imgs/` 和 `face_imgs/` | 必须由 `ARCH_AVATAR_SOURCE_VIDEO` 生成的同一人物预处理头像缓存，不能与不同人物或不同裁切参数混用。 |
+| `data/runtime/avatar-media/avatars/` | runtime cache root / 默认由准备命令写入 | 受 Git 忽略；每项由 source/checkpoint 内容、25fps、256px crop、pads 和 generator revision 定址 | 新 AvatarMediaRuntime 的无水印 Wav2Lip cache。准备器拒绝不完整或不匹配的 cache，浏览器和 API 不会暴露该路径。 |
 | `ARCH_AVATAR_MODEL` | `str` / `musetalk-1.5` | 由独立 worker 解释 | 视频口型模型标识。 |
-| `ARCH_AVATAR_WORKER_BACKEND` | `str` / `musetalk` | `musetalk` 或 `preview` | 正式口型 worker 或仅用于传输 smoke 的循环预览。 |
+| `ARCH_AVATAR_WORKER_BACKEND` | `str` / `musetalk` | `musetalk`、`wav2lip` 或 `preview` | `musetalk` 为低延迟增量口型；`wav2lip` 等待一次 TTS 播报结束后生成完整片段以换取连续成片观感；`preview` 仅循环固定视频。 |
 | `ARCH_AVATAR_FPS` | `int` / `25` | 1 到 60 | 视频轨道目标帧率。 |
 | `ARCH_AVATAR_QUEUE_MAX_MS` | `int` / `500` | 100 到 5000 | 视频帧和 PCM 迟到时使用的有界队列预算。 |
 | `ARCH_AVATAR_STARTUP_TIMEOUT_MS` | `int` / `15000` | 1000 到 120000 | avatar worker 启动等待上限。 |
@@ -96,6 +102,7 @@ gateway:
 | --- | --- | --- | --- |
 | Caddy | `*:8443` | 是 | 唯一浏览器 HTTPS 入口；提供前端并代理 `/api/*`。 |
 | FastAPI 后端 | `127.0.0.1:8000` | 否 | 登录、信令、记忆、知识库和工具 API。 |
+| AvatarMediaRuntime | `127.0.0.1:8101` | 否 | 仅接收后端携带的一次性 ticket 的私有音视频会话控制面；不提供浏览器、LAN 或 OpenAPI 入口。 |
 | llama.cpp | `127.0.0.1:8081` | 否 | 会话启动时由后端拥有的本地 LLM 服务。 |
 | SearXNG | `127.0.0.1:8080` | 否 | 可选本地搜索聚合服务。 |
 | Ollama | `127.0.0.1:11434` | 否 | 保留的本地模型适配器，不是当前语音会话默认 LLM。 |
@@ -109,6 +116,7 @@ gateway:
 | `data/db/arch.sqlite3` | 会话、记忆、审批和知识索引 | 受 Git 忽略；备份前先停止写入或使用一致性备份流程。新文件不存在时，应用继续使用旧部署的 `data/db/local-voice-agent.sqlite3`。若两者都存在，优先使用 `arch.sqlite3`。 |
 | `data/knowledge/inbox/` | 用户可索引资料 | 唯一允许的 RAG 源目录。 |
 | `data/voices/profiles/` | 经确认授权的本地 WAV 参考及元数据 | 多声道或非 WAV 上传由后端 FFmpeg 转为单声道 24 kHz、16-bit PCM WAV；已符合约束的单声道 WAV 可直接保存。不进入数据库与知识资料备份归档，不得提交、共享或记录到日志。 |
+| `data/runtime/avatar-media/avatars/` | 无水印 Wav2Lip source cache | 由 `make avatar-media-wav2lip-prepare` 在维护环境生成；包含完整帧、256px face crop、坐标和 manifest。当前不会启用浏览器视频。 |
 | `data/backups/` | `make backup` 创建的压缩归档 | 归档含 SQLite 一致性副本和知识资料 inbox，不含管理员凭据、模型或本地 CA；应复制到受控的离机位置。 |
 | `data/models/` | 固定模型、声线和嵌入模型 | 受 Git 忽略；运行时按固定路径验证。 |
 | `data/models/faster-whisper/<revision>/` | 本地 Faster-Whisper ASR 模型 | 由 `make asr-prepare` 准备；用于实时语音识别和声音参考文本草稿，不得提交或共享。 |

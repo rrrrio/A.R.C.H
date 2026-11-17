@@ -1,4 +1,4 @@
-"""Run a temporary authenticated Chrome check against a real MuseTalk worker."""
+"""Run a temporary authenticated Chrome check against the configured avatar worker."""
 
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ def build_worker_command(socket_path: Path) -> list[str]:
     """Build the real renderer worker command using active fixed artifacts."""
     settings = get_settings()
     runtime_python = PROJECT_ROOT / "data/runtime/musetalk/bin/python"
-    return [
+    command = [
         str(runtime_python),
         "-m",
         "avatar_runtime.worker",
@@ -125,14 +125,31 @@ def build_worker_command(socket_path: Path) -> list[str]:
         "--fps",
         str(settings.avatar_fps),
         "--backend",
-        "musetalk",
-        "--model-root",
-        str(settings.avatar_model_root),
-        "--cache-dir",
-        str(settings.avatar_cache_dir),
-        "--musetalk-source",
-        str(settings.avatar_musetalk_source),
     ]
+    if settings.avatar_worker_backend == "musetalk":
+        return command + [
+            "musetalk",
+            "--model-root",
+            str(settings.avatar_model_root),
+            "--cache-dir",
+            str(settings.avatar_cache_dir),
+            "--musetalk-source",
+            str(settings.avatar_musetalk_source),
+        ]
+    if settings.avatar_worker_backend == "wav2lip":
+        return command + [
+            "wav2lip",
+            "--wav2lip-source",
+            str(settings.avatar_wav2lip_source),
+            "--wav2lip-model",
+            str(settings.avatar_wav2lip_model),
+            "--wav2lip-avatar",
+            str(settings.avatar_wav2lip_avatar),
+        ]
+    raise ValueError(
+        "Owned browser smoke does not support avatar backend: "
+        f"{settings.avatar_worker_backend}"
+    )
 
 
 async def wait_for_socket(path: Path, process: subprocess.Popen[bytes]) -> None:
@@ -140,11 +157,11 @@ async def wait_for_socket(path: Path, process: subprocess.Popen[bytes]) -> None:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise RuntimeError(f"MuseTalk worker exited with status {process.returncode}.")
+            raise RuntimeError(f"Avatar worker exited with status {process.returncode}.")
         if path.exists():
             return
         await asyncio.sleep(0.1)
-    raise TimeoutError("MuseTalk worker did not create its private socket.")
+    raise TimeoutError("Avatar worker did not create its private socket.")
 
 
 async def wait_for_connected(service: AvatarVideoSignalingService) -> None:
@@ -199,7 +216,7 @@ async def run(arguments: argparse.Namespace) -> None:
     require_file(arguments.chrome, "Chrome binary")
     require_file(FRONTEND_DIST / "index.html", "frontend build output")
     require_file(NODE_DRIVER, "browser driver")
-    require_file(PROJECT_ROOT / "data/runtime/musetalk/bin/python", "MuseTalk runtime")
+    require_file(PROJECT_ROOT / "data/runtime/musetalk/bin/python", "avatar runtime")
     layout = create_run_layout()
     backend_port = reserve_port()
     https_port = reserve_port()
@@ -267,6 +284,18 @@ async def run(arguments: argparse.Namespace) -> None:
             "password": layout.password,
             "chrome": str(arguments.chrome),
             "injectPcm": True,
+            "requiredVideoCallbacks": 20
+            if get_settings().avatar_worker_backend == "wav2lip"
+            else 3,
+            "verifyVideoCadence": get_settings().avatar_worker_backend == "wav2lip",
+            "minimumFrameGapMs": 15,
+            "maximumFrameGapMs": 120,
+            "windowSize": "1920,1080"
+            if get_settings().avatar_worker_backend == "wav2lip"
+            else None,
+            "maximumRenderedVideoHeight": 768
+            if get_settings().avatar_worker_backend == "wav2lip"
+            else None,
             "timeoutSeconds": arguments.timeout_seconds,
             "profileDir": str(layout.root / "chrome-profile"),
             "debugPort": reserve_port(),

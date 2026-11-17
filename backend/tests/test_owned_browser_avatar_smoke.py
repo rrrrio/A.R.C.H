@@ -35,6 +35,10 @@ def test_worker_command_uses_a_private_socket_and_pinned_renderer_inputs(
             "avatar_model_root": Path("/data/models/musetalk"),
             "avatar_cache_dir": Path("/data/runtime/cache"),
             "avatar_musetalk_source": Path("/data/runtime/musetalk/source"),
+            "avatar_worker_backend": "musetalk",
+            "avatar_wav2lip_source": Path("/data/runtime/livetalking/source"),
+            "avatar_wav2lip_model": Path("/data/runtime/livetalking/wav2lip.pth"),
+            "avatar_wav2lip_avatar": Path("/data/runtime/livetalking/avatars/avatar"),
         },
     )()
     monkeypatch.setattr(module, "get_settings", lambda: settings)
@@ -60,6 +64,39 @@ def test_worker_command_uses_a_private_socket_and_pinned_renderer_inputs(
         "/data/runtime/cache",
         "--musetalk-source",
         "/data/runtime/musetalk/source",
+    ]
+
+
+def test_worker_command_uses_the_selected_wav2lip_assets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Chrome check must exercise the same complete-utterance renderer as deployment."""
+    module = _load_script()
+    settings = type(
+        "Settings",
+        (),
+        {
+            "avatar_source_video": Path("/data/avatars/idle.mp4"),
+            "avatar_fps": 25,
+            "avatar_worker_backend": "wav2lip",
+            "avatar_wav2lip_source": Path("/data/runtime/livetalking/source"),
+            "avatar_wav2lip_model": Path("/data/runtime/livetalking/wav2lip.pth"),
+            "avatar_wav2lip_avatar": Path("/data/runtime/livetalking/avatars/avatar"),
+        },
+    )()
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "PROJECT_ROOT", Path("/project"))
+
+    command = module.build_worker_command(Path("/data/e2e/private-avatar.sock"))
+
+    assert command[-7:] == [
+        "wav2lip",
+        "--wav2lip-source",
+        "/data/runtime/livetalking/source",
+        "--wav2lip-model",
+        "/data/runtime/livetalking/wav2lip.pth",
+        "--wav2lip-avatar",
+        "/data/runtime/livetalking/avatars/avatar",
     ]
 
 

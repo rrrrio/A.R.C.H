@@ -1,6 +1,8 @@
 # 使用真人视频数字人
 
-真人视频数字人使用固定真人 MP4 作为姿态和人物来源，再由独立 GPU worker 根据 A.R.C.H. 的 TTS PCM 生成口型视频。浏览器视频连接只传视频；声音仍由现有语音 WebRTC 或 WSS 连接播放，因此不会出现两路声音。
+> 当前正在替换真人视频的媒体运行时。视频功能暂时不可用，页面会显示“重建中，暂不可用”；普通语音不受影响。不要启动或启用旧的 `arch-avatar.service`，也不要使用本页其余旧 bridge 操作步骤，直到新的单 peer 音视频运行时发布。
+
+本页保留旧资料、模型和操作记录，供后续迁移核对。旧路径把视频与普通语音放在不同 WebRTC peer，不能满足音画同步要求。
 
 ## 准备素材
 
@@ -10,7 +12,7 @@
     cp /path/to/idle.mp4 data/avatars/idle.mp4
     make avatar-check
 
-当前下载原型中的 `idle.mp4` 是 704×896 的竖屏参考视频，服务会在启动前检查它是否包含可解码的视频帧。`listening.mp4` 和 `speaking.mp4` 可以用于前端 mock 状态，但不能替代实时生成的视频；预录的 speaking 视频会与实际回答内容不同步。
+当前下载原型中的 `idle.mp4` 是 704×896、16fps 的竖屏参考视频，服务会在启动前检查它是否包含可解码的视频帧。Wav2Lip 必须使用由该视频生成的同一人物缓存（本机默认 `wav2lip_idle_reference`，包含 `full_imgs/`、`face_imgs/`、`coords.pkl`）和 `wav2lip.pth` 生成说话画面。静音和模型生成期间会直接循环原始 `idle.mp4`，并按源视频时间轴映射到视频轨的 25fps，不会把 16fps 源素材按 25fps 倍速播放；`listening.mp4` 和 `speaking.mp4` 只是预录状态素材，不能替代实时生成的视频，否则会与实际回答内容不同步。
 
 ## 配置
 
@@ -19,7 +21,22 @@
     ARCH_VIDEO_AVATAR_ENABLED=true
     ARCH_AVATAR_WORKER_BACKEND=musetalk
 
-`musetalk` 是正式渲染后端；`preview` 只循环 `idle.mp4`，用于验证 WebRTC、网页构图和连接关闭，不会对口型。当前仓库不会把下载包中的 `wav2lip256.pth` 自动加载为正式模型。
+`musetalk` 是低延迟的正式渲染后端；`preview` 只循环 `idle.mp4`，用于验证 WebRTC、网页构图和连接关闭，不会对口型。
+
+若目标是接近下载演示的连续成片观感，而可接受一段回答结束后才开始播放，可将后端切换为 Wav2Lip：
+
+    ARCH_AVATAR_WORKER_BACKEND=wav2lip
+    ARCH_AVATAR_MODEL=wav2lip
+
+该模式复用 A.R.C.H. 私有 Unix socket、鉴权和 WebRTC 视频轨道，不启动下载方案的 HTTP、TTS 或 WebRTC 服务。它在收到该次 TTS 的 `end` 前只缓存 16 kHz PCM；随后以 25 FPS 生成整段 JPEG 序列，视频轨道均匀送出。当前音频保持既有低延迟输出，视频仍在该轮 TTS 结束后生成，因此不能将此模式描述为音画同步；要实现同步需要 renderer 对“首个对应口型帧已进入浏览器视频轨”的显式回执。用户插话或关闭连接会 fence 正在计算的片段，旧帧不会进入下一轮。
+
+Wav2Lip 必须由运维方在以下受控路径准备来源、checkpoint 和同一人物的预处理缓存。运行时会按参考工程的正向后反向帧序遍历缓存，避免循环处从末帧跳回首帧：
+
+    data/runtime/livetalking/source
+    data/runtime/livetalking/wav2lip.pth
+    data/runtime/livetalking/avatars/wav2lip256_avatar1/
+
+缓存目录必须包含 `coords.pkl`、`full_imgs/` 和 `face_imgs/`。模型、缓存和真人素材都不随仓库再分发；部署前须确认人物肖像和 checkpoint 的使用权。路径可用对应的 `ARCH_AVATAR_WAV2LIP_*` 配置覆盖，详见[配置参考](../reference/configuration.md)。
 
 ## GPU 容量
 
@@ -41,6 +58,12 @@
     make avatar-musetalk-smoke
 
 该命令临时启动 worker，经真实 Unix socket（含超过默认单行 reader 限制的两秒 24 kHz PCM）、WebRTC 信令和本地 recvonly peer 解码三帧视频，并断言帧不会突发到达后自行清理。它不验证真实浏览器或设备表现。
+
+准备好 Wav2Lip 素材后可运行相同边界的成片模式检查：
+
+    make avatar-wav2lip-smoke
+
+该检查会向 worker 发送 PCM 后显式发送 `end`，所以能够发现 Wav2Lip 错误地在语音未结束时出帧，或完整片段无法经 WebRTC 解码。它只证明主机上的 renderer、私有 IPC 与本地 WebRTC 解码；不证明真实设备上的清晰度、持续帧率、音画同步或主观观感。
 
 当 GPU 没有空间启动第二个 renderer 时，可在没有浏览器视频会话的维护窗口连接已启用的 worker：
 
@@ -87,10 +110,12 @@ worker 会为每个有效播报轮次将 A.R.C.H. 的 24 kHz PCM 连续转换为
 
 当前共享 GPU 主机的私有 socket smoke 对 1 秒 24 kHz PCM 在尚未收到 `end` 时返回首个 JPEG，耗时约 0.97 秒，随后共返回 25 帧；两个连续 1 秒 batch 返回 23、25 和 2 帧，总计 50 帧。本地 `aiortc` 对端也已完成 SDP 协商并从真实视频 track 解码 704x896 帧。这些只证明服务端 worker、WebRTC 与 GPU renderer 的主机路径，不证明浏览器视频、持续 FPS、音画延迟、显存峰值或设备体验；完成设备验收后必须记录这些测量值和插话停止时间。
 
+Wav2Lip 成片模式已完成引擎直接检查：一秒 16 kHz PCM 生成 25 张 JPEG；其 worker 单元检查证明只有 `end` 才启动渲染，且该次播报完整输出按序发布。拥有式 Chrome smoke 已通过临时认证站点、真实 Wav2Lip worker 和 `<video>` 解码，得到 `576x768` 尺寸的 20 次帧回调，间隔为 33.2 到 67.0ms。桌面 CSS 将该 576x768 缓存的显示高度限制为最多 768px，避免在高分辨率屏幕额外上采样；Wav2Lip smoke 会在 1920x1080 Chrome 中断言该高度。可用 `make avatar-owned-wav2lip-browser-smoke` 复跑；它会构建前端并短暂启动本地 Caddy、worker 和 Chrome，完成后清理。Wav2Lip 运行会要求至少 20 次浏览器帧回调，并拒绝小于 15ms 的突发或大于 120ms 的停顿。该结果仍不测量目标设备上的整段生成耗时、持续帧率、音画同步或主观画质；在这些测量完成前，不应将该模式描述为已设备验证。
+
 预处理缓存必须由固定 MP4 的内容、MuseTalk revision 和人脸裁切参数共同确定。不要手动将一个视频的 latent、mask 或 face crop 目录复制给另一个视频；worker 会用 manifest 拒绝不匹配缓存。
 
 ## 视觉设计
 
-点击“启用视频”只建立视频 WebRTC 连接。renderer 在已有语音回答产生 TTS PCM 后才会生成首帧；页面在此之前显示“已连接，等待首帧”，不会展示黑色 video layer。收到首个解码帧后才显示视频。
+点击“启用视频”只建立视频 WebRTC 连接。renderer 在已有语音回答产生 TTS PCM 后才会生成首帧；页面在此之前显示“已连接，等待首帧”，不会展示黑色 video layer。收到首个解码帧后才显示视频。视频层必须挂在认证后工作区的 stacking context 内：它位于工作区背景之上、导航和控制内容之下，不能作为 `body` 的低层 sibling，否则工作区的隔离背景会遮住已解码视频。
 
 页面参考下载原型的黑底竖屏人物布局：桌面端视频靠右、左边缘渐隐，视频层通过页面根部 layer 放在所有聊天和语音控件之后，不会遮黑或拦截控件；移动端视频缩小到下方区域。视频元素始终静音，所有音频都来自 A.R.C.H. 的既有语音连接。清晰度仍受固定 MP4 的原始分辨率、人物脸部面积和浏览器 WebRTC 编码约束；不要把低码率或低分辨率素材放大后当作高清输入。

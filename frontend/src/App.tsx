@@ -89,6 +89,7 @@ function App() {
     refreshAudioInputs,
     setAudioDeviceId,
     setAvatarEnergySink,
+    setAvatarMediaConnected,
     voiceState,
   } = useVoiceSession({
     csrfToken: session.kind === 'authenticated' ? session.csrfToken : null,
@@ -631,7 +632,10 @@ function App() {
               </section>
               <section className="workspace-panel" hidden={activeWorkspaceSection !== 'avatars'} aria-labelledby="avatar-workspace-title">
                 <div className="workspace-panel__heading"><div><p className="eyebrow">可选呈现</p><h2 id="avatar-workspace-title">数字人</h2></div></div>
-                <AvatarVideoPreview csrfToken={session.csrfToken} />
+                <AvatarVideoPreview
+                  csrfToken={session.csrfToken}
+                  onAudioOwnershipChange={setAvatarMediaConnected}
+                />
                 <AvatarPreview setEnergySink={setAvatarEnergySink} />
               </section>
             </div>

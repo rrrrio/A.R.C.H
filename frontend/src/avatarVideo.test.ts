@@ -30,12 +30,22 @@ describe('avatar video protocol guards', () => {
       detail: 'MuseTalk renderer is not running.',
     })).toBe('unavailable')
   })
+
+  it('shows the rebuilding state even if an old enabled setting remains present', () => {
+    expect(stateFromAvatarStatus({
+      enabled: false,
+      state: 'rebuilding',
+      model: 'wav2lip',
+      source_video: 'idle.mp4',
+      detail: 'Video avatar is being rebuilt. Ordinary voice remains available.',
+    })).toBe('rebuilding')
+  })
 })
 
 describe('AvatarVideoClient', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('negotiates a recv-only video track and never creates an audio transceiver', async () => {
+  it('negotiates recv-only audio and video without transferring playback ownership early', async () => {
     const transceivers: string[] = []
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ sdp: 'v=0', type: 'answer', pc_id: 'avatar-1' })),
@@ -61,12 +71,15 @@ describe('AvatarVideoClient', () => {
       },
     )
     const video = { muted: false, autoplay: false, playsInline: false, srcObject: null, pause: vi.fn(), play: vi.fn() } as unknown as HTMLVideoElement
-    const client = new AvatarVideoClient('csrf-token', video)
+    const ownership = vi.fn()
+    const client = new AvatarVideoClient('csrf-token', video, () => undefined, () => undefined, ownership)
 
     await client.connect()
     await client.close()
 
-    expect(transceivers).toEqual(['video'])
+    expect(transceivers).toEqual(['audio', 'video'])
+    expect(video.muted).toBe(true)
+    expect(ownership).not.toHaveBeenCalledWith(true)
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/avatar/offer', expect.objectContaining({ method: 'POST' }))
     expect(fetchMock).toHaveBeenLastCalledWith('/api/avatar/session', {
       method: 'DELETE',

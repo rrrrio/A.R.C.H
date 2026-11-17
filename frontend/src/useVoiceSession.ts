@@ -40,9 +40,15 @@ export function useVoiceSession({ csrfToken, onMemoryCandidatesReady, onToolAppr
   const preferredVoiceTransport = useRef<VoiceTransport>('webrtc')
   const inputReadyTimer = useRef<number | null>(null)
   const avatarEnergySink = useRef<(energy: number) => void>(() => undefined)
+  const avatarMediaConnected = useRef(false)
 
   const setAvatarEnergySink = useCallback((sink: (energy: number) => void) => {
     avatarEnergySink.current = sink
+  }, [])
+
+  const setAvatarMediaConnected = useCallback((connected: boolean) => {
+    avatarMediaConnected.current = connected
+    voiceClient.current?.setAssistantAudioMuted?.(connected)
   }, [])
 
   const refreshAudioInputs = useCallback(async () => {
@@ -108,6 +114,7 @@ export function useVoiceSession({ csrfToken, onMemoryCandidatesReady, onToolAppr
     voiceClient.current = client
     try {
       await client.connect()
+      client.setAssistantAudioMuted?.(avatarMediaConnected.current)
       if (voiceClient.current !== client) await client.close().catch(() => undefined)
     } catch {
       if (voiceClient.current === client) {
@@ -148,6 +155,7 @@ export function useVoiceSession({ csrfToken, onMemoryCandidatesReady, onToolAppr
     voiceClient.current = client
     try {
       await client.connect()
+      client.setAssistantAudioMuted?.(avatarMediaConnected.current)
       if (voiceClient.current !== client) {
         await client.close().catch(() => undefined)
         return
@@ -181,6 +189,7 @@ export function useVoiceSession({ csrfToken, onMemoryCandidatesReady, onToolAppr
     refreshAudioInputs,
     setAudioDeviceId,
     setAvatarEnergySink,
+    setAvatarMediaConnected,
     voiceState,
   }
 }

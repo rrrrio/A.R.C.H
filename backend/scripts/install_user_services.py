@@ -11,7 +11,12 @@ from pathlib import Path
 from arch.settings import PROJECT_ROOT, Settings
 
 TEMPLATE_DIRECTORY = PROJECT_ROOT / "deploy" / "systemd"
-UNIT_NAMES = ("arch-backend.service", "arch-avatar.service", "arch-gateway.service")
+UNIT_NAMES = (
+    "arch-backend.service",
+    "arch-avatar.service",
+    "arch-avatar-media.service",
+    "arch-gateway.service",
+)
 RESOURCE_DEFAULTS = {
     "ARCH_BACKEND_CPU_QUOTA": "800%",
     "ARCH_BACKEND_MEMORY_HIGH": "10G",
@@ -24,7 +29,7 @@ RESOURCE_PATTERNS = {
     "ARCH_BACKEND_MEMORY_MAX": re.compile(r"[1-9][0-9]*[KMGT]"),
     "ARCH_BACKEND_TASKS_MAX": re.compile(r"[1-9][0-9]*"),
 }
-AVATAR_BACKENDS = {"musetalk", "preview"}
+AVATAR_BACKENDS = {"musetalk", "preview", "wav2lip"}
 
 
 def _quote(value: str) -> str:
@@ -78,6 +83,7 @@ def render_units(project_root: Path, uv_binary: Path, docker_binary: Path) -> di
         "@UV_BIN@": _quote(str(uv_binary.resolve())),
         "@DOCKER_BIN@": _quote(str(docker_binary.resolve())),
         "@EXECUTION_PATH@": _quote(f"PATH={execution_path}"),
+        "@ENVIRONMENT_FILE@": _escape_unit_path(str(project_root / ".env")),
         "@BACKEND_CPU_QUOTA@": resource_values["ARCH_BACKEND_CPU_QUOTA"],
         "@BACKEND_MEMORY_HIGH@": resource_values["ARCH_BACKEND_MEMORY_HIGH"],
         "@BACKEND_MEMORY_MAX@": resource_values["ARCH_BACKEND_MEMORY_MAX"],
@@ -93,10 +99,25 @@ def render_units(project_root: Path, uv_binary: Path, docker_binary: Path) -> di
         "@AVATAR_MUSETALK_SOURCE_PATH@": _escape_unit_path(
             str(avatar_settings.avatar_musetalk_source)
         ),
+        "@AVATAR_WAV2LIP_SOURCE@": _quote(str(avatar_settings.avatar_wav2lip_source)),
+        "@AVATAR_WAV2LIP_SOURCE_PATH@": _escape_unit_path(
+            str(avatar_settings.avatar_wav2lip_source)
+        ),
+        "@AVATAR_WAV2LIP_MODEL@": _quote(str(avatar_settings.avatar_wav2lip_model)),
+        "@AVATAR_WAV2LIP_MODEL_PATH@": _escape_unit_path(
+            str(avatar_settings.avatar_wav2lip_model)
+        ),
+        "@AVATAR_WAV2LIP_AVATAR@": _quote(str(avatar_settings.avatar_wav2lip_avatar)),
+        "@AVATAR_WAV2LIP_AVATAR_PATH@": _escape_unit_path(
+            str(avatar_settings.avatar_wav2lip_avatar)
+        ),
         "@MUSETALK_PYTHON@": _quote(
             str(project_root / "data" / "runtime" / "musetalk" / "bin" / "python")
         ),
         "@AVATAR_RUNTIME_SOURCE@": _quote(str(project_root / "avatar_runtime" / "src")),
+        "@AVATAR_MEDIA_RUNTIME_SOURCE@": _quote(
+            str(project_root / "avatar_media_runtime" / "src")
+        ),
         "@AVATAR_FPS@": str(avatar_settings.avatar_fps),
         "@AVATAR_WORKER_BACKEND@": avatar_backend,
     }

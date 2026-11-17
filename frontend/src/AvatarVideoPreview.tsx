@@ -3,10 +3,14 @@ import { createPortal } from 'react-dom'
 
 import { AvatarVideoClient, fetchAvatarStatus, stateFromAvatarStatus, type AvatarVideoState, type AvatarVideoStatus } from './avatarVideo'
 
-type AvatarVideoPreviewProps = { csrfToken: string }
+type AvatarVideoPreviewProps = {
+  csrfToken: string
+  onAudioOwnershipChange: (active: boolean) => void
+}
 
 const stateLabels: Record<AvatarVideoState, string> = {
   disabled: '未启用',
+  rebuilding: '重建中，暂不可用',
   unavailable: '服务不可用',
   ready: '可用',
   connecting: '连接中',
@@ -15,7 +19,7 @@ const stateLabels: Record<AvatarVideoState, string> = {
   error: '连接失败',
 }
 
-export function AvatarVideoPreview({ csrfToken }: AvatarVideoPreviewProps) {
+export function AvatarVideoPreview({ csrfToken, onAudioOwnershipChange }: AvatarVideoPreviewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const clientRef = useRef<AvatarVideoClient | null>(null)
   const [status, setStatus] = useState<AvatarVideoStatus | null>(null)
@@ -23,6 +27,7 @@ export function AvatarVideoPreview({ csrfToken }: AvatarVideoPreviewProps) {
   const [busy, setBusy] = useState(false)
   const [active, setActive] = useState(false)
   const [videoVisible, setVideoVisible] = useState(false)
+  const videoLayerHost = document.querySelector<HTMLElement>('.workspace-shell')
 
   useEffect(() => {
     let active = true
@@ -62,6 +67,7 @@ export function AvatarVideoPreview({ csrfToken }: AvatarVideoPreviewProps) {
         videoRef.current,
         setState,
         () => setVideoVisible(true),
+        onAudioOwnershipChange,
       )
       clientRef.current = client
       setActive(true)
@@ -84,7 +90,7 @@ export function AvatarVideoPreview({ csrfToken }: AvatarVideoPreviewProps) {
 
   const videoLayer = (
     <div className={`avatar-video-layer${videoVisible ? ' avatar-video-layer--live' : ''}`} aria-hidden="true">
-      <video ref={videoRef} muted playsInline autoPlay />
+      <video ref={videoRef} playsInline autoPlay />
     </div>
   )
 
@@ -96,13 +102,13 @@ export function AvatarVideoPreview({ csrfToken }: AvatarVideoPreviewProps) {
             <p className="eyebrow">真人视频</p>
             <h2 id="avatar-video-title">{status?.model ?? 'MuseTalk 1.5'}</h2>
           </div>
-          <button type="button" className="secondary-button" onClick={() => void toggle()} disabled={busy || (!status?.enabled && !active) || state === 'unavailable'}>
+          <button type="button" className="secondary-button" onClick={() => void toggle()} disabled={busy || (!status?.enabled && !active) || state === 'rebuilding' || state === 'unavailable'}>
             {busy ? '正在连接' : active ? '关闭视频' : '启用视频'}
           </button>
         </div>
         <p className="avatar-video-status" data-avatar-state={state}>{stateLabels[state]}{status?.detail ? `：${status.detail}` : ''}</p>
       </section>
-      {createPortal(videoLayer, document.body)}
+      {videoLayerHost ? createPortal(videoLayer, videoLayerHost) : null}
     </>
   )
 }

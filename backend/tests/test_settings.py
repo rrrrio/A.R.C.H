@@ -52,6 +52,18 @@ def test_settings_default_to_disabled_loopback_search_and_reject_remote_endpoint
         Settings(searxng_endpoint="http://192.168.10.20:8080")
 
 
+def test_settings_keep_avatar_media_tickets_on_a_strict_loopback_boundary() -> None:
+    """The browser-facing backend must never proxy its media ticket to a LAN host."""
+    settings = Settings(avatar_media_ticket_secret="a" * 16)
+
+    assert settings.avatar_media_runtime_url == "http://127.0.0.1:8101"
+    assert settings.avatar_media_ticket_secret is not None
+    with pytest.raises(ValidationError, match="ARCH_AVATAR_MEDIA_RUNTIME_URL"):
+        Settings(avatar_media_runtime_url="http://localhost:8101")
+    with pytest.raises(ValidationError, match="ARCH_AVATAR_MEDIA_TICKET_SECRET"):
+        Settings(avatar_media_ticket_secret="short")
+
+
 def test_settings_prefer_arch_environment_names_and_accept_legacy_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

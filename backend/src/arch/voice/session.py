@@ -43,6 +43,7 @@ class LocalVoiceSession:
         voice_profile_store: VoiceProfileStore | None = None,
         data_dir: Path | None = None,
         avatar_observer: AvatarAdapter | None = None,
+        avatar_observer_factory: Callable[[str], AvatarAdapter] | None = None,
     ) -> None:
         self._paths = paths
         self._memory_store = memory_store
@@ -52,6 +53,7 @@ class LocalVoiceSession:
         self._voice_profile_store = voice_profile_store
         self._data_dir = data_dir
         self._avatar_observer = avatar_observer
+        self._avatar_observer_factory = avatar_observer_factory
         self._clone_runtime: QwenCloneRuntime | None = None
         self._retriever: Retriever | None = None
         self._llama = LlamaCppServer(paths)
@@ -204,6 +206,12 @@ class LocalVoiceSession:
         """Attach or detach the optional video observer before the next pipeline starts."""
         self._avatar_observer = observer
 
+    def set_avatar_observer_factory(
+        self, factory: Callable[[str], AvatarAdapter] | None
+    ) -> None:
+        """Create a session-bound media observer only for an authenticated voice peer."""
+        self._avatar_observer_factory = factory
+
     def _create_webrtc_worker(
         self,
         connection: SmallWebRTCConnection,
@@ -231,6 +239,8 @@ class LocalVoiceSession:
             clone_cancel,
         )
         observer = self._avatar_observer
+        if session_id is not None and self._avatar_observer_factory is not None:
+            observer = self._avatar_observer_factory(session_id)
         if observer is None and session_id is None:
             return create_pipeline_worker(*arguments)
         if observer is None:

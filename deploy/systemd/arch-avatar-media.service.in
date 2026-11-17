@@ -1,0 +1,28 @@
+[Unit]
+Description=A.R.C.H. loopback avatar media runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@WORKING_DIRECTORY@
+Environment=@EXECUTION_PATH@
+EnvironmentFile=-@ENVIRONMENT_FILE@
+Environment=PYTHONPATH=@AVATAR_MEDIA_RUNTIME_SOURCE@
+ExecStart=@MUSETALK_PYTHON@ -m avatar_media_runtime
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+MemoryHigh=8G
+MemoryMax=12G
+TasksMax=512
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=default.target

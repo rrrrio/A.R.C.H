@@ -20,6 +20,12 @@ from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
+# The JPEG bridge cannot provide a shared audio/video clock.  Keep its code in
+# place for the migration, but make the public feature unavailable until the
+# replacement runtime owns both tracks.
+_LEGACY_VIDEO_REBUILDING = True
+_REBUILDING_DETAIL = "Video avatar is being rebuilt. Ordinary voice remains available."
+
 # Keep Base64 JSON audio records well below asyncio's default 64 KiB line limit.
 _MAX_IPC_PCM_CHUNK_BYTES = 24_000
 _IPC_STREAM_LIMIT = 256 * 1024
@@ -289,12 +295,26 @@ class AvatarVideoSignalingService:
         self._pc: RTCPeerConnection | None = None
         self._owner_session_id: str | None = None
         self._owner_pc_id = 0
-        self._state = "disabled" if not enabled else "unavailable"
-        self._detail: str | None = None
+        self._state = (
+            "rebuilding"
+            if _LEGACY_VIDEO_REBUILDING
+            else "disabled"
+            if not enabled
+            else "unavailable"
+        )
+        self._detail: str | None = _REBUILDING_DETAIL if _LEGACY_VIDEO_REBUILDING else None
         self._lock = asyncio.Lock()
 
     def status(self) -> AvatarVideoStatus:
         """Return state without exposing the worker socket or filesystem path."""
+        if _LEGACY_VIDEO_REBUILDING:
+            return AvatarVideoStatus(
+                enabled=False,
+                state="rebuilding",
+                model=self._model,
+                source_video=self._source_video.name,
+                detail=_REBUILDING_DETAIL,
+            )
         state = self._state
         detail = self._detail
         if self._enabled and state in {"ready", "unavailable"}:
@@ -311,6 +331,10 @@ class AvatarVideoSignalingService:
             source_video=self._source_video.name,
             detail=detail,
         )
+
+    def is_active(self) -> bool:
+        """Report whether this session has an owned video track to synchronize with."""
+        return self._worker is not None and self._track is not None
 
     async def begin(self, utterance_id: str, sample_rate: int, emotion: str) -> None:
         """Forward an accepted TTS utterance to the active renderer, if connected."""
@@ -339,6 +363,11 @@ class AvatarVideoSignalingService:
 
     async def offer(self, session_id: str, sdp: str, offer_type: str) -> dict[str, str]:
         """Create the browser-facing video peer after authenticating its owner."""
+        if _LEGACY_VIDEO_REBUILDING:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=_REBUILDING_DETAIL,
+            )
         if not self._enabled:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -418,8 +447,14 @@ class AvatarVideoSignalingService:
         self._pc = None
         self._worker = None
         self._owner_session_id = None
-        self._state = "disabled" if not self._enabled else "ready"
-        self._detail = None
+        self._state = (
+            "rebuilding"
+            if _LEGACY_VIDEO_REBUILDING
+            else "disabled"
+            if not self._enabled
+            else "ready"
+        )
+        self._detail = _REBUILDING_DETAIL if _LEGACY_VIDEO_REBUILDING else None
 
     async def _watch_connection(self, pc: RTCPeerConnection) -> None:
         if pc.connectionState in {"failed", "closed", "disconnected"}:

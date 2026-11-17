@@ -86,6 +86,49 @@ def test_rendered_avatar_unit_uses_application_avatar_settings(
     assert f"ReadWritePaths={root / 'data/runtime/custom-avatar'}" in avatar
 
 
+def test_rendered_avatar_unit_allows_wav2lip_with_read_only_assets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The supervised Wav2Lip process receives its three prepared assets, not Home access."""
+    module = _load_script()
+    monkeypatch.setenv("ARCH_AVATAR_WORKER_BACKEND", "wav2lip")
+    monkeypatch.setenv("ARCH_AVATAR_WAV2LIP_SOURCE", "data/runtime/livetalking/source")
+    monkeypatch.setenv("ARCH_AVATAR_WAV2LIP_MODEL", "data/runtime/livetalking/wav2lip.pth")
+    monkeypatch.setenv(
+        "ARCH_AVATAR_WAV2LIP_AVATAR", "data/runtime/livetalking/avatars/operator"
+    )
+
+    avatar = module.render_units(
+        module.PROJECT_ROOT,
+        module.PROJECT_ROOT / "uv",
+        module.PROJECT_ROOT / "docker",
+    )["arch-avatar.service"]
+
+    root = module.PROJECT_ROOT
+    assert "--backend wav2lip" in avatar
+    assert f'--wav2lip-source "{root / "data/runtime/livetalking/source"}"' in avatar
+    assert f'--wav2lip-model "{root / "data/runtime/livetalking/wav2lip.pth"}"' in avatar
+    assert f'--wav2lip-avatar "{root / "data/runtime/livetalking/avatars/operator"}"' in avatar
+    assert f"ReadOnlyPaths={root / 'data/avatars/idle.mp4'}" in avatar
+    assert str(root / "data/runtime/livetalking/source") in avatar
+
+
+def test_rendered_avatar_media_unit_reads_the_local_environment_file() -> None:
+    """The isolated runtime gets its shared ticket secret only from ignored `.env`."""
+    module = _load_script()
+    media = module.render_units(
+        module.PROJECT_ROOT,
+        module.PROJECT_ROOT / "uv",
+        module.PROJECT_ROOT / "docker",
+    )["arch-avatar-media.service"]
+
+    assert "-m avatar_media_runtime" in media
+    assert str(module.PROJECT_ROOT / "data/runtime/musetalk/bin/python") in media
+    assert str(module.PROJECT_ROOT / "avatar_media_runtime/src") in media
+    assert f"EnvironmentFile=-{module.PROJECT_ROOT / '.env'}" in media
+    assert "--host" not in media
+
+
 def test_rendering_rejects_unsafe_resource_overrides(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

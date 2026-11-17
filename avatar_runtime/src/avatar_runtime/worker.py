@@ -56,10 +56,14 @@ class PreviewRenderer:
         self._fps = fps
         self._frames: list[bytes] = []
         self._index = 0
+        self._source_fps = float(fps)
         self._load_source()
 
     def _load_source(self) -> None:
         with av.open(self._source) as container:
+            stream = container.streams.video[0]
+            if stream.average_rate is not None:
+                self._source_fps = float(stream.average_rate)
             for frame in container.decode(video=0):
                 output = av.VideoFrame.from_ndarray(
                     frame.to_ndarray(format="bgr24"), format="bgr24"
@@ -74,10 +78,11 @@ class PreviewRenderer:
             raise RuntimeError(f"Avatar source video has no frames: {self._source}")
 
     async def frames(self) -> AsyncIterator[bytes]:
-        """Yield a bounded-rate preview frame sequence."""
+        """Yield source frames at the output cadence without changing source motion speed."""
         delay = 1 / self._fps
         while True:
-            yield self._frames[self._index % len(self._frames)]
+            source_index = int(self._index * self._source_fps / self._fps) % len(self._frames)
+            yield self._frames[source_index]
             self._index += 1
             await asyncio.sleep(delay)
 
@@ -275,6 +280,65 @@ class MuseTalkRenderer:
         self._frames.put_nowait(error)
 
 
+class Wav2LipRenderer(MuseTalkRenderer):
+    """Render only a completed utterance, matching the reference Wav2Lip cadence."""
+
+    def __init__(
+        self,
+        source: Path,
+        fps: int,
+        source_root: Path,
+        model_path: Path,
+        avatar_path: Path,
+        engine: CompletedUtteranceEngine | None = None,
+    ) -> None:
+        # Wav2Lip uses a prepared avatar directory rather than MuseTalk's
+        # source-video-derived cache.  Keep the original source loop alive for
+        # silence and model latency, as LiveTalking does for idle audio.
+        self._idle = PreviewRenderer(source, fps)
+        if engine is None:
+            from avatar_runtime.wav2lip import Wav2LipEngine
+
+            engine = Wav2LipEngine(source_root, model_path, avatar_path, fps)
+        self._fps = fps
+        self._engine = engine
+        self._buffers: dict[str, _UtteranceBuffer] = {}
+        self._generation = 0
+        self._frames: asyncio.Queue[bytes | Exception] = asyncio.Queue(maxsize=max(fps * 2, 8))
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    async def frames(self) -> AsyncIterator[bytes]:
+        """Prefer completed lip-sync frames while continuously showing source idle video."""
+        idle_frames = self._idle.frames()
+        while True:
+            try:
+                payload = self._frames.get_nowait()
+            except asyncio.QueueEmpty:
+                payload = await anext(idle_frames)
+            else:
+                # The idle generator provides this cadence itself; generated
+                # frames need an equivalent delay before the next queue read.
+                yield payload
+                await asyncio.sleep(1 / self._fps)
+                continue
+            yield payload
+
+    async def push_audio(self, utterance_id: str, pcm: bytes, timestamp_ns: int) -> None:
+        """Buffer accepted PCM until TTS finishes; do not create streaming batches."""
+        del timestamp_ns
+        buffer = self._buffers.get(utterance_id)
+        if buffer is not None:
+            buffer.pcm.extend(pcm)
+
+    async def end(self, utterance_id: str) -> None:
+        """Schedule the completed utterance without blocking cancellation messages."""
+        buffer = self._buffers.get(utterance_id)
+        if buffer is None or not buffer.pcm:
+            return
+        buffer.ended = True
+        await self._schedule(utterance_id, flush=True)
+
+
 class AvatarWorkerConnection:
     """Serve one A.R.C.H. bridge connection and stream renderer frames."""
 
@@ -284,6 +348,7 @@ class AvatarWorkerConnection:
         self._write_lock = asyncio.Lock()
         self._render_task: asyncio.Task[None] | None = None
         self._closed = False
+        self._peer_disconnected = False
         self._active_utterance_id: str | None = None
         self._resampler: StreamingPcmResampler | None = None
 
@@ -391,6 +456,8 @@ class AvatarWorkerConnection:
                         "jpeg_b64": base64.b64encode(payload).decode("ascii"),
                     }
                 )
+                if self._peer_disconnected:
+                    return
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -398,11 +465,15 @@ class AvatarWorkerConnection:
             await self._send({"type": "error", "detail": str(error)})
 
     async def _send(self, message: dict[str, object]) -> None:
-        if self._closed:
+        if self._closed or self._peer_disconnected:
             return
         async with self._write_lock:
-            self._writer.write((json.dumps(message, separators=(",", ":")) + "\n").encode())
-            await self._writer.drain()
+            try:
+                self._writer.write((json.dumps(message, separators=(",", ":")) + "\n").encode())
+                await self._writer.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                self._peer_disconnected = True
+                logger.debug("Avatar worker peer reset while sending a frame.")
 
     async def close(self) -> None:
         if self._closed:
@@ -413,7 +484,11 @@ class AvatarWorkerConnection:
             await asyncio.gather(self._render_task, return_exceptions=True)
         await self._renderer.close()
         self._writer.close()
-        await self._writer.wait_closed()
+        try:
+            await self._writer.wait_closed()
+        except (BrokenPipeError, ConnectionResetError):
+            # The peer may close its Unix socket before it reads the final frame.
+            logger.debug("Avatar worker peer reset while closing its socket.")
 
 
 async def serve(
@@ -424,6 +499,9 @@ async def serve(
     model_root: Path | None = None,
     cache_dir: Path | None = None,
     source_root: Path | None = None,
+    wav2lip_source: Path | None = None,
+    wav2lip_model: Path | None = None,
+    wav2lip_avatar: Path | None = None,
 ) -> None:
     """Bind the private IPC socket and serve one single-user renderer session."""
     socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -431,12 +509,20 @@ async def serve(
         socket_path.unlink()
     if backend == "preview":
         renderer: Renderer = PreviewRenderer(source, fps)
-    else:
+    elif backend == "musetalk":
         if model_root is None or cache_dir is None or source_root is None:
             raise RuntimeError(
                 "MuseTalk backend requires --model-root, --cache-dir, and --musetalk-source."
             )
         renderer = MuseTalkRenderer(source, fps, model_root, cache_dir, source_root)
+    elif backend == "wav2lip":
+        if wav2lip_source is None or wav2lip_model is None or wav2lip_avatar is None:
+            raise RuntimeError(
+                "Wav2Lip backend requires --wav2lip-source, --wav2lip-model, and --wav2lip-avatar."
+            )
+        renderer = Wav2LipRenderer(source, fps, wav2lip_source, wav2lip_model, wav2lip_avatar)
+    else:
+        raise RuntimeError(f"Unsupported avatar backend: {backend}")
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         connection = AvatarWorkerConnection(writer, renderer)
@@ -455,10 +541,13 @@ def main() -> None:
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--fps", type=int, default=25)
-    parser.add_argument("--backend", choices=("musetalk", "preview"), default="musetalk")
+    parser.add_argument("--backend", choices=("musetalk", "preview", "wav2lip"), default="musetalk")
     parser.add_argument("--model-root", type=Path)
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--musetalk-source", type=Path)
+    parser.add_argument("--wav2lip-source", type=Path)
+    parser.add_argument("--wav2lip-model", type=Path)
+    parser.add_argument("--wav2lip-avatar", type=Path)
     arguments = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     asyncio.run(
@@ -470,6 +559,9 @@ def main() -> None:
             arguments.model_root,
             arguments.cache_dir,
             arguments.musetalk_source,
+            arguments.wav2lip_source,
+            arguments.wav2lip_model,
+            arguments.wav2lip_avatar,
         )
     )
 

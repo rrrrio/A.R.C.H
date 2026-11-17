@@ -27,6 +27,7 @@ export interface VoiceConnection {
   readonly transport: VoiceTransport
   connect(): Promise<void>
   close(): Promise<void>
+  setAssistantAudioMuted?(muted: boolean): void
 }
 
 export class VoiceClient {
@@ -50,6 +51,7 @@ export class VoiceClient {
   private outputEnergyPolling = false
   private outputEnergySuppressed = false
   private remotePlaybackInterrupted = false
+  private assistantAudioMuted = false
 
   constructor(
     csrfToken: string,
@@ -152,6 +154,11 @@ export class VoiceClient {
     this.serverSessionMayExist = false
   }
 
+  setAssistantAudioMuted(muted: boolean) {
+    this.assistantAudioMuted = muted
+    this.audio.muted = muted
+  }
+
   private async requestOffer(offer: RTCSessionDescriptionInit): Promise<OfferResponse> {
     // A network failure can hide a server-created peer identifier from this client.
     this.serverSessionMayExist = true
@@ -188,7 +195,7 @@ export class VoiceClient {
   private resumeRemotePlayback() {
     if (this.remotePlaybackInterrupted || !this.remoteAudioStream) return
     this.audio.srcObject = this.remoteAudioStream
-    this.audio.muted = false
+    this.audio.muted = this.assistantAudioMuted
     void this.audio.play().catch(() => undefined)
   }
 
@@ -249,6 +256,7 @@ export class WebSocketVoiceClient implements VoiceConnection {
   // After the user barges in, PCM is admitted only once the visible assistant
   // transcript for the replacement response has begun.
   private awaitingAssistantTranscript = false
+  private assistantAudioMuted = false
 
   constructor(
     csrfToken: string,
@@ -347,6 +355,11 @@ export class WebSocketVoiceClient implements VoiceConnection {
     this.onOutputEnergy(0)
   }
 
+  setAssistantAudioMuted(muted: boolean) {
+    this.assistantAudioMuted = muted
+    this.setGainMuted()
+  }
+
   private handleMessage(message: MessageEvent) {
     if (typeof message.data === 'string') {
       try {
@@ -411,9 +424,15 @@ export class WebSocketVoiceClient implements VoiceConnection {
     if (!this.context || !this.gain) return
     this.gain.disconnect()
     this.gain = this.context.createGain()
+    this.setGainMuted()
     this.gain.connect(this.context.destination)
     this.nextPlaybackTime = this.context.currentTime
     this.onOutputEnergy(0)
+  }
+
+  private setGainMuted() {
+    const gain = this.gain as (GainNode & { gain?: AudioParam }) | null
+    if (gain?.gain) gain.gain.value = this.assistantAudioMuted ? 0 : 1
   }
 }
 

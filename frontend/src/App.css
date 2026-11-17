@@ -323,10 +323,11 @@ button:disabled {
 
 .avatar-video-layer video {
   position: absolute;
-  top: 0;
+  top: auto;
+  bottom: 0;
   right: -4%;
   width: auto;
-  height: 100%;
+  height: min(100%, 768px);
   max-width: none;
   object-fit: cover;
   object-position: 78% 50%;
@@ -712,7 +713,7 @@ button:focus-visible { outline-color: var(--teal); }
   pointer-events: none;
 }
 .topbar { border-bottom: 0; background: rgba(3, 6, 9, .42); backdrop-filter: blur(10px); }
-.app-workspace { grid-template-columns: 64px minmax(0, 1fr); max-width: none; margin: 0; transition: grid-template-columns 240ms ease; }
+.app-workspace { position: relative; z-index: 1; grid-template-columns: 64px minmax(0, 1fr); max-width: none; margin: 0; transition: grid-template-columns 240ms ease; }
 .workspace-navigation { position: sticky; top: 58px; z-index: 3; height: calc(100vh - 58px); min-height: 0; overflow: hidden; border-right: 0; padding: 22px 10px; background: rgba(5, 12, 18, .6); backdrop-filter: blur(12px); transition: width 240ms ease, padding 240ms ease; }
 .workspace-navigation:hover, .workspace-navigation:focus-within { width: 228px; padding: 22px 14px; }
 .app-workspace:has(.workspace-navigation:hover), .app-workspace:has(.workspace-navigation:focus-within) { grid-template-columns: 228px minmax(0, 1fr); }
