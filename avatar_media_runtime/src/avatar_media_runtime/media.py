@@ -97,7 +97,13 @@ class SessionMedia:
         await self.audio.publish(session_id, utterance_id, pcm_24khz)
         await self.video.publish(session_id, utterance_id, frames)
 
-    def cancel(self) -> None:
+    def cancel(self, session_id: str, utterance_id: str) -> None:
+        """Discard one interrupted turn without renegotiating the peer tracks."""
+        self.audio.cancel(session_id, utterance_id)
+        self.video.cancel(session_id, utterance_id)
+
+    def stop(self) -> None:
+        """Permanently end both tracks when their owning peer is released."""
         self.audio.stop()
         self.video.stop()
 
@@ -108,6 +114,7 @@ class _QueuedAudioTrack(_AudioTrack):
         self._queue: asyncio.Queue[tuple[str, str, bytes] | None] = asyncio.Queue()
         self._pts = 0
         self._reported_utterances: set[tuple[str, str]] = set()
+        self._cancelled_utterances: set[tuple[str, str]] = set()
         self._started_at: float | None = None
 
     async def publish(self, session_id: str, utterance_id: str, pcm: bytes) -> None:
@@ -118,21 +125,30 @@ class _QueuedAudioTrack(_AudioTrack):
     async def recv(self) -> av.AudioFrame:
         if self.readyState != "live":
             raise MediaStreamError
-        item = await self._queue.get()
-        if item is None or self.readyState != "live":
-            raise MediaStreamError
-        session_id, utterance_id, data = item
-        await self._pace(self._pts / _AUDIO_RATE)
-        if (session_id, utterance_id) not in self._reported_utterances:
-            self._reported_utterances.add((session_id, utterance_id))
-            _log_timing(session_id, utterance_id, "first-audio-packet")
-        frame = av.AudioFrame(format="s16", layout="mono", samples=len(data) // 2)
-        frame.planes[0].update(data)
-        frame.pts = self._pts
-        frame.sample_rate = _AUDIO_RATE
-        frame.time_base = Fraction(1, _AUDIO_RATE)
-        self._pts += frame.samples
-        return frame
+        while self.readyState == "live":
+            item = await self._queue.get()
+            if item is None or self.readyState != "live":
+                raise MediaStreamError
+            session_id, utterance_id, data = item
+            if (session_id, utterance_id) in self._cancelled_utterances:
+                continue
+            await self._pace(self._pts / _AUDIO_RATE)
+            if (session_id, utterance_id) in self._cancelled_utterances:
+                continue
+            if (session_id, utterance_id) not in self._reported_utterances:
+                self._reported_utterances.add((session_id, utterance_id))
+                _log_timing(session_id, utterance_id, "first-audio-packet")
+            frame = av.AudioFrame(format="s16", layout="mono", samples=len(data) // 2)
+            frame.planes[0].update(data)
+            frame.pts = self._pts
+            frame.sample_rate = _AUDIO_RATE
+            frame.time_base = Fraction(1, _AUDIO_RATE)
+            self._pts += frame.samples
+            return frame
+        raise MediaStreamError
+
+    def cancel(self, session_id: str, utterance_id: str) -> None:
+        self._cancelled_utterances.add((session_id, utterance_id))
 
     def stop(self) -> None:
         super().stop()
@@ -153,6 +169,7 @@ class _QueuedVideoTrack(_VideoTrack):
         self._queue: asyncio.Queue[tuple[str, str, av.VideoFrame] | None] = asyncio.Queue()
         self._pts = 0
         self._reported_utterances: set[tuple[str, str]] = set()
+        self._cancelled_utterances: set[tuple[str, str]] = set()
         self._started_at: float | None = None
 
     async def publish(
@@ -164,18 +181,27 @@ class _QueuedVideoTrack(_VideoTrack):
     async def recv(self) -> av.VideoFrame:
         if self.readyState != "live":
             raise MediaStreamError
-        item = await self._queue.get()
-        if item is None or self.readyState != "live":
-            raise MediaStreamError
-        session_id, utterance_id, frame = item
-        await self._pace(self._pts / _VIDEO_FPS)
-        if (session_id, utterance_id) not in self._reported_utterances:
-            self._reported_utterances.add((session_id, utterance_id))
-            _log_timing(session_id, utterance_id, "first-video-packet")
-        frame.pts = self._pts
-        frame.time_base = Fraction(1, _VIDEO_FPS)
-        self._pts += 1
-        return frame
+        while self.readyState == "live":
+            item = await self._queue.get()
+            if item is None or self.readyState != "live":
+                raise MediaStreamError
+            session_id, utterance_id, frame = item
+            if (session_id, utterance_id) in self._cancelled_utterances:
+                continue
+            await self._pace(self._pts / _VIDEO_FPS)
+            if (session_id, utterance_id) in self._cancelled_utterances:
+                continue
+            if (session_id, utterance_id) not in self._reported_utterances:
+                self._reported_utterances.add((session_id, utterance_id))
+                _log_timing(session_id, utterance_id, "first-video-packet")
+            frame.pts = self._pts
+            frame.time_base = Fraction(1, _VIDEO_FPS)
+            self._pts += 1
+            return frame
+        raise MediaStreamError
+
+    def cancel(self, session_id: str, utterance_id: str) -> None:
+        self._cancelled_utterances.add((session_id, utterance_id))
 
     def stop(self) -> None:
         super().stop()

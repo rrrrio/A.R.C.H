@@ -11,7 +11,6 @@ from datetime import UTC, datetime, timedelta
 import av
 import pytest
 from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.mediastreams import MediaStreamError
 
 from avatar_media_runtime.contracts import PreparedMedia
 from avatar_media_runtime.media import SessionMedia
@@ -157,7 +156,7 @@ def test_recvonly_peer_receives_both_tracks_after_submit() -> None:
     assert max(arrivals) - min(arrivals) <= 0.1
 
 
-def test_cancel_stops_both_session_tracks_and_fences_backend() -> None:
+def test_cancel_fences_the_turn_without_ending_session_tracks() -> None:
     class Backend:
         def __init__(self) -> None:
             self.cancelled: list[str] = []
@@ -175,17 +174,45 @@ def test_cancel_stops_both_session_tracks_and_fences_backend() -> None:
 
     async def exercise() -> None:
         await runtime.cancel("session", "turn")
-        with pytest.raises(MediaStreamError):
-            await media.audio.recv()
-        with pytest.raises(MediaStreamError):
-            await media.video.recv()
+        assert media.audio.readyState == media.video.readyState == "live"
         await runtime.close_session("session")
 
     asyncio.run(exercise())
     assert backend.cancelled == [runtime._backend_utterance_id("session", "turn")]
 
 
-def test_cancel_after_first_packets_stops_playing_tracks() -> None:
+def test_cancelled_turn_is_discarded_without_ending_the_next_turns_tracks() -> None:
+    """An interruption must not make the negotiated peer permanently silent."""
+
+    class Backend:
+        async def prepare(self, pcm: bytes, utterance_id: str) -> PreparedMedia:
+            colour = pcm[0]
+            frame = av.VideoFrame(8, 8, "rgb24")
+            frame.planes[0].update(bytes([colour]) * frame.planes[0].buffer_size)
+            return PreparedMedia(utterance_id, pcm, [frame], 25)
+
+        async def cancel(self, utterance_id: str) -> None:
+            return
+
+    runtime = AvatarMediaRuntime(Backend())
+    media = SessionMedia()
+    runtime._sessions["session"] = (RTCPeerConnection(), media)
+
+    async def exercise() -> tuple[object, object]:
+        await runtime.submit("session", "first", b"\x01\x00" * 480)
+        await runtime.cancel("session", "first")
+        await runtime.submit("session", "next", b"\x02\x00" * 480)
+        audio = await asyncio.wait_for(media.audio.recv(), timeout=0.1)
+        video = await asyncio.wait_for(media.video.recv(), timeout=0.1)
+        await runtime.close_session("session")
+        return audio, video
+
+    audio, video = asyncio.run(exercise())
+    assert bytes(audio.planes[0])[:960] == b"\x02\x00" * 480
+    assert int(video.to_ndarray(format="rgb24")[0, 0, 0]) == 2
+
+
+def test_cancel_after_first_packets_discards_old_queue_before_the_next_turn() -> None:
     """An interruption after media starts cannot leave queued packets playable."""
     class Backend:
         def __init__(self) -> None:
@@ -212,10 +239,11 @@ def test_cancel_after_first_packets_stops_playing_tracks() -> None:
         await media.audio.recv()
         await media.video.recv()
         await runtime.cancel("session", "turn")
-        with pytest.raises(MediaStreamError):
-            await media.audio.recv()
-        with pytest.raises(MediaStreamError):
-            await media.video.recv()
+        await runtime.submit("session", "next", b"\x02\x00" * 480)
+        audio = await media.audio.recv()
+        video = await media.video.recv()
+        assert bytes(audio.planes[0])[:960] == b"\x02\x00" * 480
+        assert video.pts == 1
         await runtime.close_session("session")
 
     asyncio.run(exercise())
@@ -370,10 +398,9 @@ def test_cancel_during_preparation_never_publishes_late_media() -> None:
         backend.release.set()
         with pytest.raises(MediaPreparationError):
             await submission
-        with pytest.raises(MediaStreamError):
-            await media.audio.recv()
-        with pytest.raises(MediaStreamError):
-            await media.video.recv()
+        await runtime.submit("session", "next", b"\x02\x00" * 480)
+        await media.audio.recv()
+        await media.video.recv()
         await runtime.close_session("session")
 
     asyncio.run(exercise())

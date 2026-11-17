@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from avatar_media_runtime.runtime import Answer, AvatarMediaRuntime
+from avatar_media_runtime.runtime import Answer, AvatarMediaRuntime, MediaSessionNotFoundError
 from avatar_media_runtime.server import create_runtime_app
 from avatar_media_runtime.tickets import MediaTicketSigner
 
@@ -112,6 +112,24 @@ def test_runtime_submits_and_cancels_complete_pcm_only_for_a_session() -> None:
     assert cancelled.status_code == 204
     assert runtime.submitted == ("session", "answer", b"\x00\x01")
     assert runtime.cancelled == ("session", "answer")
+
+
+def test_runtime_reports_a_closed_session_submission_as_recoverable_unavailable() -> None:
+    class ClosedSessionRuntime(Runtime):
+        async def submit(self, session_id: str, utterance_id: str, pcm_24khz: bytes) -> None:
+            del session_id, utterance_id, pcm_24khz
+            raise MediaSessionNotFoundError("Avatar media session does not exist.")
+
+    app = create_runtime_app(ClosedSessionRuntime(), MediaTicketSigner(b"a" * 32))  # type: ignore[arg-type]
+    payload = {"utterance_id": "answer", "pcm_24khz_base64": b64encode(b"\x00\x01").decode()}
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/utterance", headers={"X-Avatar-Session-Id": "session"}, json=payload
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Avatar media unavailable."}
 
 
 def test_runtime_rejects_a_second_valid_ticket_for_the_same_peer() -> None:

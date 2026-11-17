@@ -8,7 +8,11 @@ import secrets
 from fastapi import FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from avatar_media_runtime.runtime import AvatarMediaRuntime, MediaPreparationError
+from avatar_media_runtime.runtime import (
+    AvatarMediaRuntime,
+    MediaPreparationError,
+    MediaSessionNotFoundError,
+)
 from avatar_media_runtime.tickets import MediaTicketSigner, TicketError
 
 
@@ -98,7 +102,7 @@ def create_runtime_app(runtime: AvatarMediaRuntime, signer: MediaTicketSigner) -
         try:
             pcm = base64.b64decode(utterance.pcm_24khz_base64, validate=True)
             await runtime.submit(session_id, utterance.utterance_id, pcm)
-        except (ValueError, MediaPreparationError) as error:
+        except (ValueError, MediaPreparationError, MediaSessionNotFoundError) as error:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Avatar media unavailable.",

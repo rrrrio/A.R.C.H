@@ -34,6 +34,10 @@ class MediaPreparationError(RuntimeError):
         self.utterance_id = utterance_id
 
 
+class MediaSessionNotFoundError(RuntimeError):
+    """A completed turn arrived after its browser released the runtime session."""
+
+
 class AvatarMediaRuntime:
     """Own one audio/video peer per authenticated browser session."""
 
@@ -94,7 +98,7 @@ class AvatarMediaRuntime:
                 raise MediaPreparationError(utterance_id)
             pair = self._sessions.get(session_id)
             if pair is None:
-                raise RuntimeError("Avatar media session does not exist.")
+                raise MediaSessionNotFoundError("Avatar media session does not exist.")
             await pair[1].publish(
                 session_id,
                 utterance_id,
@@ -104,12 +108,12 @@ class AvatarMediaRuntime:
             )
 
     async def cancel(self, session_id: str, utterance_id: str) -> None:
-        """Stop both media tracks for a session's prepared turn."""
+        """Fence one prepared turn while preserving the negotiated peer tracks."""
         async with self._lock:
             self._cancelled_utterances.add((session_id, utterance_id))
             pair = self._sessions.get(session_id)
             if pair is not None:
-                pair[1].cancel()
+                pair[1].cancel(session_id, utterance_id)
         if self._backend is not None:
             await self._backend.cancel(self._backend_utterance_id(session_id, utterance_id))
         _log_timing(session_id, utterance_id, "cancellation-complete")
@@ -123,7 +127,7 @@ class AvatarMediaRuntime:
                 key for key in self._cancelled_utterances if key[0] != session_id
             }
         if pair is not None:
-            pair[1].cancel()
+            pair[1].stop()
             await pair[0].close()
 
     def _handle_peer_state(self, session_id: str, peer: RTCPeerConnection) -> None:
@@ -170,7 +174,7 @@ class AvatarMediaRuntime:
             self._cancelled_utterances = {
                 key for key in self._cancelled_utterances if key[0] != session_id
             }
-        pair[1].cancel()
+        pair[1].stop()
         if peer.connectionState != "closed":
             await peer.close()
 

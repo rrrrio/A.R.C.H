@@ -61,7 +61,7 @@ def test_session_media_paces_audio_and_video_after_their_shared_zero_start() -> 
         await media.video.recv()
         await media.video.recv()
         video_gap = time.monotonic() - video_start
-        media.cancel()
+        media.stop()
         return audio_gap, video_gap
 
     audio_gap, video_gap = asyncio.run(receive())
@@ -69,17 +69,22 @@ def test_session_media_paces_audio_and_video_after_their_shared_zero_start() -> 
     assert video_gap >= 0.035
 
 
-def test_session_media_cancel_wakes_waiting_tracks() -> None:
+def test_session_media_cancel_discards_the_interrupted_turn_and_keeps_tracks_live() -> None:
     media = SessionMedia()
 
     async def receive() -> None:
-        audio = asyncio.create_task(media.audio.recv())
-        video = asyncio.create_task(media.video.recv())
-        await asyncio.sleep(0)
-        media.cancel()
-        with pytest.raises(MediaStreamError):
-            await asyncio.wait_for(audio, timeout=0.1)
-        with pytest.raises(MediaStreamError):
-            await asyncio.wait_for(video, timeout=0.1)
+        await media.publish(
+            "session", "interrupted", b"\x01\x00" * 480, [av.VideoFrame(8, 8, "rgb24")], 25
+        )
+        media.cancel("session", "interrupted")
+        await media.publish(
+            "session", "next", b"\x02\x00" * 480, [av.VideoFrame(8, 8, "rgb24")], 25
+        )
+        audio = await asyncio.wait_for(media.audio.recv(), timeout=0.1)
+        video = await asyncio.wait_for(media.video.recv(), timeout=0.1)
+        assert bytes(audio.planes[0])[:960] == b"\x02\x00" * 480
+        assert video.pts == 0
+        assert media.audio.readyState == media.video.readyState == "live"
+        media.stop()
 
     asyncio.run(receive())
