@@ -54,6 +54,11 @@ describe('workspace transcript layout', () => {
     expect(stylesheet).toContain('.app-workspace { position: relative; z-index: 1;')
   })
 
+  it('keeps the completed device acceptance recorder out of the ordinary avatar UI', () => {
+    expect(avatarVideo).not.toContain('目标设备验收')
+    expect(avatarVideo).not.toContain('AvatarAcceptanceRecorder')
+  })
+
   it('keeps login and pending-memory editing surfaces inside the dark theme', () => {
     expect(stylesheet).toContain('.setup-panel { background: #101923;')
     expect(stylesheet).toContain('.memory-candidate textarea { background: #16222d;')

@@ -219,7 +219,6 @@ async def run(arguments: argparse.Namespace) -> None:
         configuration = {
             "chrome": str(arguments.chrome),
             "debugPort": reserve_port(),
-            "enableAcceptanceRecorder": True,
             "host": E2E_HOST,
             "injectPcm": True,
             "maximumFrameGapMs": 70,

@@ -186,15 +186,6 @@ try {
     })()`)),
     configuration.timeoutSeconds * 1_000,
   )
-  if (configuration.enableAcceptanceRecorder) {
-    await client.evaluate(`(() => {
-      const input = [...document.querySelectorAll('.avatar-video-control input[type="checkbox"]')]
-        .find((candidate) => candidate.parentElement?.textContent?.includes('目标设备验收'))
-      if (!(input instanceof HTMLInputElement)) throw new Error('avatar acceptance control is missing')
-      input.click()
-      if (!input.checked) throw new Error('avatar acceptance control did not enable')
-    })()`)
-  }
   await client.evaluate(`(() => {
     const button = [...document.querySelectorAll('.avatar-video-control button')]
       .find((candidate) => candidate.textContent?.trim() === '启用视频')
