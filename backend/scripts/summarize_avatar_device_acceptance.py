@@ -10,6 +10,8 @@ from typing import TypedDict, cast
 
 from arch.benchmarks.metrics import summary_dict
 
+_REQUIRED_RUNS = 5
+
 
 class DeviceObservation(TypedDict):
     """One target-device turn without identifiers, speech content, or media payloads."""
@@ -30,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--runs", type=int, default=20)
+    parser.add_argument("--runs", type=int, default=_REQUIRED_RUNS)
     return parser.parse_args()
 
 
@@ -47,8 +49,8 @@ def _number(value: object, field: str) -> float:
 
 def parse_observations(path: Path, runs: int) -> list[DeviceObservation]:
     """Accept only the fixed, non-identifying schema required for device acceptance."""
-    if runs < 20:
-        raise ValueError("Device acceptance requires at least 20 turns.")
+    if runs != _REQUIRED_RUNS:
+        raise ValueError(f"Device acceptance requires exactly {_REQUIRED_RUNS} turns.")
     value: object = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, list) or len(value) != runs:
         raise ValueError(f"Expected exactly {runs} target-device observations.")

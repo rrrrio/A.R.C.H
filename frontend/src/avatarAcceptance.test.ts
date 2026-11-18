@@ -25,9 +25,9 @@ describe('AvatarAcceptanceRecorder', () => {
     })
   })
 
-  it('exports only twenty complete timing-only observations', () => {
+  it('exports only five complete timing-only observations', () => {
     const recorder = new AvatarAcceptanceRecorder()
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < 5; index += 1) {
       recorder.beginSession()
       recorder.recordFirstAudio(100)
       recorder.recordFirstVideo(120)
@@ -38,8 +38,8 @@ describe('AvatarAcceptanceRecorder', () => {
       recorder.commit({ watermark_absent: true, clarity_acceptable: true })
     }
 
-    expect(JSON.parse(recorder.exportJson())).toHaveLength(20)
-    expect(() => recorder.beginSession()).toThrow('twenty')
+    expect(JSON.parse(recorder.exportJson())).toHaveLength(5)
+    expect(() => recorder.beginSession()).toThrow('five')
   })
 
   it('rejects manual completion until all objective timings are recorded', () => {

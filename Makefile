@@ -100,7 +100,7 @@ acceptance-audio: frontend-build
 	uv run --no-sync --directory $(BACKEND_DIR) python scripts/summarize_browser_voice_acceptance.py --barge-in --output ../data/benchmarks/results/browser-voice-barge-in.json
 
 avatar-device-report:
-	@test -n "$(AVATAR_DEVICE_INPUT)" || (printf '%s\n' 'Set AVATAR_DEVICE_INPUT to a timing-only 20-turn JSON observation file.' >&2; exit 2)
+	@test -n "$(AVATAR_DEVICE_INPUT)" || (printf '%s\n' 'Set AVATAR_DEVICE_INPUT to a timing-only 5-turn JSON observation file.' >&2; exit 2)
 	uv run --no-sync --directory $(BACKEND_DIR) python scripts/summarize_avatar_device_acceptance.py --input "$(AVATAR_DEVICE_INPUT)" --output ../data/benchmarks/results/avatar-device-acceptance.json
 
 models-baseline:

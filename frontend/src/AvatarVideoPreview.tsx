@@ -216,7 +216,7 @@ export function AvatarVideoPreview({ csrfToken, onAudioOwnershipChange }: Avatar
         </label>
         {acceptanceEnabled ? (
           <div className="avatar-acceptance" aria-live="polite">
-            <p>{acceptanceCompleted}/20 轮已完成。每轮关闭视频后再重新启用。</p>
+            <p>{acceptanceCompleted}/5 轮已完成。每轮关闭视频后再重新启用。</p>
             {objectiveComplete ? (
               <>
                 <label><input type="checkbox" checked={manualChecks.watermark_absent} onChange={(event) => setManualChecks((current) => ({ ...current, watermark_absent: event.target.checked }))} /> 无水印</label>
@@ -224,7 +224,7 @@ export function AvatarVideoPreview({ csrfToken, onAudioOwnershipChange }: Avatar
                 <button type="button" className="secondary-button" disabled={!manualChecks.watermark_absent || !manualChecks.clarity_acceptable} onClick={commitObservation}>保存本轮</button>
               </>
             ) : <p>等待本轮首帧、30 帧率窗口和插话后的 idle 画面。</p>}
-            {acceptanceCompleted === 20 ? <button type="button" className="secondary-button" onClick={downloadObservations}>下载验收 JSON</button> : null}
+            {acceptanceCompleted === 5 ? <button type="button" className="secondary-button" onClick={downloadObservations}>下载验收 JSON</button> : null}
           </div>
         ) : null}
       </section>

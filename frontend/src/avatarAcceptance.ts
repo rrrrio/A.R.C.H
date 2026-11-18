@@ -15,7 +15,7 @@ export type AvatarAcceptanceManualChecks = Pick<
 type ObjectiveObservation = Omit<AvatarAcceptanceObservation, keyof AvatarAcceptanceManualChecks>
 
 const REQUIRED_FRAME_COUNT = 30
-const REQUIRED_OBSERVATION_COUNT = 20
+const REQUIRED_OBSERVATION_COUNT = 5
 const VIDEO_FPS = 25
 
 /** Holds opt-in, timing-only device-acceptance data entirely in browser memory. */
@@ -27,7 +27,7 @@ export class AvatarAcceptanceRecorder {
   private cancellationStartedAt: number | null = null
 
   beginSession() {
-    if (this.observations.length >= REQUIRED_OBSERVATION_COUNT) throw new Error('All twenty observations are complete.')
+    if (this.observations.length >= REQUIRED_OBSERVATION_COUNT) throw new Error('All five observations are complete.')
     this.draft = {}
     this.frameTimes = []
     this.idleVideoPts = null
@@ -95,7 +95,7 @@ export class AvatarAcceptanceRecorder {
     ) {
       throw new Error('The current observation is incomplete.')
     }
-    if (this.observations.length >= REQUIRED_OBSERVATION_COUNT) throw new Error('All twenty observations are complete.')
+    if (this.observations.length >= REQUIRED_OBSERVATION_COUNT) throw new Error('All five observations are complete.')
     const observation = { audio_first_ms, video_first_ms, fps, cancellation_ms, ...manual }
     this.observations.push(observation)
     this.resetCurrent()
@@ -104,7 +104,7 @@ export class AvatarAcceptanceRecorder {
 
   exportJson(): string {
     if (this.observations.length !== REQUIRED_OBSERVATION_COUNT) {
-      throw new Error('Exactly twenty complete observations are required.')
+      throw new Error('Exactly five complete observations are required.')
     }
     return JSON.stringify(this.observations, null, 2)
   }

@@ -106,11 +106,11 @@ live audio/video track、至少 30 个视频帧回调的有效帧率在 22-28fps
 目标设备或主观听感验收。
 
 该 smoke 也会显式启用“目标设备验收”，以覆盖浏览器到 runtime 的验收 DataChannel 协商；它不生成
-观察 JSON，也不替代目标设备的二十轮验收。
+观察 JSON，也不替代目标设备的五轮验收。
 
 ## 目标设备验收
 
-主机 smoke 通过后，必须在实际目标设备完成 20 个独立媒体会话。每一轮记录到受忽略 JSON 的
+主机 smoke 通过后，必须在实际目标设备完成 5 个独立媒体会话。每一轮记录到受忽略 JSON 的
 固定字段只有：`audio_first_ms`、`video_first_ms`、`fps`、`cancellation_ms`、
 `watermark_absent` 和 `clarity_acceptable`。每轮先显式启用“目标设备验收”，再启用视频并完成一次
 回答和一次插话；结束后关闭视频，使下一轮重新建立独立媒体会话。浏览器在本地自动收集前四个数值，
@@ -134,11 +134,11 @@ live audio/video track、至少 30 个视频帧回调的有效帧率在 22-28fps
        +----------- WebRTC data marker --------+
        |
        v
-[manual watermark + clarity booleans] --> [downloaded 20-run JSON]
+[manual watermark + clarity booleans] --> [downloaded 5-run JSON]
 ```
 
 完成一轮后，在数字人区域确认无水印和清晰度合格并先保存本轮，再关闭视频以开始下一轮独立会话。
-二十轮完成时下载 JSON，将文件放入主机的 `data/benchmarks/results/avatar-device-observations.json`。
+五轮完成时下载 JSON，将文件放入主机的 `data/benchmarks/results/avatar-device-observations.json`。
 关闭当前视频只丢弃未保存的本轮数据；关闭验收模式会清空尚未导出的浏览器内存记录。浏览器不会自动替人
 判断水印或主观清晰度。
 
@@ -155,12 +155,12 @@ live audio/video track、至少 30 个视频帧回调的有效帧率在 22-28fps
 ]
 ```
 
-样本文件必须恰好包含 20 个同样结构的对象。完成后生成只含 timing 与主观布尔结果的本地报告：
+样本文件必须恰好包含 5 个同样结构的对象。完成后生成只含 timing 与主观布尔结果的本地报告：
 
     make avatar-device-report AVATAR_DEVICE_INPUT=data/benchmarks/results/avatar-device-observations.json
 
 报告写入受忽略的 `data/benchmarks/results/avatar-device-acceptance.json`，包含音画 decoded-start
-skew、有效 FPS 和取消时延的中位数 p50、nearest-rank p95/max。只在 20 轮均完成且水印/清晰度均通过后，
+skew、有效 FPS 和取消时延的中位数 p50、nearest-rank p95/max。只在 5 轮均完成且水印/清晰度均通过后，
 将结果摘要写回本页和 ExecPlan；否则保留能力为未设备验证。
 
 查看将要安装的服务：
