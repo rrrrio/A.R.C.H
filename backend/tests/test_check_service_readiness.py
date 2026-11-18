@@ -25,10 +25,10 @@ def test_readiness_targets_pin_network_requests_to_loopback() -> None:
         public_origin = "https://arch.local:9443"
 
     assert module.readiness_target("backend", FakeSettings()) == module.ReadinessTarget(
-        "http", "127.0.0.1", 8123, None
+        "http", "127.0.0.1", 8123, None, None
     )
     assert module.readiness_target("gateway", FakeSettings()) == module.ReadinessTarget(
-        "https", "127.0.0.1", 9443, "arch.local:9443"
+        "https", "127.0.0.1", 9443, "arch.local:9443", "arch.local"
     )
 
 
@@ -36,7 +36,7 @@ def test_wait_for_ready_retries_then_accepts_a_fixed_ready_response(
     monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = _load_script()
-    target = module.ReadinessTarget("http", "127.0.0.1", 8000, None)
+    target = module.ReadinessTarget("http", "127.0.0.1", 8000, None, None)
     attempts = iter((False, True))
     monkeypatch.setattr(module, "_is_ready", lambda _: next(attempts))
     monkeypatch.setattr(module.time, "sleep", lambda _: None)
@@ -46,7 +46,7 @@ def test_wait_for_ready_retries_then_accepts_a_fixed_ready_response(
 
 def test_wait_for_ready_rejects_non_positive_timeouts() -> None:
     module = _load_script()
-    target = module.ReadinessTarget("http", "127.0.0.1", 8000, None)
+    target = module.ReadinessTarget("http", "127.0.0.1", 8000, None, None)
 
     with pytest.raises(ValueError, match="positive"):
         module.wait_for_ready(target, 0)

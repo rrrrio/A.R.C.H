@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import socket
 import ssl
 import time
 from typing import NamedTuple
@@ -22,12 +23,28 @@ class ReadinessTarget(NamedTuple):
     host: str
     port: int
     host_header: str | None
+    tls_server_name: str | None
+
+
+class LoopbackHTTPSConnection(http.client.HTTPSConnection):
+    """Connect to loopback while sending TLS SNI for the configured public origin."""
+
+    def __init__(
+        self, connect_host: str, port: int, *, server_hostname: str, context: ssl.SSLContext
+    ) -> None:
+        super().__init__(server_hostname, port, context=context, timeout=1)
+        self._connect_host = connect_host
+        self._server_hostname = server_hostname
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._connect_host, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=self._server_hostname)
 
 
 def readiness_target(kind: str, settings: Settings) -> ReadinessTarget:
     """Build a loopback readiness probe for a backend or its HTTPS gateway."""
     if kind == "backend":
-        return ReadinessTarget("http", "127.0.0.1", settings.port, None)
+        return ReadinessTarget("http", "127.0.0.1", settings.port, None, None)
     if kind == "gateway":
         origin = urlsplit(settings.public_origin)
         return ReadinessTarget(
@@ -35,6 +52,7 @@ def readiness_target(kind: str, settings: Settings) -> ReadinessTarget:
             "127.0.0.1",
             _origin_port(origin),
             origin.netloc,
+            origin.hostname,
         )
     raise ValueError(f"Unsupported readiness target: {kind}")
 
@@ -60,8 +78,12 @@ def _is_ready(target: ReadinessTarget) -> bool:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-        connection = http.client.HTTPSConnection(
-            target.host, target.port, context=context, timeout=1
+        assert target.tls_server_name is not None
+        connection = LoopbackHTTPSConnection(
+            target.host,
+            target.port,
+            server_hostname=target.tls_server_name,
+            context=context,
         )
     else:
         connection = http.client.HTTPConnection(target.host, target.port, timeout=1)

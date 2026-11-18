@@ -111,7 +111,7 @@ runtime 会在每次已准备回答的首个音频/视频样本之后，分别�
 
     uv run --no-sync --directory backend python scripts/install_user_services.py --apply --unit arch-avatar-media.service
 
-确认本机修改后的同名 unit 需要替换时，使用 `SYSTEMD_FLAGS=--replace`。`arch-backend.service` 在失败时重启，并在 `/api/ready` 成功前视为未启动；`arch-gateway.service` 等待 Caddy 容器健康，再检查 HTTPS 到后端的同一路径。它们均不启动搜索或 Ollama。
+确认本机修改后的同名 unit 需要替换时，使用 `SYSTEMD_FLAGS=--replace`。`arch-backend.service` 在失败时重启，并在 `/api/ready` 成功前视为未启动；`arch-gateway.service` 等待 Caddy 容器健康，再通过 loopback HTTPS 检查到后端的同一路径。该探针保留 `ARCH_PUBLIC_ORIGIN` 的 TLS 主机名，因而不会把证书校验或请求转到 LAN。它们均不启动搜索或 Ollama。
 
 后端日志进入用户 journal：
 
