@@ -11,7 +11,7 @@
           |
           +-- local llama.cpp child process during a voice session
 
-[Avatar worker: data/runtime/avatar/avatar.sock] <-- optional video only
+[AvatarMediaRuntime: 127.0.0.1:8101] <-- optional video only
 [SearXNG: 127.0.0.1:8080] <-- optional web_search
 [Ollama: 127.0.0.1:11434]  <-- optional model adapter
 ```
@@ -87,8 +87,8 @@ Ollama 和 SearXNG 不阻塞后端就绪，因为它们不是每次语音会话�
     systemctl --user daemon-reload
     systemctl --user enable --now arch-backend.service arch-gateway.service
 
-旧的 `arch-avatar.service` JPEG bridge 已停用，不能重新启用。新的
-`arch-avatar-media.service` 是单 peer 音视频 runtime；它要求受限 `.env` 中独立高熵的
+`arch-avatar-media.service` 是单 peer 音视频 runtime；旧的 `arch-avatar.service` JPEG bridge 已
+退役并从安装器移除。它要求受限 `.env` 中独立高熵的
 `ARCH_AVATAR_MEDIA_TICKET_SECRET` 与 `ARCH_AVATAR_MEDIA_BACKEND=wav2lip`，只绑定
 `127.0.0.1:8101`，不经 Caddy 暴露。普通语音不依赖两个 avatar unit；runtime 健康失败时，
 浏览器视频状态保持不可用。
@@ -136,8 +136,7 @@ unit（必要时 `SYSTEMD_FLAGS=--replace`）。安装器拒绝包含换行或�
 `healthy` 只证明相应服务能回答其本地探针；它不替代浏览器登录、模型加载、麦克风、可听首音
 或人工插话验收。
 
-avatar worker 另有 8 GiB `MemoryHigh`、12 GiB `MemoryMax` 和 512 个任务的 unit 上限；实际 MuseTalk
-显存峰值必须在目标主机上单独测量。视频服务失败时，音频服务应继续可用。
+视频服务失败时，音频服务应继续可用。
 
 ## 备份与恢复
 

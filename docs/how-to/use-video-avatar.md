@@ -1,8 +1,8 @@
 # 使用真人视频数字人
 
-> 新的单 peer 音视频 runtime 已完成主机传输验证。配置并启动 `arch-avatar-media.service` 后，已登录浏览器可启用视频；普通语音不受影响。不要启动或启用旧的 `arch-avatar.service`，也不要使用本页其余旧 bridge 操作步骤。目标设备的音画同步、清晰度和插话仍待验收。
+> 当前正式路径是单 peer `arch-avatar-media.service`。旧 `arch-avatar.service`、Unix-socket JPEG bridge、`avatar_runtime/` 和本页中提到它们的旧命令均已在 2026-11-18 退役并删除，不能安装、启用或排障使用。下文保留的旧段落仅作历史迁移记录；以“新单 peer runtime”的步骤为准。
 
-本页保留旧资料、模型和操作记录，供后续迁移核对。旧路径把视频与普通语音放在不同 WebRTC peer，不能满足音画同步要求。
+旧路径把视频与普通语音放在不同 WebRTC peer，不能满足音画同步要求。用户拥有的 `data/avatars/`、模型、cache 和源码 checkout 未被删除。
 
 ## 准备素材
 
@@ -10,7 +10,7 @@
 
     mkdir -p data/avatars
     cp /path/to/idle.mp4 data/avatars/idle.mp4
-    make avatar-check
+    make avatar-media-wav2lip-prepare
 
 当前下载原型中的 `idle.mp4` 是 704×896、16fps 的竖屏参考视频，服务会在启动前检查它是否包含可解码的视频帧。Wav2Lip 必须使用由该视频生成的同一人物缓存（本机默认 `wav2lip_idle_reference`，包含 `full_imgs/`、`face_imgs/`、`coords.pkl`）和 `wav2lip.pth` 生成说话画面。静音和模型生成期间会直接循环原始 `idle.mp4`，并按源视频时间轴映射到视频轨的 25fps，不会把 16fps 源素材按 25fps 倍速播放；`listening.mp4` 和 `speaking.mp4` 只是预录状态素材，不能替代实时生成的视频，否则会与实际回答内容不同步。
 
@@ -19,16 +19,13 @@
 在 `.env` 中启用功能：
 
     ARCH_VIDEO_AVATAR_ENABLED=true
-    ARCH_AVATAR_WORKER_BACKEND=musetalk
+    ARCH_AVATAR_MEDIA_BACKEND=wav2lip
 
-`musetalk` 是低延迟的正式渲染后端；`preview` 只循环 `idle.mp4`，用于验证 WebRTC、网页构图和连接关闭，不会对口型。
+当前正式渲染后端为 Wav2Lip：
 
-若目标是接近下载演示的连续成片观感，而可接受一段回答结束后才开始播放，可将后端切换为 Wav2Lip：
+    ARCH_AVATAR_MEDIA_BACKEND=wav2lip
 
-    ARCH_AVATAR_WORKER_BACKEND=wav2lip
-    ARCH_AVATAR_MODEL=wav2lip
-
-该模式复用 A.R.C.H. 私有 Unix socket、鉴权和 WebRTC 视频轨道，不启动下载方案的 HTTP、TTS 或 WebRTC 服务。它在收到该次 TTS 的 `end` 前只缓存 16 kHz PCM；随后以 25 FPS 生成整段 JPEG 序列，视频轨道均匀送出。当前音频保持既有低延迟输出，视频仍在该轮 TTS 结束后生成，因此不能将此模式描述为音画同步；要实现同步需要 renderer 对“首个对应口型帧已进入浏览器视频轨”的显式回执。用户插话或关闭连接会 fence 正在计算的片段，旧帧不会进入下一轮。
+它使用 loopback media runtime 的单一 audio/video peer，不启动下载方案的 HTTP、TTS 或 WebRTC 服务。每个完成的 TTS 回答准备为一段同步媒体；插话会 fence 当前片段，旧帧不会进入下一轮。
 
 Wav2Lip 必须由运维方在以下受控路径准备来源、checkpoint 和同一人物的预处理缓存。运行时会按参考工程的正向后反向帧序遍历缓存，避免循环处从末帧跳回首帧：
 
@@ -59,36 +56,7 @@ Wav2Lip 必须由运维方在以下受控路径准备来源、checkpoint 和同�
 
 该命令临时启动 worker，经真实 Unix socket（含超过默认单行 reader 限制的两秒 24 kHz PCM）、WebRTC 信令和本地 recvonly peer 解码三帧视频，并断言帧不会突发到达后自行清理。它不验证真实浏览器或设备表现。
 
-准备好 Wav2Lip 素材后可运行相同边界的成片模式检查：
-
-    make avatar-wav2lip-smoke
-
-该检查会向 worker 发送 PCM 后显式发送 `end`，所以能够发现 Wav2Lip 错误地在语音未结束时出帧，或完整片段无法经 WebRTC 解码。它只证明主机上的 renderer、私有 IPC 与本地 WebRTC 解码；不证明真实设备上的清晰度、持续帧率、音画同步或主观观感。
-
-当 GPU 没有空间启动第二个 renderer 时，可在没有浏览器视频会话的维护窗口连接已启用的 worker：
-
-    uv run --no-sync --directory backend python scripts/smoke_musetalk_avatar.py \
-      --existing-worker --socket data/runtime/avatar/avatar.sock
-
-该模式只关闭自身建立的 Unix socket 和 WebRTC 会话，不会重启常驻 worker；不要与正在使用真人视频的浏览器会话并发运行。
-
-要验证已经启用的服务在实际浏览器中完成登录、视频解码和关闭，请提供当前 HTTPS 地址和管理员密码，并运行：
-
-    ARCH_AVATAR_BROWSER_URL=https://arch.local:8443 \\
-    ARCH_AVATAR_BROWSER_PASSWORD='管理员密码' \\
-    make avatar-browser-smoke
-
-该 attach-only 命令属于旧 bridge 的历史验证，不适用于单 peer runtime；不要为运行它而启动 `arch-avatar.service`。当前 runtime 使用下文的 `make avatar-media-browser-smoke`。headless Chrome 证明浏览器 WebRTC 和视频解码，不替代远端设备上的画面、音画同步或听感验收。
-
-不依赖已部署服务的主机验证可运行：
-
-    make avatar-owned-browser-smoke
-
-它临时启动固定 revision 的 MuseTalk worker、最小认证/avatar API 和同源 HTTPS Caddy，再由 headless Chrome 登录并开启视频。harness 在浏览器完成真实 offer 后通过同一服务接口注入 1 秒 24 kHz PCM，要求 `<video>` 解码至少三帧后关闭会话，并删除 worker、socket、临时凭据、Chrome profile 和 Caddy 容器。此命令验证真实 renderer、浏览器 WebRTC 与视频元素解码，但刻意不加载完整语音模型；已部署服务上的端到端 TTS observer 仍应使用上一条 `avatar-browser-smoke` 验证。
-
-当前主机已成功运行拥有式 smoke：浏览器报告 3 个解码帧回调，视频尺寸为 704×896。该结果证明本机 Chrome 可解码真实 renderer 输出；它不证明远端设备画面、持续帧率、音画同步、插话停止时间或听感。
-
-新单 peer runtime 的浏览器验证使用已安装且健康的 `arch-avatar-media.service`：
+旧 worker 的 Unix-socket smoke 和旧浏览器 smoke 已退役。新单 peer runtime 的浏览器验证使用已安装且健康的 `arch-avatar-media.service`：
 
     make avatar-media-browser-smoke
 
@@ -160,8 +128,9 @@ live audio/video track、至少 30 个视频帧回调的有效帧率在 22-28fps
     make avatar-device-report AVATAR_DEVICE_INPUT=data/benchmarks/results/avatar-device-observations.json
 
 报告写入受忽略的 `data/benchmarks/results/avatar-device-acceptance.json`，包含音画 decoded-start
-skew、有效 FPS 和取消时延的中位数 p50、nearest-rank p95/max。只在 5 轮均完成且水印/清晰度均通过后，
-将结果摘要写回本页和 ExecPlan；否则保留能力为未设备验证。
+skew、有效 FPS 和取消时延的中位数 p50、nearest-rank p95/max。当前目标设备已经完成五轮实际体验，
+用户确认音画口型同步和重连后的连续使用表现良好，并明确选择不再重新采样；浏览器记录未导出，因此本次
+结论是**设备验证的定性体验证据**，没有量化 JSON/p50/p95/FPS 报告，不能表述为二十轮研究或伪造数值。
 
 查看将要安装的服务：
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -10,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from arch.api.auth import AuthServiceDependency
 from arch.avatar.media import AvatarMediaService, AvatarMediaUnavailable
-from arch.avatar.video import AvatarVideoSignalingService
 
 router = APIRouter(prefix="/api/avatar", tags=["avatar"])
 
@@ -47,16 +45,6 @@ class AvatarBrowserTimingRequest(BaseModel):
     elapsed_ms: int = Field(ge=0, le=600_000)
 
 
-def get_avatar_service(request: Request) -> AvatarVideoSignalingService:
-    """Read the application-scoped avatar signaling owner."""
-    return cast(AvatarVideoSignalingService, request.app.state.avatar_video_service)
-
-
-AvatarServiceDependency = Annotated[
-    AvatarVideoSignalingService, Depends(get_avatar_service)
-]
-
-
 def get_avatar_media_service(request: Request) -> AvatarMediaService:
     return cast(AvatarMediaService, request.app.state.avatar_media_service)
 
@@ -68,12 +56,18 @@ AvatarMediaServiceDependency = Annotated[AvatarMediaService, Depends(get_avatar_
 async def avatar_status(
     request: Request,
     auth: AuthServiceDependency,
-    avatar: AvatarServiceDependency,
     media: AvatarMediaServiceDependency,
 ) -> AvatarStatusResponse:
     """Return renderer state only to the authenticated same-origin browser."""
     auth.require_session(request)
-    return AvatarStatusResponse(**asdict(avatar.status(runtime_ready=await media.runtime_ready())))
+    ready = await media.runtime_ready()
+    return AvatarStatusResponse(
+        enabled=ready,
+        state="ready" if ready else "unavailable",
+        model="wav2lip",
+        source_video="configured",
+        detail=None if ready else "Avatar media runtime is unavailable.",
+    )
 
 
 @router.post("/offer", response_model=AvatarOfferResponse)

@@ -8,12 +8,11 @@ import re
 import shutil
 from pathlib import Path
 
-from arch.settings import PROJECT_ROOT, Settings
+from arch.settings import PROJECT_ROOT
 
 TEMPLATE_DIRECTORY = PROJECT_ROOT / "deploy" / "systemd"
 UNIT_NAMES = (
     "arch-backend.service",
-    "arch-avatar.service",
     "arch-avatar-media.service",
     "arch-gateway.service",
 )
@@ -29,7 +28,6 @@ RESOURCE_PATTERNS = {
     "ARCH_BACKEND_MEMORY_MAX": re.compile(r"[1-9][0-9]*[KMGT]"),
     "ARCH_BACKEND_TASKS_MAX": re.compile(r"[1-9][0-9]*"),
 }
-AVATAR_BACKENDS = {"musetalk", "preview", "wav2lip"}
 
 
 def _quote(value: str) -> str:
@@ -73,10 +71,6 @@ def render_units(project_root: Path, uv_binary: Path, docker_binary: Path) -> di
     """Render unit templates with paths known to the local checkout."""
     execution_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     resource_values = _resource_values(project_root)
-    avatar_settings = Settings()
-    avatar_backend = avatar_settings.avatar_worker_backend
-    if avatar_backend not in AVATAR_BACKENDS:
-        raise ValueError(f"ARCH_AVATAR_WORKER_BACKEND has an invalid value: {avatar_backend!r}")
     replacements = {
         "@WORKING_DIRECTORY@": _escape_unit_path(str(project_root.resolve())),
         "@PROJECT_ROOT@": _quote(str(project_root.resolve())),
@@ -88,38 +82,12 @@ def render_units(project_root: Path, uv_binary: Path, docker_binary: Path) -> di
         "@BACKEND_MEMORY_HIGH@": resource_values["ARCH_BACKEND_MEMORY_HIGH"],
         "@BACKEND_MEMORY_MAX@": resource_values["ARCH_BACKEND_MEMORY_MAX"],
         "@BACKEND_TASKS_MAX@": resource_values["ARCH_BACKEND_TASKS_MAX"],
-        "@AVATAR_RUNTIME_DIR@": _escape_unit_path(str(avatar_settings.avatar_runtime_dir)),
-        "@AVATAR_SOCKET@": _quote(str(avatar_settings.avatar_socket)),
-        "@AVATAR_SOURCE_VIDEO@": _quote(str(avatar_settings.avatar_source_video)),
-        "@AVATAR_SOURCE_PATH@": _escape_unit_path(str(avatar_settings.avatar_source_video)),
-        "@AVATAR_MODEL_ROOT@": _quote(str(avatar_settings.avatar_model_root)),
-        "@AVATAR_MODEL_PATH@": _escape_unit_path(str(avatar_settings.avatar_model_root)),
-        "@AVATAR_CACHE_DIR@": _quote(str(avatar_settings.avatar_cache_dir)),
-        "@AVATAR_MUSETALK_SOURCE@": _quote(str(avatar_settings.avatar_musetalk_source)),
-        "@AVATAR_MUSETALK_SOURCE_PATH@": _escape_unit_path(
-            str(avatar_settings.avatar_musetalk_source)
-        ),
-        "@AVATAR_WAV2LIP_SOURCE@": _quote(str(avatar_settings.avatar_wav2lip_source)),
-        "@AVATAR_WAV2LIP_SOURCE_PATH@": _escape_unit_path(
-            str(avatar_settings.avatar_wav2lip_source)
-        ),
-        "@AVATAR_WAV2LIP_MODEL@": _quote(str(avatar_settings.avatar_wav2lip_model)),
-        "@AVATAR_WAV2LIP_MODEL_PATH@": _escape_unit_path(
-            str(avatar_settings.avatar_wav2lip_model)
-        ),
-        "@AVATAR_WAV2LIP_AVATAR@": _quote(str(avatar_settings.avatar_wav2lip_avatar)),
-        "@AVATAR_WAV2LIP_AVATAR_PATH@": _escape_unit_path(
-            str(avatar_settings.avatar_wav2lip_avatar)
+        "@AVATAR_MEDIA_RUNTIME_SOURCE@": _quote(
+            str(project_root / "avatar_media_runtime" / "src")
         ),
         "@MUSETALK_PYTHON@": _quote(
             str(project_root / "data" / "runtime" / "musetalk" / "bin" / "python")
         ),
-        "@AVATAR_RUNTIME_SOURCE@": _quote(str(project_root / "avatar_runtime" / "src")),
-        "@AVATAR_MEDIA_RUNTIME_SOURCE@": _quote(
-            str(project_root / "avatar_media_runtime" / "src")
-        ),
-        "@AVATAR_FPS@": str(avatar_settings.avatar_fps),
-        "@AVATAR_WORKER_BACKEND@": avatar_backend,
     }
     rendered: dict[str, str] = {}
     for name in UNIT_NAMES:

@@ -10,8 +10,6 @@ import shutil
 import socket
 import subprocess
 import tempfile
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,7 +25,6 @@ from arch.avatar.media import (
     AvatarMediaService,
     LoopbackAvatarMediaRuntimeClient,
 )
-from arch.avatar.video import AvatarVideoSignalingService
 from arch.settings import PROJECT_ROOT, get_settings
 
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
@@ -127,25 +124,8 @@ def write_caddyfile(path: Path, backend_port: int, https_port: int) -> None:
 
 def create_app(auth: AuthService, media: RecordingAvatarMediaService) -> FastAPI:
     """Build the minimum same-origin API that owns media signaling for this smoke."""
-    settings = get_settings()
-    avatar = AvatarVideoSignalingService(
-        enabled=True,
-        model="wav2lip",
-        source_video=settings.avatar_source_video,
-        socket_path=settings.avatar_socket,
-        runtime_configured=media.is_configured,
-    )
-
-    @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        try:
-            yield
-        finally:
-            await avatar.close()
-
-    app = FastAPI(lifespan=lifespan)
+    app = FastAPI()
     app.state.auth_service = auth
-    app.state.avatar_video_service = avatar
     app.state.avatar_media_service = media
     app.include_router(auth_router)
     app.include_router(avatar_router)

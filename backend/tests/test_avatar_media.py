@@ -16,7 +16,6 @@ from arch.avatar.media import (
     AvatarMediaService,
     LoopbackAvatarMediaRuntimeClient,
 )
-from arch.avatar.video import AvatarVideoSignalingService
 from arch.main import create_app
 
 
@@ -213,18 +212,7 @@ def test_status_reports_unavailable_when_the_configured_runtime_fails_health_che
     origin = "https://avatar.test:8443"
     provision_credentials(credentials, "correct-horse-battery-staple")
     media = AvatarMediaService(runtime=StoppedRuntime())
-    avatar = AvatarVideoSignalingService(
-        enabled=True,
-        model="wav2lip",
-        source_video=tmp_path / "idle.mp4",
-        socket_path=tmp_path / "legacy.sock",
-        runtime_configured=media.is_configured,
-    )
-    app = create_app(
-        AuthService(credentials, origin),
-        avatar_video_service=avatar,
-        avatar_media_service=media,
-    )
+    app = create_app(AuthService(credentials, origin), avatar_media_service=media)
 
     with TestClient(app, base_url=origin) as client:
         login = client.post(
@@ -239,6 +227,33 @@ def test_status_reports_unavailable_when_the_configured_runtime_fails_health_che
         "enabled": False,
         "state": "unavailable",
         "model": "wav2lip",
-        "source_video": "idle.mp4",
+        "source_video": "configured",
         "detail": "Avatar media runtime is unavailable.",
+    }
+
+
+def test_status_uses_the_media_runtime_without_a_legacy_video_service(tmp_path) -> None:
+    """The public availability state belongs solely to the active media runtime."""
+    credentials = tmp_path / "admin.json"
+    origin = "https://avatar.test:8443"
+    provision_credentials(credentials, "correct-horse-battery-staple")
+    app = create_app(
+        AuthService(credentials, origin), avatar_media_service=AvatarMediaService(runtime=Runtime())
+    )
+
+    with TestClient(app, base_url=origin) as client:
+        login = client.post(
+            "/api/auth/login",
+            headers={"Origin": origin},
+            json={"password": "correct-horse-battery-staple"},
+        )
+        response = client.get("/api/avatar/status")
+
+    assert login.status_code == 200
+    assert response.json() == {
+        "enabled": True,
+        "state": "ready",
+        "model": "wav2lip",
+        "source_video": "configured",
+        "detail": None,
     }

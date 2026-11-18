@@ -71,22 +71,7 @@ gateway:
 | `ARCH_AVATAR_MEDIA_RUNTIME_URL` | `str` / `http://127.0.0.1:8101` | 只能是无路径、查询或凭据的 `http://127.0.0.1` origin | 后端向单 peer 音视频运行时转发已认证信令的私有地址；不会返回给浏览器。该值本身不启用视频。 |
 | `ARCH_AVATAR_MEDIA_TICKET_SECRET` | `SecretStr` / 未设置 | 至少 16 UTF-8 字节；应为独立高熵值；不得提交 | 后端和 loopback runtime 共同验证的一次性、短期 ticket 密钥。未设置时 runtime 拒绝启动，后端返回视频不可用。 |
 | `ARCH_AVATAR_MEDIA_BACKEND` | `str` / 未设置 | 浏览器视频当前仅接受 `wav2lip` | `arch-avatar-media.service` 必须设为 `wav2lip` 才会通过私有 health check 并向浏览器显示可用。 |
-| `ARCH_AVATAR_RUNTIME_DIR` | `Path` / `data/runtime/avatar` | 必须在 `data/` 内 | 独立 avatar worker 的运行状态目录。 |
-| `ARCH_AVATAR_SOCKET_PATH` | `Path` / `data/runtime/avatar/avatar.sock` | 必须在 `data/` 内 | A.R.C.H. 后端与 GPU worker 之间的 Unix socket。 |
-| `ARCH_AVATAR_SOURCE_VIDEO` | `Path` / `data/avatars/idle.mp4` | 必须在 `data/` 内，必须有可解码视频帧 | 管理员提供的固定真人参考视频。 |
-| `ARCH_AVATAR_MODEL_ROOT` | `Path` / `data/models/musetalk/2bcb936e2fddb4d86db4c62fd45b387d0c061571` | 必须在 `data/` 内；只读 | 固定 MuseTalk V1.5 权重与附属模型目录。 |
-| `ARCH_AVATAR_CACHE_DIR` | `Path` / `data/runtime/avatar/preprocessed` | 必须在 `data/` 内；worker 可写 | 由固定 MP4 内容、模型 revision 和裁切参数寻址的预处理缓存根目录。 |
-| `ARCH_AVATAR_MUSETALK_SOURCE` | `Path` / `data/runtime/musetalk/source` | 必须在 `data/` 内；只读 | 隔离 CUDA runtime 使用的固定 MuseTalk 源码 checkout。 |
-| `ARCH_AVATAR_WAV2LIP_SOURCE` | `Path` / `data/runtime/livetalking/source` | 必须在 `data/` 内；只读 | 成片模式使用的 LiveTalking Wav2Lip 源码 checkout；只加载口型模块，不启动其 HTTP 或 WebRTC 服务。 |
-| `ARCH_AVATAR_WAV2LIP_MODEL` | `Path` / `data/runtime/livetalking/wav2lip.pth` | 必须在 `data/` 内；只读 | 运维方自行提供且已核验使用权的 Wav2Lip checkpoint。 |
-| `ARCH_AVATAR_WAV2LIP_AVATAR` | `Path` / `data/runtime/livetalking/avatars/wav2lip_idle_reference` | 必须在 `data/` 内；只读；含 `coords.pkl`、`full_imgs/` 和 `face_imgs/` | 必须由 `ARCH_AVATAR_SOURCE_VIDEO` 生成的同一人物预处理头像缓存，不能与不同人物或不同裁切参数混用。 |
 | `data/runtime/avatar-media/avatars/` | runtime cache root / 默认由准备命令写入 | 受 Git 忽略；每项由 source/checkpoint 内容、25fps、256px crop、pads 和 generator revision 定址 | 新 AvatarMediaRuntime 的无水印 Wav2Lip cache。准备器拒绝不完整或不匹配的 cache，浏览器和 API 不会暴露该路径。 |
-| `ARCH_AVATAR_MODEL` | `str` / `musetalk-1.5` | 由独立 worker 解释 | 视频口型模型标识。 |
-| `ARCH_AVATAR_WORKER_BACKEND` | `str` / `musetalk` | `musetalk`、`wav2lip` 或 `preview` | `musetalk` 为低延迟增量口型；`wav2lip` 等待一次 TTS 播报结束后生成完整片段以换取连续成片观感；`preview` 仅循环固定视频。 |
-| `ARCH_AVATAR_FPS` | `int` / `25` | 1 到 60 | 视频轨道目标帧率。 |
-| `ARCH_AVATAR_QUEUE_MAX_MS` | `int` / `500` | 100 到 5000 | 视频帧和 PCM 迟到时使用的有界队列预算。 |
-| `ARCH_AVATAR_STARTUP_TIMEOUT_MS` | `int` / `15000` | 1000 到 120000 | avatar worker 启动等待上限。 |
-| `ARCH_AVATAR_VRAM_BUDGET_MB` | `int` / `22000` | 1024 到 24564 | 目标 RTX 4090 上为语音模型保留余量的显存预算记录。 |
 | `ARCH_BACKEND_CPU_QUOTA` | `str` / `800%` | 正整数加 `%`；由 systemd 安装器渲染 | 后端 user unit 的 CPU 上限。 |
 | `ARCH_BACKEND_MEMORY_HIGH` | `str` / `10G` | 正整数加 `K`、`M`、`G` 或 `T`；不得高于 `ARCH_BACKEND_MEMORY_MAX` | 后端开始回收内存的 systemd 阈值。 |
 | `ARCH_BACKEND_MEMORY_MAX` | `str` / `12G` | 正整数加 `K`、`M`、`G` 或 `T` | 后端 user unit 的硬内存上限。 |

@@ -62,57 +62,6 @@ def test_rendered_backend_unit_uses_validated_resource_overrides(
     assert "check_service_readiness.py --target gateway" in rendered["arch-gateway.service"]
 
 
-def test_rendered_avatar_unit_uses_application_avatar_settings(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _load_script()
-    monkeypatch.setenv("ARCH_AVATAR_RUNTIME_DIR", "data/runtime/custom-avatar")
-    monkeypatch.setenv("ARCH_AVATAR_SOCKET_PATH", "data/runtime/custom-avatar/worker.sock")
-    monkeypatch.setenv("ARCH_AVATAR_SOURCE_VIDEO", "data/avatars/operator.mp4")
-    monkeypatch.setenv("ARCH_AVATAR_FPS", "20")
-    monkeypatch.setenv("ARCH_AVATAR_WORKER_BACKEND", "preview")
-
-    rendered = module.render_units(
-        module.PROJECT_ROOT,
-        module.PROJECT_ROOT / "uv",
-        module.PROJECT_ROOT / "docker",
-    )
-
-    avatar = rendered["arch-avatar.service"]
-    root = module.PROJECT_ROOT
-    assert f'--socket "{root / "data/runtime/custom-avatar/worker.sock"}"' in avatar
-    assert f'--source "{root / "data/avatars/operator.mp4"}"' in avatar
-    assert "--fps 20 --backend preview" in avatar
-    assert f"ReadWritePaths={root / 'data/runtime/custom-avatar'}" in avatar
-
-
-def test_rendered_avatar_unit_allows_wav2lip_with_read_only_assets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The supervised Wav2Lip process receives its three prepared assets, not Home access."""
-    module = _load_script()
-    monkeypatch.setenv("ARCH_AVATAR_WORKER_BACKEND", "wav2lip")
-    monkeypatch.setenv("ARCH_AVATAR_WAV2LIP_SOURCE", "data/runtime/livetalking/source")
-    monkeypatch.setenv("ARCH_AVATAR_WAV2LIP_MODEL", "data/runtime/livetalking/wav2lip.pth")
-    monkeypatch.setenv(
-        "ARCH_AVATAR_WAV2LIP_AVATAR", "data/runtime/livetalking/avatars/operator"
-    )
-
-    avatar = module.render_units(
-        module.PROJECT_ROOT,
-        module.PROJECT_ROOT / "uv",
-        module.PROJECT_ROOT / "docker",
-    )["arch-avatar.service"]
-
-    root = module.PROJECT_ROOT
-    assert "--backend wav2lip" in avatar
-    assert f'--wav2lip-source "{root / "data/runtime/livetalking/source"}"' in avatar
-    assert f'--wav2lip-model "{root / "data/runtime/livetalking/wav2lip.pth"}"' in avatar
-    assert f'--wav2lip-avatar "{root / "data/runtime/livetalking/avatars/operator"}"' in avatar
-    assert f"ReadOnlyPaths={root / 'data/avatars/idle.mp4'}" in avatar
-    assert str(root / "data/runtime/livetalking/source") in avatar
-
-
 def test_rendered_avatar_media_unit_reads_the_local_environment_file() -> None:
     """The isolated runtime gets its shared ticket secret only from ignored `.env`."""
     module = _load_script()

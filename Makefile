@@ -5,10 +5,10 @@ BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 COMPOSE := docker compose -f deploy/compose.yaml
 
-.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio avatar-device-report models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone avatar-check avatar-preview avatar-musetalk-smoke avatar-wav2lip-smoke avatar-media-wav2lip-prepare avatar-browser-smoke avatar-owned-browser-smoke avatar-owned-wav2lip-browser-smoke avatar-media-browser-smoke musetalk-dry-run ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts
+.PHONY: help bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio avatar-device-report models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone avatar-media-wav2lip-prepare avatar-media-browser-smoke musetalk-dry-run ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts
 
 help:
-	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio avatar-device-report models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone avatar-check avatar-preview avatar-musetalk-smoke avatar-wav2lip-smoke avatar-browser-smoke avatar-owned-browser-smoke avatar-owned-wav2lip-browser-smoke avatar-media-browser-smoke musetalk-dry-run ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts'
+	@printf '%s\n' 'Targets: bootstrap lint test backend-test frontend-test frontend-build compose-config dev migrate upgrade-dry-run upgrade backup restore systemd-dry-run systemd-install uninstall-dry-run uninstall gateway-up gateway-down gateway-logs search-provision search-up search-down search-logs browser-e2e browser-e2e-barge-in acceptance-audio avatar-device-report models-baseline benchmark-components benchmark-pipeline benchmark-voice-clone avatar-media-wav2lip-prepare avatar-media-browser-smoke musetalk-dry-run ollama-up ollama-pull ollama-import asr-prepare llm-prepare llamacpp-prepare tts-prepare qwen-tts-dry-run qwen-tts-prepare rag-prepare rag-index benchmark-tts'
 
 bootstrap:
 	uv sync --directory $(BACKEND_DIR) --all-groups
@@ -154,35 +154,8 @@ benchmark-voice-clone:
 	@test -n "$(VOICE_PROFILE_ID)" || (printf '%s\n' 'Set VOICE_PROFILE_ID to a consented local voice profile.' >&2; exit 2)
 	uv run --no-sync --directory $(BACKEND_DIR) python scripts/benchmark_qwen_clone.py --profile-id "$(VOICE_PROFILE_ID)" --output ../data/benchmarks/results/qwen-clone.json
 
-avatar-check:
-	uv run --directory $(BACKEND_DIR) python scripts/prepare_avatar.py
-
-avatar-preview:
-	ARCH_VIDEO_AVATAR_ENABLED=true ARCH_AVATAR_WORKER_BACKEND=preview uv run --project avatar_runtime arch-avatar-worker --socket data/runtime/avatar/avatar.sock --source data/avatars/idle.mp4 --fps 25 --backend preview
-
-avatar-musetalk:
-	PYTHONPATH=avatar_runtime/src data/runtime/musetalk/bin/python -m avatar_runtime.worker --socket data/runtime/avatar/avatar.sock --source data/avatars/idle.mp4 --fps 25 --backend musetalk --model-root data/models/musetalk/2bcb936e2fddb4d86db4c62fd45b387d0c061571 --cache-dir data/runtime/avatar/preprocessed --musetalk-source data/runtime/musetalk/source
-
-avatar-musetalk-prepare:
-	PYTHONPATH=avatar_runtime/src data/runtime/musetalk/bin/python -m avatar_runtime.prepare --source data/avatars/idle.mp4 --fps 25 --model-root data/models/musetalk/2bcb936e2fddb4d86db4c62fd45b387d0c061571 --cache-dir data/runtime/avatar/preprocessed --musetalk-source data/runtime/musetalk/source
-
-avatar-musetalk-smoke:
-	uv run --no-sync --directory $(BACKEND_DIR) python scripts/smoke_musetalk_avatar.py
-
-avatar-wav2lip-smoke:
-	ARCH_AVATAR_WORKER_BACKEND=wav2lip ARCH_AVATAR_MODEL=wav2lip uv run --no-sync --directory $(BACKEND_DIR) python scripts/smoke_musetalk_avatar.py
-
 avatar-media-wav2lip-prepare:
 	PYTHONPATH=$(CURDIR)/avatar_media_runtime/src $(CURDIR)/data/runtime/musetalk/bin/python -m avatar_media_runtime.prepare --source $(CURDIR)/data/avatars/idle.mp4 --checkpoint $(CURDIR)/data/runtime/livetalking/wav2lip.pth --cache-root $(CURDIR)/data/runtime/avatar-media/avatars --livetalking-source $(CURDIR)/data/runtime/livetalking/source
-
-avatar-browser-smoke:
-	uv run --no-sync --directory $(BACKEND_DIR) python scripts/run_browser_avatar_e2e.py
-
-avatar-owned-browser-smoke: frontend-build
-	uv run --no-sync --directory $(BACKEND_DIR) python scripts/run_owned_browser_avatar_smoke.py
-
-avatar-owned-wav2lip-browser-smoke: frontend-build
-	ARCH_AVATAR_WORKER_BACKEND=wav2lip ARCH_AVATAR_MODEL=wav2lip uv run --no-sync --directory $(BACKEND_DIR) python scripts/run_owned_browser_avatar_smoke.py
 
 avatar-media-browser-smoke: frontend-build
 	uv run --no-sync --directory $(BACKEND_DIR) python scripts/run_owned_avatar_media_browser_smoke.py
