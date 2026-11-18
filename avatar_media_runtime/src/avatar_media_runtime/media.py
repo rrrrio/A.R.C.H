@@ -79,9 +79,22 @@ class DeterministicMedia:
 class SessionMedia:
     """Long-lived tracks that accept completed prepared media after negotiation."""
 
-    def __init__(self, idle_frame_provider: Callable[[], av.VideoFrame] | None = None) -> None:
-        self.audio = _QueuedAudioTrack(emit_silence=idle_frame_provider is not None)
-        self.video = _QueuedVideoTrack(idle_frame_provider)
+    def __init__(
+        self,
+        idle_frame_provider: Callable[[], av.VideoFrame] | None = None,
+        idle_marker_sender: Callable[[int], None] | None = None,
+    ) -> None:
+        self._idle_marker_sender = idle_marker_sender
+        self._pending_idle: dict[tuple[str, str], dict[str, int]] = {}
+        self.audio = _QueuedAudioTrack(
+            emit_silence=idle_frame_provider is not None,
+            on_idle_emitted=self._on_audio_idle,
+        )
+        self.video = _QueuedVideoTrack(idle_frame_provider, on_idle_emitted=self._on_video_idle)
+
+    def set_idle_marker_sender(self, sender: Callable[[int], None] | None) -> None:
+        """Attach the optional recorder-only peer callback after DataChannel negotiation."""
+        self._idle_marker_sender = sender
 
     async def publish(
         self,
@@ -100,6 +113,7 @@ class SessionMedia:
 
     def cancel(self, session_id: str, utterance_id: str) -> None:
         """Discard one interrupted turn without renegotiating the peer tracks."""
+        self._pending_idle.setdefault((session_id, utterance_id), {})
         self.audio.cancel(session_id, utterance_id)
         self.video.cancel(session_id, utterance_id)
 
@@ -108,9 +122,31 @@ class SessionMedia:
         self.audio.stop()
         self.video.stop()
 
+    def _on_audio_idle(self, session_id: str, utterance_id: str, pts: int) -> None:
+        self._on_idle("audio", session_id, utterance_id, pts)
+
+    def _on_video_idle(self, session_id: str, utterance_id: str, pts: int) -> None:
+        self._on_idle("video", session_id, utterance_id, pts)
+
+    def _on_idle(self, track: str, session_id: str, utterance_id: str, pts: int) -> None:
+        state = self._pending_idle.get((session_id, utterance_id))
+        if state is None:
+            return
+        state[track] = pts
+        if "audio" not in state or "video" not in state:
+            return
+        self._pending_idle.pop((session_id, utterance_id), None)
+        if self._idle_marker_sender is not None:
+            self._idle_marker_sender(state["video"])
+
 
 class _QueuedAudioTrack(_AudioTrack):
-    def __init__(self, *, emit_silence: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        emit_silence: bool = False,
+        on_idle_emitted: Callable[[str, str, int], None] | None = None,
+    ) -> None:
         AudioStreamTrack.__init__(self)
         self._queue: asyncio.Queue[tuple[str, str, bytes] | None] = asyncio.Queue()
         self._emit_silence = emit_silence
@@ -122,6 +158,9 @@ class _QueuedAudioTrack(_AudioTrack):
         self._turn_samples = 0
         self._idle_started_at: float | None = None
         self._idle_samples = 0
+        self._on_idle_emitted = on_idle_emitted
+        self._pending_idle_acks: set[tuple[str, str]] = set()
+        self._force_idle = False
 
     async def publish(self, session_id: str, utterance_id: str, pcm: bytes) -> None:
         for offset in range(0, len(pcm), _AUDIO_SAMPLES * 2):
@@ -132,7 +171,7 @@ class _QueuedAudioTrack(_AudioTrack):
         if self.readyState != "live":
             raise MediaStreamError
         while self.readyState == "live":
-            if self._emit_silence and self._queue.empty():
+            if self._emit_silence and (self._force_idle or self._queue.empty()):
                 return await self._recv_silence()
             item = await self._queue.get()
             if item is None or self.readyState != "live":
@@ -160,6 +199,8 @@ class _QueuedAudioTrack(_AudioTrack):
 
     def cancel(self, session_id: str, utterance_id: str) -> None:
         self._cancelled_utterances.add((session_id, utterance_id))
+        self._pending_idle_acks.add((session_id, utterance_id))
+        self._force_idle = True
 
     def _begin_utterance(self, session_id: str, utterance_id: str) -> None:
         if self._pacing_utterance == (session_id, utterance_id):
@@ -180,6 +221,12 @@ class _QueuedAudioTrack(_AudioTrack):
         frame.pts = self._pts
         frame.sample_rate = _AUDIO_RATE
         frame.time_base = Fraction(1, _AUDIO_RATE)
+        pending = tuple(self._pending_idle_acks)
+        self._pending_idle_acks.clear()
+        self._force_idle = False
+        if self._on_idle_emitted is not None:
+            for session_id, utterance_id in pending:
+                self._on_idle_emitted(session_id, utterance_id, frame.pts)
         self._pts += frame.samples
         self._idle_samples += frame.samples
         return frame
@@ -204,7 +251,11 @@ class _QueuedAudioTrack(_AudioTrack):
 
 
 class _QueuedVideoTrack(_VideoTrack):
-    def __init__(self, idle_frame_provider: Callable[[], av.VideoFrame] | None = None) -> None:
+    def __init__(
+        self,
+        idle_frame_provider: Callable[[], av.VideoFrame] | None = None,
+        on_idle_emitted: Callable[[str, str, int], None] | None = None,
+    ) -> None:
         VideoStreamTrack.__init__(self)
         self._queue: asyncio.Queue[tuple[str, str, av.VideoFrame] | None] = asyncio.Queue()
         self._idle_frame_provider = idle_frame_provider
@@ -216,6 +267,9 @@ class _QueuedVideoTrack(_VideoTrack):
         self._turn_frames = 0
         self._idle_started_at: float | None = None
         self._idle_frames = 0
+        self._on_idle_emitted = on_idle_emitted
+        self._pending_idle_acks: set[tuple[str, str]] = set()
+        self._force_idle = False
 
     async def publish(
         self, session_id: str, utterance_id: str, frames: list[av.VideoFrame]
@@ -227,7 +281,7 @@ class _QueuedVideoTrack(_VideoTrack):
         if self.readyState != "live":
             raise MediaStreamError
         while self.readyState == "live":
-            if self._idle_frame_provider is not None and self._queue.empty():
+            if self._idle_frame_provider is not None and (self._force_idle or self._queue.empty()):
                 return await self._recv_idle()
             item = await self._queue.get()
             if item is None or self.readyState != "live":
@@ -252,6 +306,8 @@ class _QueuedVideoTrack(_VideoTrack):
 
     def cancel(self, session_id: str, utterance_id: str) -> None:
         self._cancelled_utterances.add((session_id, utterance_id))
+        self._pending_idle_acks.add((session_id, utterance_id))
+        self._force_idle = True
 
     def _begin_utterance(self, session_id: str, utterance_id: str) -> None:
         if self._pacing_utterance == (session_id, utterance_id):
@@ -271,6 +327,12 @@ class _QueuedVideoTrack(_VideoTrack):
         frame = self._idle_frame_provider()
         frame.pts = self._pts
         frame.time_base = Fraction(1, _VIDEO_FPS)
+        pending = tuple(self._pending_idle_acks)
+        self._pending_idle_acks.clear()
+        self._force_idle = False
+        if self._on_idle_emitted is not None:
+            for session_id, utterance_id in pending:
+                self._on_idle_emitted(session_id, utterance_id, frame.pts)
         self._pts += 1
         self._idle_frames += 1
         return frame

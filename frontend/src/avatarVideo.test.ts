@@ -143,4 +143,71 @@ describe('AvatarVideoClient', () => {
     await client.close()
     expect(ownership).toHaveBeenLastCalledWith(false)
   })
+
+  it('creates a recorder channel only when explicitly enabled and accepts fixed idle markers', async () => {
+    const holder: {
+      channel: { onmessage: ((event: MessageEvent) => void) | null } | null
+      connection: { ontrack: ((event: RTCTrackEvent) => void) | null } | null
+    } = { channel: null, connection: null }
+    const createDataChannel = vi.fn(() => {
+      const channel = { label: 'arch-avatar-acceptance-v1', onmessage: null, close: vi.fn() }
+      holder.channel = channel
+      return channel
+    })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal(
+      'RTCPeerConnection',
+      class {
+        iceGatheringState = 'complete' as RTCIceGatheringState
+        connectionState = 'new' as RTCPeerConnectionState
+        localDescription = { type: 'offer' as const, sdp: 'v=0' }
+        ontrack: ((event: RTCTrackEvent) => void) | null = null
+        onconnectionstatechange: (() => void) | null = null
+
+        constructor() { holder.connection = this }
+        addTransceiver() {}
+        createDataChannel = createDataChannel
+        async createOffer() { return { type: 'offer' as const, sdp: 'v=0' } }
+        async setLocalDescription() {}
+        async setRemoteDescription() {}
+        close() {}
+      },
+    )
+    const marker = vi.fn()
+    const firstAudio = vi.fn()
+    const firstVideo = vi.fn()
+    let videoCallbacks = 0
+    const video = {
+      autoplay: false,
+      muted: false,
+      pause: vi.fn(),
+      play: vi.fn().mockResolvedValue(undefined),
+      playsInline: false,
+      requestVideoFrameCallback: vi.fn((callback) => {
+        if (videoCallbacks++ === 0) callback(100, { mediaTime: 0 })
+      }),
+      srcObject: null,
+    } as unknown as HTMLVideoElement
+    new AvatarVideoClient('csrf-token', video, () => undefined, () => undefined, () => undefined, {
+      onCancellationStart: () => undefined,
+      onFirstAudio: firstAudio,
+      onFirstVideo: firstVideo,
+      onIdleMarker: marker,
+      onVideoFrame: () => undefined,
+    })
+
+    expect(createDataChannel).toHaveBeenCalledWith('arch-avatar-acceptance-v1')
+    holder.channel?.onmessage?.({ data: '{"type":"idle","video_pts":25}' } as MessageEvent)
+    holder.channel?.onmessage?.({ data: '{"type":"idle","video_pts":"25"}' } as MessageEvent)
+    const stream = {} as MediaStream
+    const audio = { kind: 'audio', onunmute: null } as unknown as MediaStreamTrack
+    holder.connection?.ontrack?.({ streams: [stream], track: audio } as unknown as RTCTrackEvent)
+    audio.onunmute?.(new Event('unmute'))
+    holder.connection?.ontrack?.({ streams: [stream], track: { kind: 'video' } } as unknown as RTCTrackEvent)
+    expect(marker).toHaveBeenCalledExactlyOnceWith(25)
+    expect(firstAudio).toHaveBeenCalledOnce()
+    expect(firstVideo).toHaveBeenCalledOnce()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })

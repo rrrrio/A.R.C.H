@@ -635,6 +635,7 @@ function App() {
                 <AvatarVideoPreview
                   csrfToken={session.csrfToken}
                   onAudioOwnershipChange={setAvatarMediaConnected}
+                  voiceActivity={conversation.activity}
                 />
                 <AvatarPreview setEnergySink={setAvatarEnergySink} />
               </section>

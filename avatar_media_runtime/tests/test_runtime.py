@@ -14,7 +14,12 @@ from aiortc import RTCPeerConnection, RTCSessionDescription
 
 from avatar_media_runtime.contracts import PreparedMedia
 from avatar_media_runtime.media import SessionMedia
-from avatar_media_runtime.runtime import AvatarMediaRuntime, MediaPreparationError, _log_timing
+from avatar_media_runtime.runtime import (
+    AvatarMediaRuntime,
+    MediaPreparationError,
+    _attach_recorder_channel,
+    _log_timing,
+)
 from avatar_media_runtime.tickets import MediaTicketSigner
 
 
@@ -46,6 +51,83 @@ def test_runtime_answer_contains_audio_and_video_on_one_peer() -> None:
     sdp = asyncio.run(exercise())
     assert "m=audio" in sdp
     assert "m=video" in sdp
+
+
+def test_recorder_channel_sends_only_fixed_idle_timing_after_both_tracks_return() -> None:
+    class Channel:
+        label = "arch-avatar-acceptance-v1"
+        readyState = "open"
+
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        def send(self, message: str) -> None:
+            self.messages.append(message)
+
+    channel = Channel()
+    media = SessionMedia(idle_frame_provider=lambda: av.VideoFrame(8, 8, "rgb24"))
+    _attach_recorder_channel(media, channel)  # type: ignore[arg-type]
+
+    async def exercise() -> None:
+        await media.publish(
+            "session", "turn", b"\x01\x00" * 480, [av.VideoFrame(8, 8, "rgb24")], 25
+        )
+        await media.audio.recv()
+        await media.video.recv()
+        media.cancel("session", "turn")
+        await media.audio.recv()
+        assert channel.messages == []
+        idle = await media.video.recv()
+        assert channel.messages == [f'{{"type":"idle","video_pts":{idle.pts}}}']
+        media.stop()
+
+    asyncio.run(exercise())
+
+
+def test_runtime_delivers_idle_marker_over_a_real_browser_created_datachannel() -> None:
+    signer = MediaTicketSigner(b"test-secret-value")
+    ticket = signer.verify_and_consume(
+        signer.issue("browser", datetime.now(UTC) + timedelta(minutes=1)), "browser"
+    )
+    runtime = AvatarMediaRuntime(idle_frame_provider=lambda: av.VideoFrame(8, 8, "rgb24"))
+
+    async def exercise() -> str:
+        browser = RTCPeerConnection()
+        messages: asyncio.Queue[str] = asyncio.Queue()
+        channel = browser.createDataChannel("arch-avatar-acceptance-v1")
+        browser.addTransceiver("audio", direction="recvonly")
+        browser.addTransceiver("video", direction="recvonly")
+
+        @channel.on("message")
+        def receive(message: object) -> None:
+            assert isinstance(message, str)
+            messages.put_nowait(message)
+
+        offer = await browser.createOffer()
+        await browser.setLocalDescription(offer)
+        for _ in range(50):
+            if browser.iceGatheringState == "complete":
+                break
+            await asyncio.sleep(0.01)
+        local = browser.localDescription
+        assert local is not None and local.sdp is not None
+        answer = await runtime.create_session(ticket, local.sdp)
+        await browser.setRemoteDescription(RTCSessionDescription(sdp=answer.sdp, type="answer"))
+        for _ in range(100):
+            if channel.readyState == "open":
+                break
+            await asyncio.sleep(0.01)
+        assert channel.readyState == "open"
+        media = runtime._sessions[answer.session_id][1]
+        media.cancel(answer.session_id, "turn")
+        message = await asyncio.wait_for(messages.get(), timeout=1)
+        await runtime.close_session(answer.session_id)
+        await browser.close()
+        return message
+
+    marker = json.loads(asyncio.run(exercise()))
+    assert marker["type"] == "idle"
+    assert isinstance(marker["video_pts"], int)
 
 
 def test_submit_prepares_original_pcm_and_cancel_fences_the_utterance() -> None:

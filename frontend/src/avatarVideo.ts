@@ -8,6 +8,14 @@ export type AvatarVideoStatus = {
   detail?: string | null
 }
 
+export type AvatarAcceptanceCallbacks = {
+  onCancellationStart: (timestampMs: number) => void
+  onFirstAudio: (elapsedMs: number) => void
+  onFirstVideo: (elapsedMs: number) => void
+  onIdleMarker: (videoPts: number) => void
+  onVideoFrame: (timestampMs: number, mediaTimeSeconds: number) => void
+}
+
 export function stateFromAvatarStatus(status: AvatarVideoStatus): AvatarVideoState {
   if (status.state === 'rebuilding') return 'rebuilding'
   if (!status.enabled) return 'disabled'
@@ -71,6 +79,8 @@ export class AvatarVideoClient {
   private readonly onState: (state: AvatarVideoState) => void
   private readonly onVideoFrame: () => void
   private readonly onAudioOwnership: (active: boolean) => void
+  private readonly acceptance: AvatarAcceptanceCallbacks | undefined
+  private recorderChannel: RTCDataChannel | null = null
 
   constructor(
     csrfToken: string,
@@ -78,28 +88,38 @@ export class AvatarVideoClient {
     onState: (state: AvatarVideoState) => void = () => undefined,
     onVideoFrame: () => void = () => undefined,
     onAudioOwnership: (active: boolean) => void = () => undefined,
+    acceptance?: AvatarAcceptanceCallbacks,
   ) {
     this.csrfToken = csrfToken
     this.video = video
     this.onState = onState
     this.onVideoFrame = onVideoFrame
     this.onAudioOwnership = onAudioOwnership
+    this.acceptance = acceptance
     this.video.muted = true
     this.video.autoplay = true
     this.video.playsInline = true
     this.connection.addTransceiver('audio', { direction: 'recvonly' })
     this.connection.addTransceiver('video', { direction: 'recvonly' })
+    if (acceptance) {
+      this.recorderChannel = this.connection.createDataChannel('arch-avatar-acceptance-v1')
+      this.recorderChannel.onmessage = (event) => this.handleRecorderMarker(event.data)
+    }
     this.connection.ontrack = (event) => {
       if (!this.remoteStream) this.remoteStream = event.streams[0] ?? new MediaStream()
       if (event.streams.length === 0) this.remoteStream.addTrack(event.track)
       this.hasAudioTrack ||= event.track.kind === 'audio'
       this.hasVideoTrack ||= event.track.kind === 'video'
       if (event.track.kind === 'audio') {
-        event.track.onunmute = () => this.notifyBrowserTiming('browser-first-audio-unmuted')
+        event.track.onunmute = () => {
+          const elapsedMs = this.elapsedMs()
+          if (this.acceptance) this.acceptance.onFirstAudio(elapsedMs)
+          else this.notifyBrowserTiming('browser-first-audio-unmuted', elapsedMs)
+        }
       }
       this.video.srcObject = this.remoteStream
       if (event.track.kind === 'video') {
-        this.video.requestVideoFrameCallback(() => this.notifyVideoFrame())
+        this.video.requestVideoFrameCallback((timestampMs, metadata) => this.notifyVideoFrame(timestampMs, metadata.mediaTime))
       }
       this.completeMediaConnection()
     }
@@ -140,6 +160,8 @@ export class AvatarVideoClient {
     this.video.srcObject = null
     this.releaseAudioOwnership()
     this.connection.close()
+    this.recorderChannel?.close()
+    this.recorderChannel = null
     if (this.serverSessionMayExist) {
       await fetch('/api/avatar/session', {
         method: 'DELETE',
@@ -149,12 +171,27 @@ export class AvatarVideoClient {
     this.serverSessionMayExist = false
   }
 
-  private notifyVideoFrame(): void {
-    if (this.closing || this.videoFrameNotified) return
-    this.videoFrameNotified = true
-    this.notifyBrowserTiming('browser-first-video-decoded')
-    this.onVideoFrame()
-    this.onState('playing')
+  beginAcceptanceCancellation(): void {
+    if (!this.videoFrameNotified || this.closing) return
+    this.acceptance?.onCancellationStart(performance.now())
+  }
+
+  private notifyVideoFrame(timestampMs: number, mediaTimeSeconds: number): void {
+    if (this.closing) return
+    if (!this.videoFrameNotified) {
+      this.videoFrameNotified = true
+      const elapsedMs = this.elapsedMs()
+      if (this.acceptance) this.acceptance.onFirstVideo(elapsedMs)
+      else this.notifyBrowserTiming('browser-first-video-decoded', elapsedMs)
+      this.onVideoFrame()
+      this.onState('playing')
+    }
+    this.acceptance?.onVideoFrame(timestampMs, mediaTimeSeconds)
+    if (this.acceptance) {
+      this.video.requestVideoFrameCallback((nextTimestampMs, metadata) => {
+        this.notifyVideoFrame(nextTimestampMs, metadata.mediaTime)
+      })
+    }
   }
 
   private completeMediaConnection(): void {
@@ -174,7 +211,10 @@ export class AvatarVideoClient {
     this.onAudioOwnership(false)
   }
 
-  private notifyBrowserTiming(stage: 'browser-first-audio-unmuted' | 'browser-first-video-decoded'): void {
+  private notifyBrowserTiming(
+    stage: 'browser-first-audio-unmuted' | 'browser-first-video-decoded',
+    elapsedMs = this.elapsedMs(),
+  ): void {
     const alreadyNotified = stage === 'browser-first-audio-unmuted'
       ? this.audioTimingNotified
       : this.videoTimingNotified
@@ -184,8 +224,29 @@ export class AvatarVideoClient {
     void fetch('/api/avatar/timing', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': this.csrfToken },
-      body: JSON.stringify({ stage, elapsed_ms: Math.max(0, Math.round(performance.now() - this.connectedAt)) }),
+      body: JSON.stringify({ stage, elapsed_ms: elapsedMs }),
     }).catch(() => undefined)
+  }
+
+  private elapsedMs(): number {
+    return Math.max(0, Math.round(performance.now() - this.connectedAt))
+  }
+
+  private handleRecorderMarker(data: unknown): void {
+    if (typeof data !== 'string') return
+    try {
+      const parsed: unknown = JSON.parse(data)
+      if (
+        !parsed
+        || typeof parsed !== 'object'
+        || (parsed as Record<string, unknown>).type !== 'idle'
+        || !Number.isInteger((parsed as Record<string, unknown>).video_pts)
+        || Number((parsed as Record<string, unknown>).video_pts) < 0
+      ) return
+      this.acceptance?.onIdleMarker(Number((parsed as Record<string, unknown>).video_pts))
+    } catch {
+      // The opt-in data channel only accepts fixed timing markers.
+    }
   }
 }
 

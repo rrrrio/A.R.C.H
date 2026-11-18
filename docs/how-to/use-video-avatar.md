@@ -105,13 +105,41 @@ live audio/video track、至少 30 个视频帧回调的有效帧率在 22-28fps
 25fps，所有相邻回调均未超过 70ms。该结果只证明本机 Chrome 的传输与播放所有权，不应描述为
 目标设备或主观听感验收。
 
+该 smoke 也会显式启用“目标设备验收”，以覆盖浏览器到 runtime 的验收 DataChannel 协商；它不生成
+观察 JSON，也不替代目标设备的二十轮验收。
+
 ## 目标设备验收
 
 主机 smoke 通过后，必须在实际目标设备完成 20 个独立媒体会话。每一轮记录到受忽略 JSON 的
 固定字段只有：`audio_first_ms`、`video_first_ms`、`fps`、`cancellation_ms`、
-`watermark_absent` 和 `clarity_acceptable`。前两个值是同一浏览器会话中首个已解码音频/视频的
-单调计时；`fps` 是稳定播放窗口的有效帧率；`cancellation_ms` 从该设备发起插话到两条远端轨道
-停止。不要记录会话 ID、用户名、文本、PCM、图像、SDP、ticket 或设备标识。
+`watermark_absent` 和 `clarity_acceptable`。每轮先显式启用“目标设备验收”，再启用视频并完成一次
+回答和一次插话；结束后关闭视频，使下一轮重新建立独立媒体会话。浏览器在本地自动收集前四个数值，
+不会上传或持久化它们。`audio_first_ms` 是同一浏览器会话中 audio track 首次 unmute 的单调计时，
+`video_first_ms` 是首个已解码视频帧的单调计时；`fps` 是首 30 个视频帧回调窗口的有效帧率；
+`cancellation_ms` 是设备发起插话到浏览器解码确认的首个 idle 视频帧。验收模式不会调用既有的
+`/api/avatar/timing` 服务端日志端点。该确认
+只在 runtime 已为音频和视频都发送 idle 帧后生效，因此不会把仍在缓冲的旧说话画面计为已取消。
+
+验收数据流如下。DataChannel 只含固定事件名和视频 RTP 时间戳；它不含会话 ID、用户名、文本、PCM、
+图像、SDP、ticket 或设备标识。关闭验收模式会清空尚未导出的浏览器内存记录；关闭视频只会丢弃
+尚未保存的当前轮次。
+
+```text
+[browser: explicit acceptance mode]
+       | first audio/video callback, 30-frame cadence
+       v
+[local timing-only observation] <-- [runtime: both tracks returned to idle]
+       |                                        |
+       +----------- WebRTC data marker --------+
+       |
+       v
+[manual watermark + clarity booleans] --> [downloaded 20-run JSON]
+```
+
+完成一轮后，在数字人区域确认无水印和清晰度合格并先保存本轮，再关闭视频以开始下一轮独立会话。
+二十轮完成时下载 JSON，将文件放入主机的 `data/benchmarks/results/avatar-device-observations.json`。
+关闭当前视频只丢弃未保存的本轮数据；关闭验收模式会清空尚未导出的浏览器内存记录。浏览器不会自动替人
+判断水印或主观清晰度。
 
 ```json
 [

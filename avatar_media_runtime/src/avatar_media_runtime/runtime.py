@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 import av
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCDataChannel, RTCPeerConnection, RTCSessionDescription
 
 from avatar_media_runtime.contracts import LipSyncBackend
 from avatar_media_runtime.media import SessionMedia
@@ -72,6 +72,12 @@ class AvatarMediaRuntime:
             try:
                 peer.addTrack(media.audio)
                 peer.addTrack(media.video)
+
+                @peer.on("datachannel")
+                def accept_recorder_channel(channel: RTCDataChannel) -> None:
+                    """Expose only a timing marker to an explicitly opted-in browser recorder."""
+                    _attach_recorder_channel(media, channel)
+
                 await peer.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type="offer"))
                 answer = await peer.createAnswer()
                 await peer.setLocalDescription(answer)
@@ -220,3 +226,22 @@ def _log_timing(session_id: str, utterance_id: str, stage: str) -> None:
             sort_keys=True,
         ),
     )
+
+
+def _attach_recorder_channel(media: SessionMedia, channel: RTCDataChannel) -> None:
+    """Bind only the fixed recorder label; no browser input is accepted on this channel."""
+    if channel.label != "arch-avatar-acceptance-v1":
+        return
+
+    def send_idle_marker(video_pts: int) -> None:
+        if channel.readyState != "open":
+            return
+        channel.send(
+            json.dumps(
+                {"type": "idle", "video_pts": video_pts},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+
+    media.set_idle_marker_sender(send_idle_marker)
