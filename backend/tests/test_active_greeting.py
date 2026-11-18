@@ -4,7 +4,12 @@ import asyncio
 
 import pytest
 
+from arch.conversation.profiles import ActiveGreetingPolicy as StoredGreetingPolicy
 from arch.voice.active_greeting import ActiveGreetingController, ActiveGreetingPolicy
+from arch.voice.pipeline import (
+    DEFAULT_PIPELINE_IDLE_TIMEOUT_SECONDS,
+    _pipeline_idle_timeout_seconds,
+)
 
 
 def test_active_greeting_policy_rejects_unbounded_idle_times() -> None:
@@ -29,6 +34,14 @@ def test_disabled_active_greeting_never_creates_a_background_timer() -> None:
         assert not greeted
 
     asyncio.run(exercise())
+
+
+def test_enabled_active_greeting_disables_the_worker_idle_timeout() -> None:
+    """The default five-minute Pipecat timeout must not beat a five-minute greeting."""
+    assert _pipeline_idle_timeout_seconds(StoredGreetingPolicy(True, 5)) is None
+    assert _pipeline_idle_timeout_seconds(StoredGreetingPolicy(False, 5)) == (
+        DEFAULT_PIPELINE_IDLE_TIMEOUT_SECONDS
+    )
 
 
 def test_active_greeting_rearms_after_each_idle_interval_without_a_daily_cap() -> None:

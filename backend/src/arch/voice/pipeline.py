@@ -45,6 +45,16 @@ from arch.voice.webrtc_interrupt import (
 from arch.voice.websocket import BrowserPCMSerializer
 
 LAN_VAD_PARAMS = VADParams(confidence=0.6, min_volume=0.25)
+DEFAULT_PIPELINE_IDLE_TIMEOUT_SECONDS = 300.0
+
+
+def _pipeline_idle_timeout_seconds(
+    active_greeting_policy: StoredGreetingPolicy | None,
+) -> float | None:
+    """Keep an opted-in greeting session alive until its owner closes the media connection."""
+    if active_greeting_policy is not None and active_greeting_policy.enabled:
+        return None
+    return DEFAULT_PIPELINE_IDLE_TIMEOUT_SECONDS
 
 
 def create_pipeline_worker(
@@ -283,4 +293,5 @@ def _create_pipeline_worker(
     return PipelineWorker(
         pipeline,
         params=PipelineParams(audio_in_sample_rate=16000, audio_out_sample_rate=24000),
+        idle_timeout_secs=_pipeline_idle_timeout_seconds(active_greeting_policy),
     )
