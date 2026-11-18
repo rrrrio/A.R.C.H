@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated, TypedDict, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,6 +14,7 @@ from arch.conversation.profiles import (
     MAX_PROFILE_NAME_CHARS,
     MAX_PROFILE_PERSONA_CHARS,
     MAX_PROFILE_STYLE_CHARS,
+    ActiveGreetingPolicy,
     ConversationExample,
     ConversationProfile,
     ConversationProfileStore,
@@ -52,6 +53,15 @@ class SelectionPayload(BaseModel):
     profile_id: str | None = None
 
 
+class ActiveGreetingPayload(BaseModel):
+    """Explicit, bounded opt-in policy for one selected conversation profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    minimum_idle_minutes: int = Field(ge=5, le=60)
+
+
 class ProfileResponse(BaseModel):
     """Browser-safe persisted profile fields without hidden prompt instructions."""
 
@@ -72,6 +82,17 @@ class ProfilesResponse(BaseModel):
 
     selected_id: str | None
     profiles: list[ProfileResponse]
+
+
+class _ProfileWriteArguments(TypedDict):
+    """The exact validated keyword set accepted by the persistent store."""
+
+    name: str
+    enabled: bool
+    persona: str
+    speaking_style: str
+    examples: tuple[ConversationExample, ...]
+    social_temperature: float
 
 
 def get_conversation_profile_store(request: Request) -> ConversationProfileStore:
@@ -166,7 +187,50 @@ def delete_profile(
         raise HTTPException(status_code=404, detail="Unknown conversation profile.") from error
 
 
-def _write_arguments(payload: ProfileWritePayload) -> dict[str, object]:
+@router.put("/profiles/{profile_id}/active-greeting", response_model=ActiveGreetingPayload)
+def replace_active_greeting_policy(
+    profile_id: str,
+    payload: ActiveGreetingPayload,
+    request: Request,
+    auth: AuthServiceDependency,
+    store: ConversationProfileStoreDependency,
+) -> ActiveGreetingPayload:
+    """Explicitly enable, disable, or bound greetings for a future media-session snapshot."""
+    auth.require_csrf(request)
+    try:
+        policy = store.replace_active_greeting_policy(
+            profile_id,
+            ActiveGreetingPolicy(**payload.model_dump()),
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Unknown conversation profile.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return ActiveGreetingPayload(
+        enabled=policy.enabled,
+        minimum_idle_minutes=policy.minimum_idle_minutes,
+    )
+
+
+@router.get("/profiles/{profile_id}/active-greeting", response_model=ActiveGreetingPayload)
+def get_active_greeting_policy(
+    profile_id: str,
+    request: Request,
+    auth: AuthServiceDependency,
+    store: ConversationProfileStoreDependency,
+) -> ActiveGreetingPayload:
+    """Read the bounded opt-in policy without exposing any media-session internals."""
+    auth.require_session(request)
+    if store.get(profile_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown conversation profile.")
+    policy = store.active_greeting_policy(profile_id)
+    return ActiveGreetingPayload(
+        enabled=policy.enabled,
+        minimum_idle_minutes=policy.minimum_idle_minutes,
+    )
+
+
+def _write_arguments(payload: ProfileWritePayload) -> _ProfileWriteArguments:
     return {
         "name": payload.name,
         "enabled": payload.enabled,

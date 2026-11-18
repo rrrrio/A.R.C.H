@@ -21,6 +21,12 @@ MAX_SOCIAL_TEMPERATURE = 0.8
 
 
 @dataclass(frozen=True, slots=True)
+class ActiveGreetingPolicy:
+    enabled: bool
+    minimum_idle_minutes: int
+
+
+@dataclass(frozen=True, slots=True)
 class ConversationExample:
     """One bounded user/assistant exchange used only as a style example."""
 
@@ -221,6 +227,38 @@ class ConversationProfileStore:
             )
             connection.execute("DELETE FROM conversation_profiles WHERE id = ?", (profile_id,))
 
+    def active_greeting_policy(self, profile_id: str) -> ActiveGreetingPolicy:
+        """Return the bounded opt-in policy; absent rows are deliberately disabled."""
+        with self._connect(readonly=True) as connection:
+            row = connection.execute(
+                "SELECT enabled, minimum_idle_minutes "
+                "FROM conversation_active_greeting_policies WHERE profile_id = ?",
+                (profile_id,),
+            ).fetchone()
+        if row is None:
+            return ActiveGreetingPolicy(False, 10)
+        return ActiveGreetingPolicy(bool(row[0]), int(row[1]))
+
+    def replace_active_greeting_policy(
+        self, profile_id: str, policy: ActiveGreetingPolicy
+    ) -> ActiveGreetingPolicy:
+        """Store server-validated opt-in settings only for an existing profile."""
+        if not _is_uuid(profile_id):
+            raise KeyError("Unknown conversation profile.")
+        _validate_active_greeting_policy(policy)
+        with self._connect() as connection:
+            self._for_update(connection, profile_id)
+            connection.execute(
+                """INSERT INTO conversation_active_greeting_policies(
+                    profile_id, enabled, minimum_idle_minutes, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(profile_id) DO UPDATE SET enabled = excluded.enabled,
+                    minimum_idle_minutes = excluded.minimum_idle_minutes,
+                    updated_at = excluded.updated_at""",
+                (profile_id, int(policy.enabled), policy.minimum_idle_minutes, _now()),
+            )
+        return policy
+
     @staticmethod
     def _for_update(connection: sqlite3.Connection, profile_id: str) -> ConversationProfile:
         if not _is_uuid(profile_id):
@@ -260,6 +298,11 @@ def _validated_fields(
         _examples(examples),
         _temperature(social_temperature),
     )
+
+
+def _validate_active_greeting_policy(policy: ActiveGreetingPolicy) -> None:
+    if not 5 <= policy.minimum_idle_minutes <= 60:
+        raise ValueError("Minimum idle time must be between 5 and 60 minutes.")
 
 
 def _text(value: str, maximum: int, label: str) -> str:

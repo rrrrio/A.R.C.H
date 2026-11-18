@@ -146,6 +146,41 @@ class LlamaCppAgentCore:
             return
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
 
+    async def respond_to_active_greeting(
+        self, utterance_id: str
+    ) -> AsyncIterator[AgentResponseEvent]:
+        """Produce one brief profile-styled greeting without tools, history, or user content."""
+        if self._profile is None or not self._profile.enabled:
+            yield AgentResponseEvent(utterance_id, AgentResponseKind.END)
+            return
+        payload: dict[str, object] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": self._system_prompt},
+                *profile_messages(self._profile),
+                {
+                    "role": "system",
+                    "content": (
+                        "在用户主动启用的空闲问候中，只说一句简短自然的中文问候或问题。"
+                        "不得使用工具、不得编造用户事实。"
+                    ),
+                },
+            ],
+            "stream": True,
+            "temperature": self._profile.social_temperature,
+            "top_p": 0.95,
+            "max_tokens": 64,
+            "tool_choice": "none",
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        try:
+            async for event in self._stream_with_emotion(utterance_id, payload, None):
+                yield event
+        except (httpx.HTTPError, ValueError):
+            yield _unavailable_event(utterance_id)
+            return
+        yield AgentResponseEvent(utterance_id, AgentResponseKind.END)
+
     async def _classify_turn(self, request: AgentRequest) -> ConversationTurnKind:
         """Allow social sampling only after a bounded, tool-free local classification."""
         if self._profile is None or not self._profile.enabled:

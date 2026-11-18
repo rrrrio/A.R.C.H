@@ -11,7 +11,7 @@
 - [管理本地知识库](how-to/manage-knowledge.md)：放入资料、建立索引、确认删除生效。
 - [管理审批记忆](how-to/manage-memory.md)：审阅、批准、验证和删除本机长期偏好与事实。
 - [管理本地声音参考](how-to/manage-voice-profiles.md)：保存经确认授权的常见格式短音频，并选择本机克隆声音。
-- [管理对话人物卡](how-to/manage-conversation-profiles.md)：创建本地口吻和互动示例，并在下一次语音连接时启用。
+- [管理对话人物卡](how-to/manage-conversation-profiles.md)：创建本地口吻和互动示例，配置会话内主动问候，并在下一次语音连接时启用。
 - [使用本机主机 Agent](how-to/use-host-agent.md)：选择终端权限档位、审阅精确调用授权并撤销活动 scope。
 - [准备可选 Qwen 声音克隆运行时](how-to/prepare-qwen-tts.md)：先审阅无写入计划，再明确下载、校验和隔离可选制品。
 - [备份和恢复本地数据](how-to/backup-and-restore.md)：创建经校验的数据库和知识资料归档，并安全恢复。

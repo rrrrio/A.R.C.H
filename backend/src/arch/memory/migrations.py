@@ -224,6 +224,20 @@ MIGRATIONS: tuple[Migration, ...] = (
         );
         """,
     ),
+    Migration(
+        9,
+        "create bounded active greeting policy table",
+        """
+        CREATE TABLE conversation_active_greeting_policies (
+            profile_id TEXT PRIMARY KEY REFERENCES conversation_profiles(id) ON DELETE CASCADE,
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)) DEFAULT 0,
+            minimum_idle_minutes INTEGER NOT NULL CHECK (
+                minimum_idle_minutes >= 5 AND minimum_idle_minutes <= 60
+            ) DEFAULT 10,
+            updated_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 

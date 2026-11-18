@@ -4,7 +4,10 @@ import {
   createConversationProfile,
   deleteConversationProfile,
   fetchConversationProfiles,
+  fetchActiveGreetingPolicy,
   replaceConversationProfile,
+  replaceActiveGreetingPolicy,
+  type ActiveGreetingPolicy,
   selectConversationProfile,
   type ConversationExample,
   type ConversationProfile,
@@ -14,6 +17,7 @@ import {
 const emptyInput: ConversationProfileInput = {
   name: '', enabled: true, persona: '', speaking_style: '', examples: [], social_temperature: 0.65,
 }
+const defaultGreetingPolicy: ActiveGreetingPolicy = { enabled: false, minimum_idle_minutes: 10 }
 
 export function ConversationProfilesPanel({ csrfToken }: { csrfToken: string }) {
   const [profiles, setProfiles] = useState<ConversationProfile[]>([])
@@ -21,6 +25,7 @@ export function ConversationProfilesPanel({ csrfToken }: { csrfToken: string }) 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState<ConversationProfileInput>(emptyInput)
   const [busy, setBusy] = useState(false)
+  const [greetingPolicy, setGreetingPolicy] = useState<ActiveGreetingPolicy>(defaultGreetingPolicy)
   const [error, setError] = useState<string | null>(null)
 
   async function refresh() {
@@ -45,6 +50,7 @@ export function ConversationProfilesPanel({ csrfToken }: { csrfToken: string }) 
     setEditingId(profile.id)
     setDraft({ name: profile.name, enabled: profile.enabled, persona: profile.persona, speaking_style: profile.speaking_style, examples: profile.examples, social_temperature: profile.social_temperature })
     setError(null)
+    void fetchActiveGreetingPolicy(profile.id).then(setGreetingPolicy).catch(() => setGreetingPolicy(defaultGreetingPolicy))
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -53,7 +59,10 @@ export function ConversationProfilesPanel({ csrfToken }: { csrfToken: string }) 
     setError(null)
     try {
       if (editingId === null) await createConversationProfile(csrfToken, draft)
-      else await replaceConversationProfile(csrfToken, editingId, draft)
+      else {
+        await replaceConversationProfile(csrfToken, editingId, draft)
+        await replaceActiveGreetingPolicy(csrfToken, editingId, greetingPolicy)
+      }
       setEditingId(null)
       setDraft(emptyInput)
       await refresh()
@@ -91,7 +100,7 @@ export function ConversationProfilesPanel({ csrfToken }: { csrfToken: string }) 
   }
 
   return <div className="conversation-profiles">
-    <p>人物卡只控制口吻与互动方式。它不会改变主机工具、记忆审批或本地资料的安全规则。选择后在下一次连接语音时生效。</p>
+    <p>人物卡只控制口吻与互动方式。它不会改变主机工具、记忆审批或本地资料的安全规则。选择和主动问候设置均在下一次连接语音时生效。</p>
     {error ? <p className="form-error" role="status">{error}</p> : null}
     <div className="conversation-profile-list roller-list" onScroll={handleConversationProfileScroll}>
       <button type="button" className="secondary-button" disabled={busy || selectedId === null} onClick={() => void select(null)}>使用中性助手</button>
@@ -118,6 +127,10 @@ export function ConversationProfilesPanel({ csrfToken }: { csrfToken: string }) 
         <option value={0.35}>克制</option><option value={0.5}>平衡</option><option value={0.65}>自然</option><option value={0.8}>活跃</option>
       </select>
       <label className="consent-row"><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))} />在下一次连接时启用此人物卡</label>
+      {editingId !== null ? <fieldset disabled={busy}><legend>主动问候</legend>
+        <label className="consent-row"><input type="checkbox" checked={greetingPolicy.enabled} onChange={(event) => setGreetingPolicy((current) => ({ ...current, enabled: event.target.checked }))} />在连接空闲时允许主动问候</label>
+        <label htmlFor="greeting-idle">连续空闲分钟</label><input id="greeting-idle" type="number" min={5} max={60} value={greetingPolicy.minimum_idle_minutes} onChange={(event) => setGreetingPolicy((current) => ({ ...current, minimum_idle_minutes: Number(event.target.value) }))} />
+      </fieldset> : null}
       {draft.examples.map((example, index) => <div className="conversation-example" key={index}>
         <label htmlFor={`conversation-example-user-${index}`}>示例用户话语</label>
         <input id={`conversation-example-user-${index}`} value={example.user} maxLength={400} required disabled={busy} onChange={(event) => updateExample(index, 'user', event.target.value)} />

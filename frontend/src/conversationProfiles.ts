@@ -15,6 +15,11 @@ export type ConversationProfile = {
 
 export type ConversationProfiles = { selected_id: string | null; profiles: ConversationProfile[] }
 
+export type ActiveGreetingPolicy = {
+  enabled: boolean
+  minimum_idle_minutes: number
+}
+
 export type ConversationProfileInput = Omit<ConversationProfile, 'id' | 'version' | 'created_at' | 'updated_at'>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,6 +73,26 @@ export async function selectConversationProfile(csrfToken: string, profileId: st
 export async function deleteConversationProfile(csrfToken: string, profileId: string): Promise<void> {
   const response = await fetch(`/api/conversation/profiles/${encodeURIComponent(profileId)}`, { method: 'DELETE', headers: { 'X-CSRF-Token': csrfToken } })
   if (!response.ok) throw new Error(readErrorDetail(await readJson(response)) ?? 'Conversation profile deletion failed.')
+}
+
+export async function replaceActiveGreetingPolicy(csrfToken: string, profileId: string, policy: ActiveGreetingPolicy): Promise<ActiveGreetingPolicy> {
+  const response = await fetch(`/api/conversation/profiles/${encodeURIComponent(profileId)}/active-greeting`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify(policy),
+  })
+  const body = await readJson(response)
+  if (!response.ok || !isActiveGreetingPolicy(body)) throw new Error(readErrorDetail(body) ?? 'Active greeting policy update failed.')
+  return body
+}
+
+export async function fetchActiveGreetingPolicy(profileId: string): Promise<ActiveGreetingPolicy> {
+  const response = await fetch(`/api/conversation/profiles/${encodeURIComponent(profileId)}/active-greeting`, { headers: { Accept: 'application/json' } })
+  const body = await readJson(response)
+  if (!response.ok || !isActiveGreetingPolicy(body)) throw new Error(readErrorDetail(body) ?? 'Active greeting policy response was invalid.')
+  return body
+}
+
+function isActiveGreetingPolicy(value: unknown): value is ActiveGreetingPolicy {
+  return isRecord(value) && typeof value.enabled === 'boolean' && typeof value.minimum_idle_minutes === 'number'
 }
 
 async function writeProfile(url: string, method: 'POST' | 'PUT', csrfToken: string, input: ConversationProfileInput): Promise<ConversationProfile> {

@@ -51,6 +51,19 @@ class EmotionAgent:
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
 
 
+class GreetingAgent(FakeAgent):
+    """Expose the optional idle-greeting boundary without adding a user turn."""
+
+    async def respond_to_active_greeting(
+        self, utterance_id: str
+    ) -> AsyncIterator[AgentResponseEvent]:
+        yield AgentResponseEvent(utterance_id, AgentResponseKind.EMOTION, "warm")
+        yield AgentResponseEvent(
+            utterance_id, AgentResponseKind.TEXT, "刚好想到你，今天想聊点什么？"
+        )
+        yield AgentResponseEvent(utterance_id, AgentResponseKind.END)
+
+
 class InspectingAgentProcessor(PipecatAgentProcessor):
     """Capture generated frames without a full media worker."""
 
@@ -125,6 +138,33 @@ def test_agent_processor_converts_bounded_emotion_events_to_typed_frames() -> No
 
     emotion_frames = [frame for frame in processor.forwarded if isinstance(frame, EmotionFrame)]
     assert [frame.emotion for frame in emotion_frames] == ["warm"]
+
+
+def test_agent_processor_streams_active_greeting_without_history_or_memory(tmp_path: Path) -> None:
+    """A model-initiated greeting never fabricates a persisted user or assistant exchange."""
+    store = MemoryStore(tmp_path / "voice.sqlite3")
+    store.migrate()
+    agent = GreetingAgent()
+    processor = InspectingAgentProcessor(agent, memory_store=store)
+
+    async def exercise() -> None:
+        assert await processor.respond_to_active_greeting()
+        task = processor._response_task
+        assert task is not None
+        await task
+
+    asyncio.run(exercise())
+
+    assert agent.requests == []
+    conversation_id = processor.conversation_id
+    assert conversation_id is not None
+    assert store.list_messages(conversation_id) == ()
+    assert [type(frame) for frame in processor.forwarded] == [
+        LLMFullResponseStartFrame,
+        EmotionFrame,
+        LLMTextFrame,
+        LLMFullResponseEndFrame,
+    ]
 
 
 def test_agent_processor_accepts_a_runtime_string_language_code() -> None:

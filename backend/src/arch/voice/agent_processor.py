@@ -19,6 +19,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from arch.agent.core import (
+    ActiveGreetingAgentCore,
     AgentCore,
     AgentRequest,
     AgentResponseKind,
@@ -32,6 +33,7 @@ from arch.memory.extractor import MemoryCandidateExtractor
 from arch.memory.store import MemoryStore, StoredMessage
 from arch.rag.retriever import Retriever
 from arch.tools.gateway import ToolOutcome
+from arch.voice.active_greeting import ActiveGreetingController
 from arch.voice.emotion import EmotionFrame, normalize_emotion
 
 
@@ -74,6 +76,7 @@ class PipecatAgentProcessor(FrameProcessor):
         retriever: Retriever | None = None,
         tool_gateway: ToolDispatcher | None = None,
         session_id: str | None = None,
+        active_greeting: ActiveGreetingController | None = None,
     ) -> None:
         super().__init__()
         self._agent = agent
@@ -87,6 +90,7 @@ class PipecatAgentProcessor(FrameProcessor):
         self._retriever = retriever
         self._tool_gateway = tool_gateway
         self._session_id = session_id
+        self._active_greeting = active_greeting
         self._candidate_task: asyncio.Task[None] | None = None
         self._response_task: asyncio.Task[object] | None = None
         self._pending_tool_continuation: _PendingToolContinuation | None = None
@@ -107,12 +111,14 @@ class PipecatAgentProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
         if isinstance(frame, InterruptionFrame):
+            self._record_greeting_activity()
             self._cancel_candidate_extraction()
             self._begin_new_turn()
             await self._cancel_pending_tool_continuation()
             await self.push_frame(frame, direction)
             return
         if isinstance(frame, TranscriptionFrame):
+            self._record_greeting_activity()
             self._cancel_candidate_extraction()
             await self._respond_to_transcription(frame)
             return
@@ -142,6 +148,7 @@ class PipecatAgentProcessor(FrameProcessor):
                 ConversationTurn("user", frame.text, utterance_id)
             )
             assistant_history_parts: list[str] = []
+            self._set_greeting_speaking(True)
             await self.push_frame(LLMFullResponseStartFrame())
             async for event in self._agent.respond(request):
                 if event.utterance_id != utterance_id or not self._is_current_turn(
@@ -179,6 +186,7 @@ class PipecatAgentProcessor(FrameProcessor):
             self._active_utterance_id = None
             await self.push_frame(LLMFullResponseEndFrame())
         finally:
+            self._set_greeting_speaking(False)
             if self._response_task is current_task:
                 self._response_task = None
 
@@ -186,6 +194,7 @@ class PipecatAgentProcessor(FrameProcessor):
         """Schedule one final answer only for the still-active originating browser approval."""
         pending = self._pending_tool_continuation
         self._pending_tool_continuation = None
+        self._set_greeting_approval_pending(False)
         if pending is None or pending.approval_id != approval_id or outcome.status != "completed":
             return False
         if self._active_utterance_id is not None or not isinstance(
@@ -199,6 +208,51 @@ class PipecatAgentProcessor(FrameProcessor):
         )
         return True
 
+    async def respond_to_active_greeting(self) -> bool:
+        """Run one tool-free greeting without persisting a fabricated conversation turn."""
+        if self._active_utterance_id is not None or not isinstance(
+            self._agent, ActiveGreetingAgentCore
+        ):
+            return False
+        generation = self._begin_new_turn()
+        utterance_id = f"greeting:{generation}"
+        self._active_utterance_id = utterance_id
+        self._response_task = asyncio.create_task(
+            self._run_active_greeting(utterance_id, generation)
+        )
+        return True
+
+    def set_active_greeting(self, controller: ActiveGreetingController) -> None:
+        """Attach the session-owned controller after its callback can target this processor."""
+        self._active_greeting = controller
+
+    def arm_active_greeting(self) -> None:
+        if self._active_greeting is not None:
+            self._active_greeting.arm()
+
+    async def _run_active_greeting(self, utterance_id: str, generation: int) -> None:
+        try:
+            self._set_greeting_speaking(True)
+            await self.push_frame(LLMFullResponseStartFrame())
+            async for event in self._agent.respond_to_active_greeting(utterance_id):  # type: ignore[attr-defined]
+                if event.utterance_id != utterance_id or not self._is_current_turn(
+                    utterance_id, generation
+                ):
+                    continue
+                if event.kind in {AgentResponseKind.TEXT, AgentResponseKind.ERROR}:
+                    await self.push_frame(LLMTextFrame(event.text))
+                elif event.kind == AgentResponseKind.EMOTION:
+                    await self.push_frame(EmotionFrame(emotion=normalize_emotion(event.text)))
+                elif event.kind == AgentResponseKind.END:
+                    break
+        finally:
+            self._set_greeting_speaking(False)
+            if self._is_current_turn(utterance_id, generation):
+                self._active_utterance_id = None
+                await self.push_frame(LLMFullResponseEndFrame())
+            if self._response_task is asyncio.current_task():
+                self._response_task = None
+
     async def _complete_approved_tool(
         self,
         pending: _PendingToolContinuation,
@@ -211,6 +265,7 @@ class PipecatAgentProcessor(FrameProcessor):
         try:
             if not self._is_current_turn(pending.request.utterance_id, generation):
                 return
+            self._set_greeting_speaking(True)
             await self.push_frame(LLMFullResponseStartFrame())
             continued = await self._continue_after_completed_tool(
                 pending.request,
@@ -233,6 +288,7 @@ class PipecatAgentProcessor(FrameProcessor):
                 self._start_candidate_extraction(pending.stored_user, pending.language)
             return
         finally:
+            self._set_greeting_speaking(False)
             if self._is_current_turn(pending.request.utterance_id, generation):
                 self._active_utterance_id = None
                 await self.push_frame(LLMFullResponseEndFrame())
@@ -269,6 +325,7 @@ class PipecatAgentProcessor(FrameProcessor):
         """Drop and revoke the prior approval before a newer turn can supersede it."""
         pending = self._pending_tool_continuation
         self._pending_tool_continuation = None
+        self._set_greeting_approval_pending(False)
         if pending is not None and self._tool_gateway is not None:
             await self._tool_gateway.cancel_pending(pending.approval_id)
 
@@ -301,7 +358,21 @@ class PipecatAgentProcessor(FrameProcessor):
             except Exception:
                 # The approval is durable even if the transient browser notification is lost.
                 pass
+        if outcome.status == "approval_required":
+            self._set_greeting_approval_pending(True)
         return outcome
+
+    def _record_greeting_activity(self) -> None:
+        if self._active_greeting is not None:
+            self._active_greeting.activity()
+
+    def _set_greeting_speaking(self, speaking: bool) -> None:
+        if self._active_greeting is not None:
+            self._active_greeting.set_speaking(speaking)
+
+    def _set_greeting_approval_pending(self, pending: bool) -> None:
+        if self._active_greeting is not None:
+            self._active_greeting.set_approval_pending(pending)
 
     async def _continue_after_completed_tool(
         self,
@@ -420,6 +491,8 @@ class PipecatAgentProcessor(FrameProcessor):
     async def cleanup(self) -> None:
         """Cancel an idle extraction before Pipecat releases this session's resources."""
         task = self._candidate_task
+        if self._active_greeting is not None:
+            await self._active_greeting.close()
         self._cancel_candidate_extraction()
         await self.abandon_pending_tool_continuation()
         if task is not None:

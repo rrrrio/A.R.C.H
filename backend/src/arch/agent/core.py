@@ -90,3 +90,11 @@ class ToolResultAgentCore(Protocol):
         self, request: AgentRequest, result: ToolResult
     ) -> AsyncIterator[AgentResponseEvent]:
         """Yield a final answer using a result that remains untrusted reference data."""
+
+
+@runtime_checkable
+class ActiveGreetingAgentCore(Protocol):
+    """Optionally produce one short, tool-free greeting without a fabricated user turn."""
+
+    def respond_to_active_greeting(self, utterance_id: str) -> AsyncIterator[AgentResponseEvent]:
+        """Yield only a bounded greeting for an already-authorized active media session."""

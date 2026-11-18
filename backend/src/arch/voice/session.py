@@ -13,7 +13,11 @@ from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.workers.runner import WorkerRunner
 
 from arch.avatar.adapter import AvatarAdapter
-from arch.conversation.profiles import ConversationProfile, ConversationProfileStore
+from arch.conversation.profiles import (
+    ActiveGreetingPolicy,
+    ConversationProfile,
+    ConversationProfileStore,
+)
 from arch.memory.store import MemoryStore
 from arch.rag.embeddings import SentenceTransformerEmbedder
 from arch.rag.retriever import LocalKnowledgeRetriever, Retriever
@@ -105,6 +109,8 @@ class LocalVoiceSession:
                 self._runner = runner
                 self._runner_task = runner_task
                 self._runner_session_id = session_id
+                if self._agent_processor is not None:
+                    self._agent_processor.arm_active_greeting()
                 connection.send_app_message({"type": "voice_ready"})
             except BaseException:
                 self._agent_processor = None
@@ -135,7 +141,8 @@ class LocalVoiceSession:
                 conversation_profile = self._selected_conversation_profile()
                 await self._llama.start()
                 self._retriever = await asyncio.to_thread(self._create_retriever)
-                worker_arguments = (
+                observer = self._avatar_observer_for_session(session_id)
+                worker = create_websocket_pipeline_worker(
                     websocket,
                     send_event,
                     self._paths,
@@ -147,16 +154,13 @@ class LocalVoiceSession:
                     profile,
                     self._clone_runtime.synthesize if self._clone_runtime is not None else None,
                     self._clone_runtime.cancel if self._clone_runtime is not None else None,
+                    session_id=session_id,
+                    avatar_observer=observer,
+                    conversation_profile=conversation_profile,
+                    active_greeting_policy=self._selected_active_greeting_policy(
+                        conversation_profile
+                    ),
                 )
-                observer = self._avatar_observer_for_session(session_id)
-                if observer is None:
-                    worker = self._create_websocket_worker(
-                        worker_arguments, session_id, None, conversation_profile
-                    )
-                else:
-                    worker = self._create_websocket_worker(
-                        worker_arguments, session_id, observer, conversation_profile
-                    )
                 runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
                 ready = asyncio.Event()
 
@@ -171,6 +175,8 @@ class LocalVoiceSession:
                 self._runner_task = runner_task
                 self._runner_session_id = session_id
                 session_started = True
+                if self._agent_processor is not None:
+                    self._agent_processor.arm_active_greeting()
                 send_event({"type": "voice_ready"})
             except BaseException:
                 self._agent_processor = None
@@ -242,12 +248,14 @@ class LocalVoiceSession:
             clone_cancel,
         )
         observer = self._avatar_observer_for_session(session_id)
+        active_greeting_policy = self._selected_active_greeting_policy(conversation_profile)
         if conversation_profile is not None:
             return create_pipeline_worker(
                 *arguments,
                 session_id=session_id,
                 avatar_observer=observer,
                 conversation_profile=conversation_profile,
+                active_greeting_policy=active_greeting_policy,
             )
         if observer is None and session_id is None:
             return create_pipeline_worker(*arguments)
@@ -259,27 +267,6 @@ class LocalVoiceSession:
             *arguments,
             session_id=session_id,
             avatar_observer=observer,
-        )
-
-    @staticmethod
-    def _create_websocket_worker(
-        arguments: tuple[object, ...],
-        session_id: str | None,
-        observer: AvatarAdapter | None,
-        conversation_profile: ConversationProfile | None,
-    ) -> PipelineWorker:
-        """Pass a selected conversation snapshot only to newly created media workers."""
-        if conversation_profile is not None:
-            return create_websocket_pipeline_worker(
-                *arguments,
-                session_id=session_id,
-                avatar_observer=observer,
-                conversation_profile=conversation_profile,
-            )
-        if observer is None:
-            return create_websocket_pipeline_worker(*arguments, session_id=session_id)
-        return create_websocket_pipeline_worker(
-            *arguments, session_id=session_id, avatar_observer=observer
         )
 
     def _avatar_observer_for_session(self, session_id: str | None) -> AvatarAdapter | None:
@@ -315,6 +302,15 @@ class LocalVoiceSession:
         """Snapshot the selected style profile once, before a new media worker starts."""
         store = self._conversation_profile_store
         return store.selected() if store is not None else None
+
+    def _selected_active_greeting_policy(
+        self, profile: ConversationProfile | None
+    ) -> ActiveGreetingPolicy | None:
+        store = self._conversation_profile_store
+        if profile is None or store is None:
+            return None
+        getter = getattr(store, "active_greeting_policy", None)
+        return getter(profile.id) if callable(getter) else None
 
     async def _stop_clone_runtime(self) -> None:
         """Stop and forget the session-owned Qwen worker."""

@@ -186,6 +186,41 @@ def test_llama_agent_adds_a_selected_profile_as_bounded_style_context() -> None:
     assert received["temperature"] == 0.2
 
 
+def test_llama_agent_active_greeting_has_no_user_history_memory_or_tools() -> None:
+    """An idle greeting is profile-styled but cannot inherit conversational facts or tools."""
+    received: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.update(json.loads(request.content))
+        return httpx.Response(200, content=b"data: [DONE]\n\n")
+
+    profile = _profile()
+    agent = LlamaCppAgentCore(
+        "http://127.0.0.1:8081/v1", profile=profile, transport=httpx.MockTransport(handler)
+    )
+
+    async def collect() -> list[AgentResponseEvent]:
+        return [event async for event in agent.respond_to_active_greeting("greeting-1")]
+
+    events = asyncio.run(collect())
+
+    assert [event.kind for event in events] == [AgentResponseKind.END]
+    assert received["tool_choice"] == "none"
+    assert "tools" not in received
+    assert received["temperature"] == profile.social_temperature
+    assert received["max_tokens"] == 64
+    messages = received["messages"]
+    assert isinstance(messages, list)
+    serialized = json.dumps(messages, ensure_ascii=False)
+    assert "以下是用户已批准的长期事实" not in serialized
+    assert "以下是本地文档检索片段" not in serialized
+    assert messages[2:4] == [
+        {"role": "user", "content": profile.examples[0].user},
+        {"role": "assistant", "content": profile.examples[0].assistant},
+    ]
+    assert len(messages) == 5
+
+
 def test_llama_agent_uses_a_private_classifier_and_social_sampling_for_selected_profile() -> None:
     """Only a clear social result enables style sampling and removes every tool schema."""
     received: list[dict[str, object]] = []

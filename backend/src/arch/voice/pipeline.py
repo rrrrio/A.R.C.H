@@ -20,12 +20,14 @@ from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPI
 
 from arch.agent.llama import LlamaCppAgentCore
 from arch.avatar.adapter import AvatarAdapter
+from arch.conversation.profiles import ActiveGreetingPolicy as StoredGreetingPolicy
 from arch.conversation.profiles import ConversationProfile
 from arch.memory.extractor import LlamaCppMemoryCandidateExtractor
 from arch.memory.store import MemoryStore
 from arch.observability.metrics import LatencyStage, LatencyTracker
 from arch.rag.retriever import Retriever
 from arch.tools.gateway import ToolGateway
+from arch.voice.active_greeting import ActiveGreetingController, ActiveGreetingPolicy
 from arch.voice.agent_processor import PipecatAgentProcessor
 from arch.voice.events import VoiceEventProcessor
 from arch.voice.input_ready import InputReadyProcessor
@@ -59,6 +61,7 @@ def create_pipeline_worker(
     session_id: str | None = None,
     avatar_observer: AvatarAdapter | None = None,
     conversation_profile: ConversationProfile | None = None,
+    active_greeting_policy: StoredGreetingPolicy | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
     transport = SmallWebRTCTransport(
@@ -85,6 +88,7 @@ def create_pipeline_worker(
         session_id=session_id,
         avatar_observer=avatar_observer,
         conversation_profile=conversation_profile,
+        active_greeting_policy=active_greeting_policy,
         on_interruption=lambda: clear_queued_webrtc_audio(transport.output()),
     )
 
@@ -104,6 +108,7 @@ def create_websocket_pipeline_worker(
     session_id: str | None = None,
     avatar_observer: AvatarAdapter | None = None,
     conversation_profile: ConversationProfile | None = None,
+    active_greeting_policy: StoredGreetingPolicy | None = None,
 ) -> PipelineWorker:
     """Build the same worker over authenticated same-origin PCM WebSocket media."""
     transport = FastAPIWebsocketTransport(
@@ -133,6 +138,7 @@ def create_websocket_pipeline_worker(
         avatar_observer=avatar_observer,
         ordered_transport_events=True,
         conversation_profile=conversation_profile,
+        active_greeting_policy=active_greeting_policy,
     )
 
 
@@ -153,6 +159,7 @@ def _create_pipeline_worker(
     ordered_transport_events: bool = False,
     avatar_observer: AvatarAdapter | None = None,
     conversation_profile: ConversationProfile | None = None,
+    active_greeting_policy: StoredGreetingPolicy | None = None,
 ) -> PipelineWorker:
     """Assemble processors independent of the authenticated browser transport."""
     paths.require_ready()
@@ -180,6 +187,15 @@ def _create_pipeline_worker(
     )
     if on_agent_processor is not None:
         on_agent_processor(agent)
+    if active_greeting_policy is not None:
+        controller = ActiveGreetingController(
+            ActiveGreetingPolicy(
+                enabled=active_greeting_policy.enabled,
+                minimum_idle_seconds=active_greeting_policy.minimum_idle_minutes * 60,
+            ),
+            agent.respond_to_active_greeting,
+        )
+        agent.set_active_greeting(controller)
     tts: TTSService
     if clone_profile is not None:
         if clone_synthesize is None:
