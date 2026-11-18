@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 
 import httpx
@@ -11,12 +12,14 @@ from arch.agent.core import (
     AgentRequest,
     AgentResponseEvent,
     AgentResponseKind,
+    ConversationTurnKind,
     ToolRequest,
     ToolResult,
 )
 from arch.agent.policy import profile_messages
 from arch.conversation.profiles import ConversationProfile
 from arch.memory.context import bounded_approved_memories
+from arch.voice.emotion import normalize_emotion
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是本机语音助手。用简洁的中文回答，避免展示推理过程。"
@@ -49,23 +52,40 @@ class LlamaCppAgentCore:
         self._system_prompt = system_prompt
         self._profile = profile
         self._transport = transport
+        self._last_turn_kind = ConversationTurnKind.UNCERTAIN
+
+    @property
+    def last_turn_kind(self) -> ConversationTurnKind:
+        """Expose the latest completed routing decision for focused local evaluation."""
+        return self._last_turn_kind
 
     async def respond(self, request: AgentRequest) -> AsyncIterator[AgentResponseEvent]:
         """Yield local text chunks and one terminal event for a media-owned turn."""
+        turn_kind = await self._classify_turn(request)
+        self._last_turn_kind = turn_kind
         payload: dict[str, object] = {
             "model": self._model,
             "messages": self._conversation_messages(request),
             "stream": True,
-            # Tool schemas are structured output; lower sampling avoids invented optional fields.
-            "temperature": 0.2,
             "top_p": 0.95,
-            "max_tokens": 256,
             "chat_template_kwargs": {"enable_thinking": False},
         }
-        payload["tools"] = [*_terminal_tool_definitions(), _web_search_tool_definition()]
-        payload["tool_choice"] = "auto"
+        if turn_kind is ConversationTurnKind.SOCIAL and self._profile is not None:
+            payload.update(
+                {
+                    "temperature": self._profile.social_temperature,
+                    "max_tokens": 384,
+                    "tool_choice": "none",
+                }
+            )
+            tool_call: _StreamToolCall | None = None
+        else:
+            # Tool schemas are structured output; lower sampling avoids invented optional fields.
+            payload.update({"temperature": 0.2, "max_tokens": 256, "tool_choice": "auto"})
+            payload["tools"] = [*_terminal_tool_definitions(), _web_search_tool_definition()]
+            tool_call = _StreamToolCall()
         try:
-            async for event in self._stream(request.utterance_id, payload, _StreamToolCall()):
+            async for event in self._stream_with_emotion(request.utterance_id, payload, tool_call):
                 yield event
         except (httpx.HTTPError, ValueError):
             yield _unavailable_event(request.utterance_id)
@@ -119,12 +139,75 @@ class LlamaCppAgentCore:
             "chat_template_kwargs": {"enable_thinking": False},
         }
         try:
-            async for event in self._stream(request.utterance_id, payload, None):
+            async for event in self._stream_with_emotion(request.utterance_id, payload, None):
                 yield event
         except (httpx.HTTPError, ValueError):
             yield _unavailable_event(request.utterance_id)
             return
         yield AgentResponseEvent(request.utterance_id, AgentResponseKind.END)
+
+    async def _classify_turn(self, request: AgentRequest) -> ConversationTurnKind:
+        """Allow social sampling only after a bounded, tool-free local classification."""
+        if self._profile is None or not self._profile.enabled:
+            return ConversationTurnKind.TASK
+        if _looks_tool_relevant(request.transcript):
+            return ConversationTurnKind.TASK
+        payload = {
+            "model": self._model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Classify this local voice turn. Reply with exactly one token: "
+                        "social, task, or uncertain. social is only casual conversation "
+                        "or an interpersonal follow-up. Any request for facts, files, commands, "
+                        "current state, search, "
+                        "tools, or unclear intent is task or uncertain."
+                    ),
+                },
+                {"role": "user", "content": _classifier_input(request)},
+            ],
+            "stream": False,
+            "temperature": 0,
+            "top_p": 1,
+            "max_tokens": 1,
+            "tools": [],
+            "tool_choice": "none",
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=3.0, transport=self._transport, trust_env=False
+            ) as client:
+                response = await client.post(f"{self._endpoint}/chat/completions", json=payload)
+                response.raise_for_status()
+                content = _completion_content(response.json())
+        except (httpx.HTTPError, ValueError, TypeError):
+            return ConversationTurnKind.TASK
+        return (
+            ConversationTurnKind.SOCIAL
+            if content.strip().lower() == ConversationTurnKind.SOCIAL
+            else ConversationTurnKind.TASK
+        )
+
+    async def _stream_with_emotion(
+        self,
+        utterance_id: str,
+        payload: dict[str, object],
+        tool_call: _StreamToolCall | None,
+    ) -> AsyncIterator[AgentResponseEvent]:
+        """Strip one bounded leading expression envelope before text reaches media consumers."""
+        envelope = _EmotionEnvelope(utterance_id)
+        async for event in self._stream(utterance_id, payload, tool_call):
+            if event.kind is AgentResponseKind.TEXT:
+                for parsed in envelope.feed(event.text):
+                    yield parsed
+                continue
+            for parsed in envelope.finish():
+                yield parsed
+            yield event
+        for parsed in envelope.finish():
+            yield parsed
 
     async def _stream(
         self,
@@ -151,7 +234,8 @@ class LlamaCppAgentCore:
             messages.append({"role": message["role"], "content": message["content"]})
         for message in _retrieved_context_messages(request.retrieved_context):
             messages.append({"role": message["role"], "content": message["content"]})
-        messages.extend(profile_messages(self._profile))
+        for message in profile_messages(self._profile):
+            messages.append({"role": message["role"], "content": message["content"]})
         for turn in request.history:
             if turn.text:
                 messages.append({"role": turn.role, "content": turn.text})
@@ -194,6 +278,105 @@ class LlamaCppAgentCore:
                         tool_request=request,
                     )
                 )
+        return tuple(events)
+
+
+_TASK_INTENT = re.compile(
+    r"(?:当前|现在|时间|日期|gpu|显存|占用|目录|文件|命令|终端|搜索|网页|网络|下载|安装|"
+    r"运行|服务|状态|日志|配置|文件夹|查找|列出|find|ls|date|nvidia-smi)",
+    re.IGNORECASE,
+)
+
+
+def _looks_tool_relevant(transcript: str) -> bool:
+    """Keep obvious host and retrieval work out of the higher-variance social path."""
+    return bool(_TASK_INTENT.search(transcript))
+
+
+def _classifier_input(request: AgentRequest) -> str:
+    """Expose only a compact recent conversational shape to the local classifier."""
+    recent = request.history[-4:]
+    history = "\n".join(f"{turn.role}: {turn.text[:80]}" for turn in recent if turn.text)
+    return f"Recent turns:\n{history[:320]}\n\nCurrent turn:\n{request.transcript[:512]}"
+
+
+def _completion_content(value: object) -> str:
+    """Read a single OpenAI-compatible non-streaming completion without permissive coercion."""
+    if not isinstance(value, dict):
+        return ""
+    choices = value.get("choices")
+    if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
+        return ""
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    return content if isinstance(content, str) else ""
+
+
+class _EmotionEnvelope:
+    """Buffer one leading model control envelope so it cannot become visible transcript text."""
+
+    _open = "<arch-emotion>"
+    _close = "</arch-emotion>"
+    _maximum_initial_chars = 64
+
+    def __init__(self, utterance_id: str) -> None:
+        self._utterance_id = utterance_id
+        self._buffer = ""
+        self._resolved = False
+
+    def feed(self, text: str) -> tuple[AgentResponseEvent, ...]:
+        if self._resolved:
+            return (AgentResponseEvent(self._utterance_id, AgentResponseKind.TEXT, text=text),)
+        self._buffer += text
+        return self._resolve(final=False)
+
+    def finish(self) -> tuple[AgentResponseEvent, ...]:
+        if self._resolved or not self._buffer:
+            return ()
+        return self._resolve(final=True)
+
+    def _resolve(self, *, final: bool) -> tuple[AgentResponseEvent, ...]:
+        if self._buffer.startswith(self._open):
+            closing_index = self._buffer.find(self._close, len(self._open))
+            if (
+                closing_index >= 0
+                and closing_index + len(self._close) <= self._maximum_initial_chars
+            ):
+                label = self._buffer[len(self._open) : closing_index]
+                body = self._buffer[closing_index + len(self._close) :]
+                self._buffer = ""
+                self._resolved = True
+                events = [
+                    AgentResponseEvent(
+                        self._utterance_id, AgentResponseKind.EMOTION, text=normalize_emotion(label)
+                    )
+                ]
+                if body:
+                    events.append(
+                        AgentResponseEvent(self._utterance_id, AgentResponseKind.TEXT, text=body)
+                    )
+                return tuple(events)
+            if not final and len(self._buffer) <= self._maximum_initial_chars:
+                return ()
+            # A tag-shaped prefix must not leak even when its label is unsupported or incomplete.
+            body = self._buffer
+            if closing_index >= 0:
+                body = self._buffer[closing_index + len(self._close) :]
+            else:
+                body = self._buffer[len(self._open) :]
+            return self._neutral_with_text(body)
+        if not final and len(self._buffer) <= self._maximum_initial_chars:
+            return ()
+        return self._neutral_with_text(self._buffer)
+
+    def _neutral_with_text(self, text: str) -> tuple[AgentResponseEvent, ...]:
+        self._buffer = ""
+        self._resolved = True
+        events = [AgentResponseEvent(self._utterance_id, AgentResponseKind.EMOTION, text="neutral")]
+        if text:
+            events.append(AgentResponseEvent(self._utterance_id, AgentResponseKind.TEXT, text=text))
         return tuple(events)
 
 

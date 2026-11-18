@@ -57,6 +57,14 @@ class AgentResponseKind(StrEnum):
     ERROR = "error"
 
 
+class ConversationTurnKind(StrEnum):
+    """Conservative routing classes for a completed local user turn."""
+
+    SOCIAL = "social"
+    TASK = "task"
+    UNCERTAIN = "uncertain"
+
+
 @dataclass(frozen=True, slots=True)
 class AgentResponseEvent:
     """A stream event that remains associated with its originating utterance."""
