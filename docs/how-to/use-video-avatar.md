@@ -128,9 +128,10 @@ live audio/video track、至少 30 个视频帧回调的有效帧率在 22-28fps
     make avatar-device-report AVATAR_DEVICE_INPUT=data/benchmarks/results/avatar-device-observations.json
 
 报告写入受忽略的 `data/benchmarks/results/avatar-device-acceptance.json`，包含音画 decoded-start
-skew、有效 FPS 和取消时延的中位数 p50、nearest-rank p95/max。当前目标设备已经完成五轮实际体验，
-用户确认音画口型同步和重连后的连续使用表现良好，并明确选择不再重新采样；浏览器记录未导出，因此本次
-结论是**设备验证的定性体验证据**，没有量化 JSON/p50/p95/FPS 报告，不能表述为二十轮研究或伪造数值。
+skew、有效 FPS 和取消时延的中位数 p50、nearest-rank p95/max。2026-11-18 的真实目标设备报告包含 5 轮：
+FPS p50 为 23.83、p95 为 25.21，取消 p50 为 20ms、p95 为 106ms，水印和清晰度检查全部通过。音画起始
+偏差 p50 为 5ms，但首轮为 122ms（p95/max 122ms），超过原始单轮 100ms 目标；其余四轮为 2–12ms。因此
+视频功能已经**设备验证且有五轮量化记录**，但不能表述为二十轮研究或“全部五轮都满足 100ms 偏差”。
 
 查看将要安装的服务：
 
