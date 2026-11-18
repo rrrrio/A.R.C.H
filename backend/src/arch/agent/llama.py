@@ -14,6 +14,8 @@ from arch.agent.core import (
     ToolRequest,
     ToolResult,
 )
+from arch.agent.policy import profile_messages
+from arch.conversation.profiles import ConversationProfile
 from arch.memory.context import bounded_approved_memories
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -39,11 +41,13 @@ class LlamaCppAgentCore:
         model: str = "qwen3-8b-q4-k-m",
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         *,
+        profile: ConversationProfile | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._model = model
         self._system_prompt = system_prompt
+        self._profile = profile
         self._transport = transport
 
     async def respond(self, request: AgentRequest) -> AsyncIterator[AgentResponseEvent]:
@@ -147,6 +151,7 @@ class LlamaCppAgentCore:
             messages.append({"role": message["role"], "content": message["content"]})
         for message in _retrieved_context_messages(request.retrieved_context):
             messages.append({"role": message["role"], "content": message["content"]})
+        messages.extend(profile_messages(self._profile))
         for turn in request.history:
             if turn.text:
                 messages.append({"role": turn.role, "content": turn.text})
@@ -222,7 +227,8 @@ class _StreamToolCall:
                 if (
                     not isinstance(call_id, str)
                     or not call_id
-                    or self._call_id is not None and call_id != self._call_id
+                    or self._call_id is not None
+                    and call_id != self._call_id
                 ):
                     self._invalid = True
                     return

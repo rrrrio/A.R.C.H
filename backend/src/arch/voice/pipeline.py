@@ -20,6 +20,7 @@ from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPI
 
 from arch.agent.llama import LlamaCppAgentCore
 from arch.avatar.adapter import AvatarAdapter
+from arch.conversation.profiles import ConversationProfile
 from arch.memory.extractor import LlamaCppMemoryCandidateExtractor
 from arch.memory.store import MemoryStore
 from arch.observability.metrics import LatencyStage, LatencyTracker
@@ -57,6 +58,7 @@ def create_pipeline_worker(
     clone_cancel: CloneCancel | None = None,
     session_id: str | None = None,
     avatar_observer: AvatarAdapter | None = None,
+    conversation_profile: ConversationProfile | None = None,
 ) -> PipelineWorker:
     """Build one Chinese-first local voice worker for an authenticated peer connection."""
     transport = SmallWebRTCTransport(
@@ -69,10 +71,20 @@ def create_pipeline_worker(
         ),
     )
     return _create_pipeline_worker(
-        transport, connection.send_app_message, paths, llama_endpoint, memory_store, retriever,
-        tool_gateway, on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
+        transport,
+        connection.send_app_message,
+        paths,
+        llama_endpoint,
+        memory_store,
+        retriever,
+        tool_gateway,
+        on_agent_processor,
+        clone_profile,
+        clone_synthesize,
+        clone_cancel,
         session_id=session_id,
         avatar_observer=avatar_observer,
+        conversation_profile=conversation_profile,
         on_interruption=lambda: clear_queued_webrtc_audio(transport.output()),
     )
 
@@ -91,6 +103,7 @@ def create_websocket_pipeline_worker(
     clone_cancel: CloneCancel | None = None,
     session_id: str | None = None,
     avatar_observer: AvatarAdapter | None = None,
+    conversation_profile: ConversationProfile | None = None,
 ) -> PipelineWorker:
     """Build the same worker over authenticated same-origin PCM WebSocket media."""
     transport = FastAPIWebsocketTransport(
@@ -105,11 +118,21 @@ def create_websocket_pipeline_worker(
         ),
     )
     return _create_pipeline_worker(
-        transport, send_event, paths, llama_endpoint, memory_store, retriever, tool_gateway,
-        on_agent_processor, clone_profile, clone_synthesize, clone_cancel,
+        transport,
+        send_event,
+        paths,
+        llama_endpoint,
+        memory_store,
+        retriever,
+        tool_gateway,
+        on_agent_processor,
+        clone_profile,
+        clone_synthesize,
+        clone_cancel,
         session_id=session_id,
         avatar_observer=avatar_observer,
         ordered_transport_events=True,
+        conversation_profile=conversation_profile,
     )
 
 
@@ -129,6 +152,7 @@ def _create_pipeline_worker(
     on_interruption: Callable[[], bool] | None = None,
     ordered_transport_events: bool = False,
     avatar_observer: AvatarAdapter | None = None,
+    conversation_profile: ConversationProfile | None = None,
 ) -> PipelineWorker:
     """Assemble processors independent of the authenticated browser transport."""
     paths.require_ready()
@@ -145,7 +169,7 @@ def _create_pipeline_worker(
         settings=WhisperSTTService.Settings(model=str(paths.asr_model), language=Language.ZH),
     )
     agent = PipecatAgentProcessor(
-        LlamaCppAgentCore(llama_endpoint),
+        LlamaCppAgentCore(llama_endpoint, profile=conversation_profile),
         memory_store=memory_store,
         candidate_extractor=LlamaCppMemoryCandidateExtractor(llama_endpoint),
         on_memory_candidates_ready=lambda: send_event({"type": "memory_candidates_ready"}),
@@ -216,9 +240,7 @@ def _create_pipeline_worker(
         avatar_observer=avatar_observer,
     )
     interruption_clearer = (
-        WebRTCAudioInterruptionProcessor(on_interruption)
-        if on_interruption is not None
-        else None
+        WebRTCAudioInterruptionProcessor(on_interruption) if on_interruption is not None else None
     )
     pipeline = Pipeline(
         [

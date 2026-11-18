@@ -136,7 +136,7 @@ def test_host_grant_migration_creates_the_session_bound_table(tmp_path: Path) ->
     database_path = tmp_path / "voice.sqlite3"
     MigrationRunner(database_path, MIGRATIONS[:6]).migrate()
 
-    assert MigrationRunner(database_path).migrate() == (7,)
+    assert MigrationRunner(database_path).migrate() == (7, 8)
 
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(

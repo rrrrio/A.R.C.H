@@ -44,7 +44,7 @@ def test_migration_upgrade_adds_edit_audit_table(tmp_path: Path) -> None:
     """A v1 database upgrades to the candidate-edit audit schema without rebuilding data."""
     database_path = tmp_path / "voice.sqlite3"
     assert MigrationRunner(database_path, (MIGRATIONS[0],)).migrate() == (1,)
-    assert MigrationRunner(database_path).migrate() == (2, 3, 4, 5, 6, 7)
+    assert MigrationRunner(database_path).migrate() == (2, 3, 4, 5, 6, 7, 8)
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_edits'"
@@ -61,12 +61,15 @@ def test_migration_upgrade_adds_edit_audit_table(tmp_path: Path) -> None:
             ).fetchall()
             == []
         )
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conversation_profiles'"
+        ).fetchone() == ("conversation_profiles",)
 
 
 def test_store_keeps_candidates_out_of_context_until_an_audited_approval(tmp_path: Path) -> None:
     """Only legal state transitions can make a memory candidate approved or deleted."""
     store = MemoryStore(tmp_path / "voice.sqlite3")
-    assert store.migrate() == (1, 2, 3, 4, 5, 6, 7)
+    assert store.migrate() == (1, 2, 3, 4, 5, 6, 7, 8)
     conversation_id = store.create_conversation()
     user = store.append_message(conversation_id, "turn-1", "user", "我喜欢简洁回答")
     store.append_message(conversation_id, "turn-1", "assistant", "明白。")

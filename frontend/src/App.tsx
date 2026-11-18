@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type UIEvent } from 'react
 
 import { AvatarPreview } from './AvatarPreview'
 import { AvatarVideoPreview } from './AvatarVideoPreview'
+import { ConversationProfilesPanel } from './ConversationProfilesPanel'
 import { fetchAuthStatus, fetchCsrfToken, hasCurrentAuthContract, login, logout, reissueTerminalLease, setTerminalProfile } from './auth'
 import { fetchKnowledgeSources, fetchKnowledgeStatus, rebuildKnowledgeIndex, type KnowledgeSource, type KnowledgeStatus } from './knowledge'
 import { fetchMemoryCandidates, type MemoryCandidate, updateMemoryCandidate } from './memory'
@@ -19,13 +20,14 @@ type SessionState =
   | { kind: 'authenticated'; csrfToken: string; terminalLeaseExpiresAt: string | null; terminalLeaseScopes: string[]; terminalProfile: 'observe' | 'assist' | 'operator' }
   | { kind: 'error' }
 
-type WorkspaceSection = 'memory' | 'knowledge' | 'approvals' | 'voices' | 'agent' | 'avatars'
+type WorkspaceSection = 'memory' | 'knowledge' | 'approvals' | 'voices' | 'conversation' | 'agent' | 'avatars'
 
 const workspaceSections: { id: WorkspaceSection; label: string; description: string }[] = [
   { id: 'memory', label: '记忆', description: '审阅长期偏好与事实' },
   { id: 'knowledge', label: '知识库', description: '管理本地资料索引' },
   { id: 'approvals', label: '审批', description: '确认待执行的主机操作' },
   { id: 'voices', label: '声音', description: '选择和管理本地声音参考' },
+  { id: 'conversation', label: '对话', description: '管理人物卡和互动口吻' },
   { id: 'agent', label: '主机 Agent', description: '管理权限档位和授权' },
   { id: 'avatars', label: '数字人', description: '管理浏览器和视频呈现' },
 ]
@@ -612,6 +614,10 @@ function App() {
               <button type="submit" disabled={profileBusy || profileTranscribing || profileReference === null}>{profileBusy ? '正在保存' : '保存参考'}</button>
             </form>
           </div>
+              </section>
+              <section className="workspace-panel" hidden={activeWorkspaceSection !== 'conversation'} aria-labelledby="conversation-profiles-title">
+                <div className="workspace-panel__heading"><div><h2 id="conversation-profiles-title">对话人物卡</h2></div></div>
+                <ConversationProfilesPanel csrfToken={session.csrfToken} />
               </section>
               <section className="workspace-panel" hidden={activeWorkspaceSection !== 'agent'} aria-labelledby="terminal-policy-title">
                 <div className="workspace-panel__heading"><div><p className="eyebrow">受控本机访问</p><h2 id="terminal-policy-title">主机 Agent 权限</h2></div></div>

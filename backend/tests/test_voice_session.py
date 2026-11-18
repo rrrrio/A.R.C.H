@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 
+from arch.conversation.profiles import ConversationProfile
 from arch.voice import session as session_module
 from arch.voice.models import VoiceModelPaths
 from arch.voice.profiles import VoiceProfile
@@ -59,9 +60,7 @@ class FakeWorkerRunner:
         self._ready_handler: ReadyHandler | None = None
         self.cancelled = False
 
-    def event_handler(
-        self, name: str
-    ) -> Callable[[ReadyHandler], ReadyHandler]:
+    def event_handler(self, name: str) -> Callable[[ReadyHandler], ReadyHandler]:
         assert name == "on_ready"
 
         def register(
@@ -99,6 +98,26 @@ class FakeProfileStore:
 
     def get(self, profile_id: str) -> VoiceProfile | None:
         return self.profile if profile_id == self.profile.id else None
+
+
+class FakeConversationProfileStore:
+    """Return a selected style profile without opening a real SQLite database."""
+
+    profile = ConversationProfile(
+        "e8d9f2d6-7eea-4c4e-8c1f-6d528371f7e9",
+        "小雅",
+        True,
+        "温和回应用户。",
+        "口语化。",
+        (),
+        0.65,
+        1,
+        "now",
+        "now",
+    )
+
+    def selected(self) -> ConversationProfile:
+        return self.profile
 
 
 class SwitchableProfileStore(FakeProfileStore):
@@ -148,6 +167,31 @@ def test_session_announces_voice_ready_after_its_worker_is_ready(monkeypatch: An
         await session.stop()
 
     asyncio.run(exercise())
+
+
+def test_session_snapshots_selected_conversation_profile_for_a_new_worker(monkeypatch: Any) -> None:
+    """Editing a profile cannot mutate the already constructed media worker's prompt context."""
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(session_module, "WorkerRunner", FakeWorkerRunner)
+
+    def create_worker(*_: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(session_module, "create_pipeline_worker", create_worker)
+    session = LocalVoiceSession(
+        paths=cast(VoiceModelPaths, object()),
+        conversation_profile_store=FakeConversationProfileStore(),  # type: ignore[arg-type]
+    )
+    session._llama = FakeLlamaServer()  # type: ignore[assignment]
+
+    async def exercise() -> None:
+        await session.start(FakeConnection())  # type: ignore[arg-type]
+        await session.stop()
+
+    asyncio.run(exercise())
+
+    assert captured["conversation_profile"] == FakeConversationProfileStore.profile
 
 
 def test_selected_profile_starts_and_stops_qwen_runtime_without_kokoro_fallback(

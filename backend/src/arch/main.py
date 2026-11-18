@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI
 
 from arch.api.auth import router as auth_router
 from arch.api.avatar import router as avatar_router
+from arch.api.conversation_profiles import router as conversation_profiles_router
 from arch.api.knowledge import router as knowledge_router
 from arch.api.memory import router as memory_router
 from arch.api.tools import router as tools_router
@@ -19,6 +20,7 @@ from arch.api.voices import router as voices_router
 from arch.auth.service import AuthService
 from arch.avatar.media import AvatarMediaService, LoopbackAvatarMediaRuntimeClient
 from arch.avatar.media_adapter import AvatarMediaAdapter
+from arch.conversation.profiles import ConversationProfileStore
 from arch.memory.store import MemoryStore
 from arch.rag.index_service import KnowledgeIndexService, LocalKnowledgeIndexService
 from arch.rag.store import KnowledgeStore
@@ -46,6 +48,7 @@ def create_app(
     voice_profile_store: VoiceProfileStore | None = None,
     voice_reference_transcriber: ReferenceTranscriber | None = None,
     avatar_media_service: AvatarMediaService | None = None,
+    conversation_profile_store: ConversationProfileStore | None = None,
 ) -> FastAPI:
     """Create the HTTP application, allowing isolated authentication tests."""
 
@@ -57,6 +60,9 @@ def create_app(
         if not hasattr(app.state, "memory_store"):
             app.state.memory_store = MemoryStore(settings.database_path)
         app.state.memory_store.migrate()
+        if not hasattr(app.state, "conversation_profile_store"):
+            app.state.conversation_profile_store = ConversationProfileStore(settings.database_path)
+        app.state.conversation_profile_store.migrate()
         if not hasattr(app.state, "knowledge_store"):
             app.state.knowledge_store = KnowledgeStore(settings.database_path)
         app.state.knowledge_store.migrate()
@@ -97,6 +103,7 @@ def create_app(
                 rag_model_path=settings.rag_model_path,
                 tool_gateway=app.state.tool_gateway,
                 voice_profile_store=app.state.voice_profile_store,
+                conversation_profile_store=app.state.conversation_profile_store,
                 data_dir=settings.data_dir,
             )
             app.state.voice_session = voice_session
@@ -151,8 +158,11 @@ def create_app(
         application.state.voice_reference_transcriber = voice_reference_transcriber
     if avatar_media_service is not None:
         application.state.avatar_media_service = avatar_media_service
+    if conversation_profile_store is not None:
+        application.state.conversation_profile_store = conversation_profile_store
     application.include_router(auth_router)
     application.include_router(avatar_router)
+    application.include_router(conversation_profiles_router)
     application.include_router(knowledge_router)
     application.include_router(memory_router)
     application.include_router(tools_router)

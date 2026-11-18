@@ -13,6 +13,7 @@ from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.workers.runner import WorkerRunner
 
 from arch.avatar.adapter import AvatarAdapter
+from arch.conversation.profiles import ConversationProfile, ConversationProfileStore
 from arch.memory.store import MemoryStore
 from arch.rag.embeddings import SentenceTransformerEmbedder
 from arch.rag.retriever import LocalKnowledgeRetriever, Retriever
@@ -41,6 +42,7 @@ class LocalVoiceSession:
         rag_model_path: Path | None = None,
         tool_gateway: ToolGateway | None = None,
         voice_profile_store: VoiceProfileStore | None = None,
+        conversation_profile_store: ConversationProfileStore | None = None,
         data_dir: Path | None = None,
         avatar_observer: AvatarAdapter | None = None,
         avatar_observer_factory: Callable[[str], AvatarAdapter] | None = None,
@@ -51,6 +53,7 @@ class LocalVoiceSession:
         self._rag_model_path = rag_model_path
         self._tool_gateway = tool_gateway
         self._voice_profile_store = voice_profile_store
+        self._conversation_profile_store = conversation_profile_store
         self._data_dir = data_dir
         self._avatar_observer = avatar_observer
         self._avatar_observer_factory = avatar_observer_factory
@@ -72,6 +75,7 @@ class LocalVoiceSession:
             runner_task: asyncio.Task[None] | None = None
             try:
                 profile = await self._start_selected_clone_runtime()
+                conversation_profile = self._selected_conversation_profile()
                 await self._llama.start()
                 self._retriever = await asyncio.to_thread(self._create_retriever)
                 session_id = getattr(connection, "_arch_session_id", None)
@@ -86,6 +90,7 @@ class LocalVoiceSession:
                     self._clone_runtime.synthesize if self._clone_runtime is not None else None,
                     self._clone_runtime.cancel if self._clone_runtime is not None else None,
                     session_id,
+                    conversation_profile,
                 )
                 runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
                 ready = asyncio.Event()
@@ -127,6 +132,7 @@ class LocalVoiceSession:
             session_started = False
             try:
                 profile = await self._start_selected_clone_runtime()
+                conversation_profile = self._selected_conversation_profile()
                 await self._llama.start()
                 self._retriever = await asyncio.to_thread(self._create_retriever)
                 worker_arguments = (
@@ -144,15 +150,12 @@ class LocalVoiceSession:
                 )
                 observer = self._avatar_observer_for_session(session_id)
                 if observer is None:
-                    worker = create_websocket_pipeline_worker(
-                        *worker_arguments,
-                        session_id=session_id,
+                    worker = self._create_websocket_worker(
+                        worker_arguments, session_id, None, conversation_profile
                     )
                 else:
-                    worker = create_websocket_pipeline_worker(
-                        *worker_arguments,
-                        session_id=session_id,
-                        avatar_observer=observer,
+                    worker = self._create_websocket_worker(
+                        worker_arguments, session_id, observer, conversation_profile
                     )
                 runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
                 ready = asyncio.Event()
@@ -207,9 +210,7 @@ class LocalVoiceSession:
         """Attach or detach the optional video observer before the next pipeline starts."""
         self._avatar_observer = observer
 
-    def set_avatar_observer_factory(
-        self, factory: Callable[[str], AvatarAdapter] | None
-    ) -> None:
+    def set_avatar_observer_factory(self, factory: Callable[[str], AvatarAdapter] | None) -> None:
         """Create a session-bound media observer only for an authenticated voice peer."""
         self._avatar_observer_factory = factory
 
@@ -225,6 +226,7 @@ class LocalVoiceSession:
         clone_synthesize: Callable[[str, VoiceProfile], Awaitable[tuple[bytes, int]]] | None,
         clone_cancel: Callable[[], Awaitable[None]] | None,
         session_id: str | None,
+        conversation_profile: ConversationProfile | None,
     ) -> PipelineWorker:
         """Pass the optional observer without changing test-factory call shapes."""
         arguments = (
@@ -240,6 +242,13 @@ class LocalVoiceSession:
             clone_cancel,
         )
         observer = self._avatar_observer_for_session(session_id)
+        if conversation_profile is not None:
+            return create_pipeline_worker(
+                *arguments,
+                session_id=session_id,
+                avatar_observer=observer,
+                conversation_profile=conversation_profile,
+            )
         if observer is None and session_id is None:
             return create_pipeline_worker(*arguments)
         if observer is None:
@@ -250,6 +259,27 @@ class LocalVoiceSession:
             *arguments,
             session_id=session_id,
             avatar_observer=observer,
+        )
+
+    @staticmethod
+    def _create_websocket_worker(
+        arguments: tuple[object, ...],
+        session_id: str | None,
+        observer: AvatarAdapter | None,
+        conversation_profile: ConversationProfile | None,
+    ) -> PipelineWorker:
+        """Pass a selected conversation snapshot only to newly created media workers."""
+        if conversation_profile is not None:
+            return create_websocket_pipeline_worker(
+                *arguments,
+                session_id=session_id,
+                avatar_observer=observer,
+                conversation_profile=conversation_profile,
+            )
+        if observer is None:
+            return create_websocket_pipeline_worker(*arguments, session_id=session_id)
+        return create_websocket_pipeline_worker(
+            *arguments, session_id=session_id, avatar_observer=observer
         )
 
     def _avatar_observer_for_session(self, session_id: str | None) -> AvatarAdapter | None:
@@ -280,6 +310,11 @@ class LocalVoiceSession:
             return None
         profile_id = store.selected_id()
         return store.get(profile_id) if profile_id is not None else None
+
+    def _selected_conversation_profile(self) -> ConversationProfile | None:
+        """Snapshot the selected style profile once, before a new media worker starts."""
+        store = self._conversation_profile_store
+        return store.selected() if store is not None else None
 
     async def _stop_clone_runtime(self) -> None:
         """Stop and forget the session-owned Qwen worker."""

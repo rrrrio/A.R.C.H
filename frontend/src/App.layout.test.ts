@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const stylesheet = readFileSync(new URL('./App.css', import.meta.url), 'utf8')
 const avatarVideo = readFileSync(new URL('./AvatarVideoPreview.tsx', import.meta.url), 'utf8')
+const application = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
 
 describe('workspace transcript layout', () => {
   it('keeps subtitle text out of the legacy two-column transcript grid', () => {
@@ -66,5 +67,11 @@ describe('workspace transcript layout', () => {
     expect(stylesheet).toContain('.voice-chamber--error .voice-chamber__core, .voice-chamber--disconnected .voice-chamber__core')
     expect(stylesheet).toContain('.voice-chamber--ready.voice-chamber--thinking .voice-chamber__orbit')
     expect(stylesheet).toContain('.voice-chamber--ready.voice-chamber--thinking .voice-chamber__core')
+  })
+
+  it('keeps conversation profiles in a dedicated panel and defers activation to the next connection', () => {
+    expect(application).toContain("{ id: 'conversation', label: '对话'")
+    expect(application).toContain('<ConversationProfilesPanel csrfToken={session.csrfToken} />')
+    expect(stylesheet).toContain('.conversation-profile-form')
   })
 })

@@ -199,6 +199,31 @@ MIGRATIONS: tuple[Migration, ...] = (
             ON terminal_grants(session_id, expires_at);
         """,
     ),
+    Migration(
+        8,
+        "create bounded conversation profile tables",
+        """
+        CREATE TABLE conversation_profiles (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            persona TEXT NOT NULL,
+            speaking_style TEXT NOT NULL,
+            examples_json TEXT NOT NULL,
+            social_temperature REAL NOT NULL CHECK (
+                social_temperature >= 0.2 AND social_temperature <= 0.8
+            ),
+            version INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE conversation_profile_selection (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            profile_id TEXT REFERENCES conversation_profiles(id) ON DELETE SET NULL,
+            updated_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 
