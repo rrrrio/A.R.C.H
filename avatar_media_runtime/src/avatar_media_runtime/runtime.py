@@ -244,4 +244,18 @@ def _attach_recorder_channel(media: SessionMedia, channel: RTCDataChannel) -> No
             )
         )
 
-    media.set_idle_marker_sender(send_idle_marker)
+    def send_speaking_marker() -> None:
+        if channel.readyState != "open":
+            return
+        channel.send('{"type":"speaking"}')
+
+    def send_completion_marker() -> None:
+        if channel.readyState != "open":
+            return
+        channel.send('{"type":"complete"}')
+
+    media.set_recorder_marker_senders(
+        send_idle_marker,
+        send_speaking_marker,
+        send_completion_marker,
+    )

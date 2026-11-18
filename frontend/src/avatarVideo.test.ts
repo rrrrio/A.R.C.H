@@ -175,6 +175,7 @@ describe('AvatarVideoClient', () => {
       },
     )
     const marker = vi.fn()
+    const cancellation = vi.fn()
     const firstAudio = vi.fn()
     const firstVideo = vi.fn()
     let videoCallbacks = 0
@@ -189,8 +190,8 @@ describe('AvatarVideoClient', () => {
       }),
       srcObject: null,
     } as unknown as HTMLVideoElement
-    new AvatarVideoClient('csrf-token', video, () => undefined, () => undefined, () => undefined, {
-      onCancellationStart: () => undefined,
+    const client = new AvatarVideoClient('csrf-token', video, () => undefined, () => undefined, () => undefined, {
+      onCancellationStart: cancellation,
       onFirstAudio: firstAudio,
       onFirstVideo: firstVideo,
       onIdleMarker: marker,
@@ -205,7 +206,15 @@ describe('AvatarVideoClient', () => {
     holder.connection?.ontrack?.({ streams: [stream], track: audio } as unknown as RTCTrackEvent)
     audio.onunmute?.(new Event('unmute'))
     holder.connection?.ontrack?.({ streams: [stream], track: { kind: 'video' } } as unknown as RTCTrackEvent)
+    client.beginAcceptanceCancellation()
+    expect(cancellation).not.toHaveBeenCalled()
+    holder.channel?.onmessage?.({ data: '{"type":"speaking"}' } as MessageEvent)
+    client.beginAcceptanceCancellation()
+    holder.channel?.onmessage?.({ data: '{"type":"speaking"}' } as MessageEvent)
+    holder.channel?.onmessage?.({ data: '{"type":"complete"}' } as MessageEvent)
+    client.beginAcceptanceCancellation()
     expect(marker).toHaveBeenCalledExactlyOnceWith(25)
+    expect(cancellation).toHaveBeenCalledOnce()
     expect(firstAudio).toHaveBeenCalledOnce()
     expect(firstVideo).toHaveBeenCalledOnce()
     expect(fetchMock).not.toHaveBeenCalled()

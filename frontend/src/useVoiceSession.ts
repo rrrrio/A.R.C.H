@@ -30,6 +30,13 @@ type VoiceSessionOptions = {
 const initialConversation: ConversationState = { activity: 'listening', userText: '', assistantText: '', latency: [] }
 const latencyHistoryLimit = 8
 
+/** Forward the unbatched VAD interruption boundary to the optional avatar recorder. */
+export function notifyAvatarUserSpeaking(event: VoiceEvent, target: EventTarget = document) {
+  if (event.type === 'voice_state' && event.state === 'user-speaking') {
+    target.dispatchEvent(new Event('arch:avatar-user-speaking'))
+  }
+}
+
 /** Owns browser media clients independently from the workspace presentation. */
 export function useVoiceSession({ csrfToken, onMemoryCandidatesReady, onToolApprovalsReady }: VoiceSessionOptions) {
   const [voiceState, setVoiceState] = useState<VoiceSessionState>('idle')
@@ -66,6 +73,7 @@ export function useVoiceSession({ csrfToken, onMemoryCandidatesReady, onToolAppr
 
   const handleVoiceEvent = useCallback((event: VoiceEvent) => {
     if (event.type === 'voice_input_ready') clearInputReadyTimer()
+    notifyAvatarUserSpeaking(event)
     if (event.type === 'memory_candidates_ready') {
       onMemoryCandidatesReady()
       return

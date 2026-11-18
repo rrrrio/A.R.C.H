@@ -81,6 +81,7 @@ export class AvatarVideoClient {
   private readonly onAudioOwnership: (active: boolean) => void
   private readonly acceptance: AvatarAcceptanceCallbacks | undefined
   private recorderChannel: RTCDataChannel | null = null
+  private acceptanceSpeaking = false
 
   constructor(
     csrfToken: string,
@@ -172,7 +173,8 @@ export class AvatarVideoClient {
   }
 
   beginAcceptanceCancellation(): void {
-    if (!this.videoFrameNotified || this.closing) return
+    if (!this.videoFrameNotified || !this.acceptanceSpeaking || this.closing) return
+    this.acceptanceSpeaking = false
     this.acceptance?.onCancellationStart(performance.now())
   }
 
@@ -239,11 +241,18 @@ export class AvatarVideoClient {
       if (
         !parsed
         || typeof parsed !== 'object'
-        || (parsed as Record<string, unknown>).type !== 'idle'
-        || !Number.isInteger((parsed as Record<string, unknown>).video_pts)
-        || Number((parsed as Record<string, unknown>).video_pts) < 0
       ) return
-      this.acceptance?.onIdleMarker(Number((parsed as Record<string, unknown>).video_pts))
+      const marker = parsed as Record<string, unknown>
+      if (marker.type === 'speaking') {
+        this.acceptanceSpeaking = true
+        return
+      }
+      if (marker.type === 'complete') {
+        this.acceptanceSpeaking = false
+        return
+      }
+      if (!Number.isInteger(marker.video_pts) || Number(marker.video_pts) < 0 || marker.type !== 'idle') return
+      this.acceptance?.onIdleMarker(Number(marker.video_pts))
     } catch {
       // The opt-in data channel only accepts fixed timing markers.
     }

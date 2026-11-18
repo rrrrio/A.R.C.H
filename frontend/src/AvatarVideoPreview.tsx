@@ -3,12 +3,10 @@ import { createPortal } from 'react-dom'
 
 import { AvatarAcceptanceRecorder, type AvatarAcceptanceManualChecks } from './avatarAcceptance'
 import { AvatarVideoClient, fetchAvatarStatus, stateFromAvatarStatus, type AvatarVideoState, type AvatarVideoStatus } from './avatarVideo'
-import type { VoiceActivity } from './voice'
 
 type AvatarVideoPreviewProps = {
   csrfToken: string
   onAudioOwnershipChange: (active: boolean) => void
-  voiceActivity: VoiceActivity
 }
 
 const stateLabels: Record<AvatarVideoState, string> = {
@@ -22,11 +20,10 @@ const stateLabels: Record<AvatarVideoState, string> = {
   error: '连接失败',
 }
 
-export function AvatarVideoPreview({ csrfToken, onAudioOwnershipChange, voiceActivity }: AvatarVideoPreviewProps) {
+export function AvatarVideoPreview({ csrfToken, onAudioOwnershipChange }: AvatarVideoPreviewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const clientRef = useRef<AvatarVideoClient | null>(null)
   const recorderRef = useRef(new AvatarAcceptanceRecorder())
-  const previousVoiceActivity = useRef<VoiceActivity>('listening')
   const [status, setStatus] = useState<AvatarVideoStatus | null>(null)
   const [state, setState] = useState<AvatarVideoState>('disabled')
   const [busy, setBusy] = useState(false)
@@ -58,11 +55,10 @@ export function AvatarVideoPreview({ csrfToken, onAudioOwnershipChange, voiceAct
   }, [])
 
   useEffect(() => {
-    if (previousVoiceActivity.current === 'speaking' && voiceActivity === 'user-speaking') {
-      clientRef.current?.beginAcceptanceCancellation()
-    }
-    previousVoiceActivity.current = voiceActivity
-  }, [voiceActivity])
+    const beginCancellation = () => clientRef.current?.beginAcceptanceCancellation()
+    document.addEventListener('arch:avatar-user-speaking', beginCancellation)
+    return () => document.removeEventListener('arch:avatar-user-speaking', beginCancellation)
+  }, [])
 
   function refreshAcceptance() {
     setAcceptanceCurrent({ ...recorderRef.current.current() })

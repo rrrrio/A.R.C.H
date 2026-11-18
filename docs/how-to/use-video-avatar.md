@@ -120,15 +120,16 @@ live audio/video track、至少 30 个视频帧回调的有效帧率在 22-28fps
 `/api/avatar/timing` 服务端日志端点。该确认
 只在 runtime 已为音频和视频都发送 idle 帧后生效，因此不会把仍在缓冲的旧说话画面计为已取消。
 
-验收数据流如下。DataChannel 只含固定事件名和视频 RTP 时间戳；它不含会话 ID、用户名、文本、PCM、
-图像、SDP、ticket 或设备标识。关闭验收模式会清空尚未导出的浏览器内存记录；关闭视频只会丢弃
+验收数据流如下。DataChannel 只含固定的 `speaking`/`complete`/`idle` 事件名及 idle 视频 RTP 时间戳；
+它不含会话 ID、用户名、文本、PCM、图像、SDP、ticket 或设备标识。只有收到本轮 `speaking` 标记后，浏览器才会把
+用户插话作为取消测量起点，避免首次提问或空闲状态误记为取消；双轨自然回到 idle 时的 `complete` 会清除该条件。关闭验收模式会清空尚未导出的浏览器内存记录；关闭视频只会丢弃
 尚未保存的当前轮次。
 
 ```text
 [browser: explicit acceptance mode]
        | first audio/video callback, 30-frame cadence
        v
-[local timing-only observation] <-- [runtime: both tracks returned to idle]
+[local timing-only observation] <-- [runtime: speaking, then both tracks idle]
        |                                        |
        +----------- WebRTC data marker --------+
        |

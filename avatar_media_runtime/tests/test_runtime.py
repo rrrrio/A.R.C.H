@@ -30,7 +30,7 @@ def test_runtime_answer_contains_audio_and_video_on_one_peer() -> None:
     )
     runtime = AvatarMediaRuntime()
 
-    async def exercise() -> str:
+    async def exercise() -> tuple[str, str]:
         browser = RTCPeerConnection()
         browser.addTransceiver("audio", direction="recvonly")
         browser.addTransceiver("video", direction="recvonly")
@@ -74,11 +74,15 @@ def test_recorder_channel_sends_only_fixed_idle_timing_after_both_tracks_return(
         )
         await media.audio.recv()
         await media.video.recv()
+        assert channel.messages == ['{"type":"speaking"}']
         media.cancel("session", "turn")
         await media.audio.recv()
-        assert channel.messages == []
+        assert channel.messages == ['{"type":"speaking"}']
         idle = await media.video.recv()
-        assert channel.messages == [f'{{"type":"idle","video_pts":{idle.pts}}}']
+        assert channel.messages == [
+            '{"type":"speaking"}',
+            f'{{"type":"idle","video_pts":{idle.pts}}}',
+        ]
         media.stop()
 
     asyncio.run(exercise())
@@ -119,13 +123,23 @@ def test_runtime_delivers_idle_marker_over_a_real_browser_created_datachannel() 
             await asyncio.sleep(0.01)
         assert channel.readyState == "open"
         media = runtime._sessions[answer.session_id][1]
+        await media.publish(
+            answer.session_id,
+            "turn",
+            b"\x01\x00" * 480,
+            [av.VideoFrame(8, 8, "rgb24")],
+            25,
+        )
+        speaking = await asyncio.wait_for(messages.get(), timeout=1)
         media.cancel(answer.session_id, "turn")
-        message = await asyncio.wait_for(messages.get(), timeout=1)
+        idle = await asyncio.wait_for(messages.get(), timeout=1)
         await runtime.close_session(answer.session_id)
         await browser.close()
-        return message
+        return speaking, idle
 
-    marker = json.loads(asyncio.run(exercise()))
+    speaking, idle = asyncio.run(exercise())
+    assert speaking == '{"type":"speaking"}'
+    marker = json.loads(idle)
     assert marker["type"] == "idle"
     assert isinstance(marker["video_pts"], int)
 

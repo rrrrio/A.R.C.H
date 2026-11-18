@@ -159,6 +159,30 @@ def test_session_media_reports_idle_only_after_both_tracks_return_from_cancel() 
     asyncio.run(receive())
 
 
+def test_session_media_reports_completion_only_after_both_tracks_return_to_idle() -> None:
+    markers: list[str] = []
+    media = SessionMedia(
+        idle_frame_provider=lambda: av.VideoFrame(8, 8, "rgb24"),
+        speaking_marker_sender=lambda: markers.append("speaking"),
+        completion_marker_sender=lambda: markers.append("complete"),
+    )
+
+    async def receive() -> None:
+        await media.publish(
+            "session", "turn", b"\x01\x00" * 480, [av.VideoFrame(8, 8, "rgb24")], 25
+        )
+        await media.audio.recv()
+        await media.video.recv()
+        assert markers == ["speaking"]
+        await media.audio.recv()
+        assert markers == ["speaking"]
+        await media.video.recv()
+        assert markers == ["speaking", "complete"]
+        media.stop()
+
+    asyncio.run(receive())
+
+
 def test_session_media_stop_during_idle_pacing_emits_no_late_frame() -> None:
     """Closing a peer during an idle wait must stop both media tracks immediately."""
 
